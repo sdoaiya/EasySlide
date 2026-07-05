@@ -283,7 +283,7 @@ import { materialUrlToFile } from '@/components/shared/MaterialSelector';
 import type { Material } from '@/api/endpoints';
 import { SlideCard } from '@/components/preview/SlideCard';
 import { useProjectStore } from '@/store/useProjectStore';
-import { useExportTasksStore, type ExportTaskType } from '@/store/useExportTasksStore';
+import { useExportTasksStore, type ExportTask, type ExportTaskType } from '@/store/useExportTasksStore';
 import { getImageUrl } from '@/api/client';
 import { getPageImageVersions, setCurrentImageVersion, updateProject, uploadTemplate, exportPPTX as apiExportPPTX, exportPDF as apiExportPDF, exportImages as apiExportImages, exportEditablePPTX as apiExportEditablePPTX, exportVideo as apiExportVideo, getSettings, getElevenLabsVoices } from '@/api/endpoints';
 import type { ImageVersion, DescriptionContent, ExportExtractorMethod, ExportInpaintMethod, Page, NarrationConfig } from '@/types';
@@ -1196,12 +1196,13 @@ export const SlidePreview: React.FC = () => {
     options?: {
       pptxTransitionEnabled?: boolean;
       pptxTransitionEffects?: PptxTransitionEffect[];
+      pageIds?: string[];
     },
   ) => {
     setShowExportMenu(false);
     if (!projectId) return;
 
-    const pageIds = getSelectedPageIdsForExport();
+    const pageIds = options?.pageIds ?? getSelectedPageIdsForExport();
     const exportTaskId = `export-${Date.now()}`;
 
     try {
@@ -1335,6 +1336,10 @@ export const SlidePreview: React.FC = () => {
       });
       show({ message: normalizedErrorMessage, type: 'error' });
     }
+  };
+
+  const handleRetryExport = (task: ExportTask) => {
+    handleExport(task.type, { pageIds: task.pageIds });
   };
 
   const handleRefresh = useCallback(async () => {
@@ -1664,6 +1669,7 @@ export const SlidePreview: React.FC = () => {
                   <ExportTasksPanel
                     projectId={projectId}
                     pages={currentProject?.pages || []}
+                    onRetry={handleRetryExport}
                     className="w-96 max-h-[28rem] shadow-lg"
                   />
                 </div>
@@ -1755,8 +1761,13 @@ export const SlidePreview: React.FC = () => {
                         try {
                           const voicesRes = await getElevenLabsVoices();
                           setElevenLabsVoices(voicesRes.data?.voices ?? []);
-                        } catch (error) {
+                        } catch (error: any) {
                           console.error('Failed to load ElevenLabs voices:', error);
+                          setElevenLabsEnabled(false);
+                          show({
+                            message: error?.response?.data?.error?.message || error?.response?.data?.message || error?.message || '获取 ElevenLabs 声音列表失败',
+                            type: 'error',
+                          });
                         }
                         setElevenLabsVoicesLoading(false);
                       }
@@ -2056,7 +2067,11 @@ export const SlidePreview: React.FC = () => {
                               }
                             } catch (err: any) {
                               console.error('[ElevenLabs] 获取声音列表失败', err);
-                              show({ message: err?.response?.data?.message || err?.message || '获取 ElevenLabs 声音列表失败', type: 'error' });
+                              setElevenLabsEnabled(false);
+                              show({
+                                message: err?.response?.data?.error?.message || err?.response?.data?.message || err?.message || '获取 ElevenLabs 声音列表失败',
+                                type: 'error',
+                              });
                             }
                             setElevenLabsVoicesLoading(false);
                           }

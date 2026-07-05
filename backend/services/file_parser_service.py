@@ -9,6 +9,7 @@ import zipfile
 import io
 import requests
 import tempfile
+from pathlib import Path
 from typing import Optional, List
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image
@@ -60,6 +61,7 @@ class FileParserService:
                  provider_format: str = None,
                  mineru_model_version: str = "vlm",
                  pdf_parser: str = "paddle",
+                 upload_folder: str | Path | None = None,
                  ):
         """
         Initialize the file parser service
@@ -76,6 +78,7 @@ class FileParserService:
             provider_format: AI provider format ('gemini' or 'openai'). If not provided, reads from environment variable.
             mineru_model_version: MinerU model version ('vlm' or 'pipeline'). Default is 'vlm'.
             pdf_parser: PDF parser to use ('paddle' or 'mineru'). Default is 'paddle'.
+            upload_folder: Directory where MinerU extracted files are stored.
         """
         self.pdf_parser = (pdf_parser or "paddle").lower()
         self.mineru_token = mineru_token
@@ -86,7 +89,14 @@ class FileParserService:
         
         self._image_caption_model = image_caption_model
         self._provider_format = _get_ai_provider_format(provider_format)
+        if upload_folder is None:
+            try:
+                from flask import current_app
+                upload_folder = current_app.config.get('UPLOAD_FOLDER')
+            except RuntimeError:
+                upload_folder = None
         self._caption_provider = None
+        self._upload_folder = Path(upload_folder).resolve() if upload_folder else None
     
     def _get_caption_provider(self):
         """Lazily initialize caption provider via the provider factory"""
@@ -399,18 +409,16 @@ class FileParserService:
             import uuid
             extract_id = str(uuid.uuid4())[:8]
             
-            # Get upload folder from Flask config (we'll need to pass this)
-            # For now, use a hardcoded path relative to project root
-            import os
             from pathlib import Path
             
-            # Navigate to project root (assuming this file is in backend/services/)
-            current_file = Path(__file__).resolve()
-            backend_dir = current_file.parent.parent
-            project_root = backend_dir.parent
+            upload_folder = self._upload_folder
+            if upload_folder is None:
+                current_file = Path(__file__).resolve()
+                backend_dir = current_file.parent.parent
+                upload_folder = backend_dir.parent / 'uploads'
             
             # Create directory for mineru extracts
-            mineru_storage = project_root / 'uploads' / 'mineru_files' / extract_id
+            mineru_storage = upload_folder / 'mineru_files' / extract_id
             mineru_storage.mkdir(parents=True, exist_ok=True)
             
             logger.info(f"Extracting ZIP to: {mineru_storage}")

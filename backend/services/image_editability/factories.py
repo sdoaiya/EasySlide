@@ -583,7 +583,8 @@ class ServiceConfig:
         parser_service = FileParserService(
             mineru_token=mineru_token,
             mineru_api_base=mineru_api_base,
-            pdf_parser="mineru"
+            pdf_parser="mineru",
+            upload_folder=upload_path,
         )
         
         # 创建提取器注册表

@@ -11,6 +11,8 @@ import re
 import tempfile
 import base64
 import hashlib
+import time
+from concurrent.futures import TimeoutError
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
@@ -1023,7 +1025,8 @@ class ExportService:
         editable_images: List,  # List[EditableImage]
         text_attribute_extractor,
         max_workers: int = 8,
-        fail_fast: bool = False
+        fail_fast: bool = False,
+        local_timeout_seconds: float = 180.0
     ) -> Tuple[Dict[str, Any], List[Tuple[str, str]]]:
         """
         【混合策略】结合全局识别和单个裁剪识别的优势
@@ -1143,8 +1146,10 @@ class ExportService:
         
         # 并发执行全局识别和单个裁剪识别
         logger.info(f"  并发执行: 全局识别 {len(page_text_elements)} 页 + 单个识别 {len(all_text_items)} 个元素...")
+        local_deadline = time.monotonic() + local_timeout_seconds
         
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        executor = ThreadPoolExecutor(max_workers=max_workers)
+        try:
             # 提交全局识别任务
             global_futures = {
                 executor.submit(extract_global_for_page, idx, data): ('global', idx)
@@ -1194,7 +1199,16 @@ class ExportService:
                     )
             
             # 收集单个裁剪识别结果
-            for future in as_completed(local_futures):
+            remaining_futures = set(local_futures)
+            while remaining_futures:
+                timeout = local_deadline - time.monotonic()
+                if timeout <= 0:
+                    break
+                try:
+                    future = next(as_completed(remaining_futures, timeout=timeout))
+                except TimeoutError:
+                    break
+                remaining_futures.remove(future)
                 task_type, element_id = local_futures[future]
                 try:
                     elem_id, style, error = future.result()
@@ -1207,6 +1221,15 @@ class ExportService:
                     if fail_fast:
                         raise
                     failed_extractions.append((element_id, str(e)))
+
+            if remaining_futures:
+                reason = "单个识别超时，已使用全局样式"
+                logger.warning(f"单个识别超时，跳过 {len(remaining_futures)} 个文本元素")
+                for future in remaining_futures:
+                    future.cancel()
+                    failed_extractions.append((local_futures[future][1], reason))
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
         
         # Step 3: 合并结果
         # 优先使用全局识别的布局属性，使用单个识别的颜色属性

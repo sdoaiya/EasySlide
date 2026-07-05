@@ -113,10 +113,25 @@ function isNewerVersion(current, latest) {
   return lPatch > cPatch;
 }
 
-function createWindow() {
-  const iconPath = app.isPackaged
+function getAppIconPath() {
+  return app.isPackaged
     ? path.join(process.resourcesPath, 'icon.png')
-    : path.join(__dirname, '..', 'frontend', 'public', 'logo-nav.png');
+    : path.join(__dirname, 'resources', 'icon.png');
+}
+
+function getAvailableDownloadPath(filename) {
+  const parsed = path.parse(filename || 'download');
+  let target = path.join(app.getPath('downloads'), filename || 'download');
+  let index = 1;
+  while (fs.existsSync(target)) {
+    target = path.join(app.getPath('downloads'), `${parsed.name} (${index})${parsed.ext}`);
+    index += 1;
+  }
+  return target;
+}
+
+function createWindow() {
+  const iconPath = getAppIconPath();
 
   mainWindow = new BrowserWindow({
     width: 1400,
@@ -158,9 +173,7 @@ function createWindow() {
 }
 
 function createTray() {
-  const iconPath = app.isPackaged
-    ? path.join(process.resourcesPath, 'icon.png')
-    : path.join(__dirname, '..', 'frontend', 'public', 'logo-nav.png');
+  const iconPath = getAppIconPath();
 
   tray = new (require('electron').Tray)(iconPath);
   tray.setToolTip('EasySlide');
@@ -195,6 +208,25 @@ ipcMain.handle('open-data-dir', async () => {
   const dirs = getUserDataDirs();
   ensureDir(dirs.root);
   return shell.openPath(dirs.root);
+});
+ipcMain.handle('save-download', async (_event, url, filename) => {
+  const rawUrl = String(url || '');
+  const sourceUrl = rawUrl.startsWith('http') ? rawUrl : `http://127.0.0.1:${BACKEND_PORT}${rawUrl}`;
+  const suggestedName = filename || decodeURIComponent(path.basename(new URL(sourceUrl).pathname)) || 'download';
+  const filePath = getAvailableDownloadPath(suggestedName);
+
+  const file = fs.createWriteStream(filePath);
+  await new Promise((resolve, reject) => {
+    http.get(sourceUrl, (response) => {
+      if (response.statusCode !== 200) {
+        reject(new Error(`Download failed: HTTP ${response.statusCode}`));
+        return;
+      }
+      response.pipe(file);
+      file.on('finish', () => file.close(resolve));
+    }).on('error', reject);
+  });
+  return filePath;
 });
 ipcMain.handle('window-minimize', () => mainWindow?.minimize());
 ipcMain.handle('window-maximize', () => {

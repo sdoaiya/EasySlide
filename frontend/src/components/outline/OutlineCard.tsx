@@ -111,32 +111,34 @@ export const OutlineCard: React.FC<OutlineCardProps> = ({
 
   return (
     <Card
-      className={`p-4 relative ${
-        isSelected ? 'border-2 border-cyan-500 shadow-sky-100' : ''
+      className={`relative rounded-2xl p-5 md:p-6 shadow-sm transition-all ${
+        isSelected
+          ? 'border-2 border-sky-500 bg-sky-50/70 shadow-sky-100'
+          : 'border border-slate-100 bg-white hover:border-sky-200 hover:shadow-md'
       }`}
       onClick={!isEditing ? onClick : undefined}
     >
       <ShimmerOverlay show={isAiRefining} />
 
-      <div className="flex items-start gap-3 relative z-10">
+      <div className="flex items-start gap-4 relative z-10">
         {/* 拖拽手柄 */}
         <div
           {...dragHandleProps}
-          className="flex-shrink-0 cursor-move text-gray-400 hover:text-gray-600 pt-1"
+          className="flex-shrink-0 cursor-move text-slate-400 hover:text-slate-600 pt-1"
         >
-          <GripVertical size={20} />
+          <GripVertical size={18} />
         </div>
 
         {/* 内容区 */}
         <div className="flex-1 min-w-0">
           {/* 页码和章节 */}
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-sm font-semibold text-gray-900 dark:text-foreground-primary">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-base font-bold text-slate-900 dark:text-foreground-primary">
               {t('outlineCard.page', { num: index + 1 })}
             </span>
             {index === 0 && !isEditing && (
               <span
-                className="text-xs px-1.5 py-0.5 bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-300 rounded"
+                className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600 dark:bg-background-hover dark:text-foreground-secondary"
                 title={t('outlineCard.coverPageTooltip')}
               >
                 {t('outlineCard.coverPage')}
@@ -153,7 +155,7 @@ export const OutlineCard: React.FC<OutlineCardProps> = ({
               />
             ) : (
               page.part && (
-                <span className="text-xs px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded">
+                <span className="rounded-md bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
                   {page.part}
                 </span>
               )
@@ -203,10 +205,10 @@ export const OutlineCard: React.FC<OutlineCardProps> = ({
           ) : (
             /* 查看模式 */
             <div>
-              <h4 className="font-semibold text-gray-900 dark:text-foreground-primary mb-2">
+              <h4 className="mb-3 text-lg font-bold text-slate-900 dark:text-foreground-primary">
                 {outline.title}
               </h4>
-              <div className="text-gray-600 dark:text-foreground-tertiary">
+              <div className="text-base leading-8 text-slate-600 dark:text-foreground-tertiary">
                 <Markdown>{outline.points.join('\n')}</Markdown>
               </div>
             </div>
@@ -215,13 +217,13 @@ export const OutlineCard: React.FC<OutlineCardProps> = ({
 
         {/* 操作按钮 */}
         {!isEditing && (
-          <div className="flex-shrink-0 flex gap-2">
+          <div className="flex-shrink-0 flex gap-5 pr-1">
             <button
               onClick={(e) => {
                 e.stopPropagation();
                 setIsEditing(true);
               }}
-              className="p-1.5 text-gray-500 dark:text-foreground-tertiary hover:text-cyan-600 hover:bg-cyan-50 dark:hover:bg-background-hover rounded transition-colors"
+              className="p-1.5 text-blue-500 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-background-hover rounded transition-colors"
             >
               <Edit2 size={16} />
             </button>
@@ -234,7 +236,7 @@ export const OutlineCard: React.FC<OutlineCardProps> = ({
                   { title: t('outlineCard.confirmDeleteTitle'), variant: 'danger' }
                 );
               }}
-              className="p-1.5 text-gray-500 dark:text-foreground-tertiary hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+              className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded transition-colors"
             >
               <Trash2 size={16} />
             </button>

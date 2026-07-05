@@ -1,6 +1,6 @@
 ﻿import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
-import { ArrowLeft, Save, ArrowRight, Plus, FileText, Sparkle, Download, Upload, PanelLeftClose, PanelLeftOpen, ChevronDown, Settings2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Plus, FileText, Sparkle, Download, Upload, ChevronDown, List, SlidersHorizontal } from 'lucide-react';
 import { useT } from '@/hooks/useT';
 import PresetCapsules from '@/components/shared/PresetCapsules';
 import { getStaticAssetUrl } from '@/api/client';
@@ -26,6 +26,8 @@ const outlineI18n = {
       inputPlaceholder: { idea: "输入你的 PPT 构想...", outline: "输入大纲内容...", description: "输入页面描述...", ppt_renovation: "已从 PDF 中提取内容" },
       outlineRequirements: "大纲生成要求",
       outlineRequirementsPlaceholder: "例如：限制在10页以内、每页要点不超过3条、多使用图表...",
+      pageNavigation: "页面导航",
+      pageNavigationHint: "点击页面可快速定位并修改。",
       importModalTitle: "导入 Markdown",
       importModalDesc: "可直接粘贴 Markdown，也可以上传 `.md` 或 `.txt` 文件。导入的页面会追加到当前项目末尾。",
       importPasteLabel: "粘贴内容",
@@ -70,6 +72,8 @@ const outlineI18n = {
       inputPlaceholder: { idea: "Enter your PPT idea...", outline: "Enter outline content...", description: "Enter page descriptions...", ppt_renovation: "Content extracted from PDF" },
       outlineRequirements: "Generation Requirements",
       outlineRequirementsPlaceholder: "e.g., Limit to 10 pages, max 3 points per page, use more charts...",
+      pageNavigation: "Page Navigation",
+      pageNavigationHint: "Click a page to jump there and edit.",
       importModalTitle: "Import Markdown",
       importModalDesc: "Paste Markdown directly, or upload a `.md` / `.txt` file. Imported pages will be appended to the current project.",
       importPasteLabel: "Paste Content",
@@ -174,7 +178,6 @@ export const OutlineEditor: React.FC = () => {
   const [selectedPageId, setSelectedPageId] = useState<string | null>(null);
   const [isAiRefining, setIsAiRefining] = useState(false);
   const [previewFileId, setPreviewFileId] = useState<string | null>(null);
-  const [isPanelOpen, setIsPanelOpen] = useState(true);
 
   // Skeleton fade-out: keep it mounted briefly after streaming ends
   const [skeletonVisible, setSkeletonVisible] = useState(false);
@@ -196,10 +199,8 @@ export const OutlineEditor: React.FC = () => {
   const { show, ToastContainer } = useToast();
   const autoGenerateStartedRef = useRef<string | null>(null);
 
-  // 左侧可编辑文本区域 — desktop and mobile use separate refs to avoid
-  // the shared-ref bug where insertAtCursor targets the wrong (hidden) instance.
+  // 主输入框 ref，用于素材/图片 markdown 插入到光标处。
   const desktopTextareaRef = useRef<MarkdownTextareaRef>(null);
-  const mobileTextareaRef = useRef<MarkdownTextareaRef>(null);
   const [fileMenuOpen, setFileMenuOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const fileMenuRef = useRef<HTMLDivElement>(null);
@@ -215,16 +216,13 @@ export const OutlineEditor: React.FC = () => {
   const [outlineRequirements, setOutlineRequirements] = useState('');
   const [isRequirementsDirty, setIsRequirementsDirty] = useState(false);
   const reqTextareaRef = useRef<MarkdownTextareaRef>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const settingsRef = useRef<HTMLDivElement>(null);
 
   const [isMaterialSelectorOpen, setIsMaterialSelectorOpen] = useState(false);
   const [activeMaterialTarget, setActiveMaterialTarget] = useState<'input' | 'requirements'>('input');
 
   const handleInputMaterialSelect = useCallback((materials: Material[]) => {
     const markdown = buildMaterialsMarkdown(materials, setInputText);
-    const targetRef = desktopTextareaRef.current || mobileTextareaRef.current;
-    targetRef?.insertAtCursor(markdown + '\n');
+    desktopTextareaRef.current?.insertAtCursor(markdown + '\n');
   }, []);
 
   const handleReqMaterialSelect = useCallback((materials: Material[]) => {
@@ -234,18 +232,15 @@ export const OutlineEditor: React.FC = () => {
 
   // 点击外部关闭下拉
   useEffect(() => {
-    if (!fileMenuOpen && !settingsOpen) return;
+    if (!fileMenuOpen) return;
     const handleClickOutside = (e: MouseEvent) => {
       if (fileMenuRef.current && !fileMenuRef.current.contains(e.target as Node)) {
         setFileMenuOpen(false);
       }
-      if (settingsRef.current && !settingsRef.current.contains(e.target as Node)) {
-        setSettingsOpen(false);
-      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [fileMenuOpen, settingsOpen]);
+  }, [fileMenuOpen]);
 
   // 项目切换时：强制加载文本
   useEffect(() => {
@@ -308,9 +303,7 @@ export const OutlineEditor: React.FC = () => {
   }, []);
 
   const insertAtCursor = useCallback((markdown: string) => {
-    // Prefer the desktop ref (visible at md+), fall back to mobile
-    const ref = desktopTextareaRef.current || mobileTextareaRef.current;
-    ref?.insertAtCursor(markdown);
+    desktopTextareaRef.current?.insertAtCursor(markdown);
   }, []);
 
   const { handlePaste: handleImagePaste, handleFiles: handleImageFiles, isUploading: _isUploadingImage } = useImagePaste({
@@ -496,61 +489,76 @@ export const OutlineEditor: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-background-primary flex flex-col">
-      {/* 顶栏 */}
-      <header className="bg-white dark:bg-background-secondary shadow-sm dark:shadow-background-primary/30 border-b border-gray-200 dark:border-border-primary px-3 md:px-6 py-2 md:py-3 flex-shrink-0">
-        <div className="flex items-center justify-between gap-2 md:gap-4">
-          {/* 左侧：Logo 和标题 */}
-          <div className="flex items-center gap-2 md:gap-4 flex-shrink-0">
+    <div className="min-h-screen bg-gradient-to-b from-sky-50 via-white to-slate-50 dark:from-background-primary dark:via-background-primary dark:to-background-secondary flex flex-col">
+      <header className="bg-white/90 dark:bg-background-secondary/95 backdrop-blur border-b border-sky-100 dark:border-border-primary px-4 md:px-7 py-3 flex-shrink-0">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
             <Button
               variant="ghost"
               size="sm"
-              icon={<ArrowLeft size={16} className="md:w-[18px] md:h-[18px]" />}
-              onClick={() => {
-                if (fromHistory) {
-                  navigate('/history');
-                } else {
-                  navigate('/app');
-                }
-              }}
+              icon={<ArrowLeft size={16} />}
+              onClick={() => navigate(fromHistory ? '/history' : '/app')}
               className="flex-shrink-0"
             >
               <span className="hidden sm:inline">{t('common.back')}</span>
             </Button>
-            <div className="flex items-center gap-1.5 md:gap-2">
-              <img src={getStaticAssetUrl('/logo-nav.png')} alt="EasySlide Logo" className="h-7 md:h-8 w-auto" />
-              <span className="text-base md:text-xl font-bold">{t('home.title')}</span>
-            </div>
-            <span className="text-gray-400 hidden lg:inline">|</span>
-            <div className="hidden lg:flex flex-col leading-tight">
+            <img src={getStaticAssetUrl('/logo-nav.png')} alt="EasySlide Logo" className="h-8 w-auto" />
+            <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <span className="text-sm md:text-lg font-semibold">{t('outline.title')}</span>
-                <span className="rounded-full border border-blue-100 bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-600">
+                <span className="text-lg font-bold text-slate-900 dark:text-foreground-primary">{t('outline.title')}</span>
+                <span className="hidden sm:inline rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-600">
                   {t('outline.workflowStage')}
                 </span>
               </div>
-              <span className="text-[11px] text-gray-500 dark:text-foreground-tertiary">{t('outline.workflowHint')}</span>
+              <p className="hidden md:block text-xs text-slate-500 dark:text-foreground-tertiary">{t('outline.workflowHint')}</p>
             </div>
           </div>
 
-          {/* 中间：AI 修改输入框 */}
-          <div className="flex-1 max-w-xl mx-auto hidden md:block md:-translate-x-2 pr-10">
-            <AiRefineInput
-              title=""
-              placeholder={t('outline.aiPlaceholder')}
-              onSubmit={handleAiRefineOutline}
-              disabled={false}
-              className="!p-0 !bg-transparent !border-0"
-              onStatusChange={setIsAiRefining}
-            />
-          </div>
-
-          {/* 右侧：操作按钮 */}
-          <div className="flex items-center gap-1.5 md:gap-2 flex-shrink-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="primary" icon={<Plus size={16} />} onClick={addNewPage}>
+              {t('outline.addPage')}
+            </Button>
+            <Button variant="secondary" onClick={handleGenerateOutline} disabled={isOutlineStreaming}>
+              {isOutlineStreaming
+                ? t('outline.generating')
+                : currentProject.pages.length === 0
+                  ? currentProject.creation_type === 'outline' ? t('outline.parseOutline') : t('outline.autoGenerate')
+                  : currentProject.creation_type === 'outline' ? t('outline.reParseOutline') : t('outline.reGenerate')}
+            </Button>
+            <div className="relative" ref={fileMenuRef}>
+              <Button
+                variant="secondary"
+                onClick={() => setFileMenuOpen(!fileMenuOpen)}
+                icon={<FileText size={16} />}
+              >
+                {t('outline.importExport')}
+                <ChevronDown size={14} className={`ml-1 transition-transform duration-200 ${fileMenuOpen ? 'rotate-180' : ''}`} />
+              </Button>
+              {fileMenuOpen && (
+                <div className="absolute right-0 top-full mt-2 z-50 w-36 rounded-xl border border-sky-100 dark:border-border-primary bg-white dark:bg-background-secondary shadow-lg overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => { handleExportOutline(); setFileMenuOpen(false); }}
+                    disabled={currentProject.pages.length === 0}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-600 dark:text-foreground-tertiary hover:bg-sky-50 dark:hover:bg-background-hover disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <Download size={14} />
+                    {t('outline.export')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setIsImportModalOpen(true); setFileMenuOpen(false); }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-600 dark:text-foreground-tertiary hover:bg-sky-50 dark:hover:bg-background-hover"
+                  >
+                    <Upload size={14} />
+                    {t('outline.import')}
+                  </button>
+                </div>
+              )}
+            </div>
             <Button
               variant="primary"
-              size="sm"
-              icon={<ArrowRight size={16} className="md:w-[18px] md:h-[18px]" />}
+              icon={<ArrowRight size={16} />}
               onClick={async () => {
                 if (isInputDirty && projectId && currentProject) {
                   const field = currentProject.creation_type === 'outline'
@@ -564,20 +572,19 @@ export const OutlineEditor: React.FC = () => {
                     console.error('自动保存失败:', e);
                   }
                 }
+                await saveAllPages();
                 navigate(`/project/${projectId}/detail`);
               }}
-              className="text-xs md:text-sm"
             >
-              <span className="hidden sm:inline">{t('common.next')}</span>
+              {t('common.next')}
             </Button>
           </div>
         </div>
 
-        {/* 移动端：AI 输入框 */}
-        <div className="mt-2 md:hidden">
-            <AiRefineInput
+        <div className="mt-3">
+          <AiRefineInput
             title=""
-            placeholder={t('outline.aiPlaceholderShort')}
+            placeholder={t('outline.aiPlaceholder')}
             onSubmit={handleAiRefineOutline}
             disabled={false}
             className="!p-0 !bg-transparent !border-0"
@@ -586,202 +593,17 @@ export const OutlineEditor: React.FC = () => {
         </div>
       </header>
 
-      {/* 操作栏 - 与 DetailEditor 风格一致 */}
-      <div className="bg-white dark:bg-background-secondary border-b border-gray-200 dark:border-border-primary px-3 md:px-6 py-3 md:py-4 flex-shrink-0">
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 sm:gap-3">
-          <div className="flex items-center gap-2 sm:gap-3 flex-1">
-            <Button
-              variant="primary"
-              icon={<Plus size={16} className="md:w-[18px] md:h-[18px]" />}
-              onClick={addNewPage}
-              className="flex-1 sm:flex-initial text-sm md:text-base"
-            >
-              {t('outline.addPage')}
-            </Button>
-            {currentProject.pages.length === 0 && !isOutlineStreaming ? (
-              <Button
-                variant="secondary"
-                onClick={handleGenerateOutline}
-                disabled={isOutlineStreaming}
-                className="flex-1 sm:flex-initial text-sm md:text-base"
-              >
-                {currentProject.creation_type === 'outline' ? t('outline.parseOutline') : t('outline.autoGenerate')}
-              </Button>
-            ) : (
-              <Button
-                variant="secondary"
-                onClick={handleGenerateOutline}
-                disabled={isOutlineStreaming}
-                className="flex-1 sm:flex-initial text-sm md:text-base"
-              >
-                {isOutlineStreaming
-                  ? t('outline.generating')
-                  : currentProject.creation_type === 'outline' ? t('outline.reParseOutline') : t('outline.reGenerate')}
-              </Button>
-            )}
-            {/* 设置 popover */}
-            <div className="relative" ref={settingsRef}>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setSettingsOpen(!settingsOpen)}
-                icon={<span className="relative"><Settings2 size={16} className="md:w-[18px] md:h-[18px]" />{outlineRequirements && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-cyan-400" />}</span>}
-                title={t('outline.outlineRequirements')}
-              />
-              {settingsOpen && (
-                <div className="absolute top-full left-0 mt-1 z-50 w-80 rounded-xl border border-gray-200 dark:border-border-primary bg-white dark:bg-background-secondary shadow-lg dark:shadow-none p-4 space-y-3">
-                  <label className="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-foreground-tertiary">
-                    {t('outline.outlineRequirements')}
-                  </label>
-                  <div data-testid="outline-requirements-textarea">
-                    <MarkdownTextarea
-                      ref={reqTextareaRef}
-                      value={outlineRequirements}
-                      onChange={(val) => { setOutlineRequirements(val); setIsRequirementsDirty(true); }}
-                      onPaste={handleReqImagePaste}
-                      onFiles={handleReqImageFiles}
-                      onSelectFromLibrary={() => { setActiveMaterialTarget('requirements'); setIsMaterialSelectorOpen(true); }}
-                      placeholder={t('outline.outlineRequirementsPlaceholder')}
-                      className="ring-inset"
-                      rows={2}
-                      showImagePreview={false}
-                    />
-                  </div>
-                  <PresetCapsules
-                    type="outline"
-                    onAppend={(text) => {
-                      setOutlineRequirements((prev) => prev ? `${prev}\n${text}` : text);
-                      setIsRequirementsDirty(true);
-                    }}
-                  />
-                </div>
-              )}
-            </div>
-            {/* 导入导出下拉菜单 */}
-            <div className="relative" ref={fileMenuRef}>
-              <Button
-                variant="secondary"
-                onClick={() => setFileMenuOpen(!fileMenuOpen)}
-                icon={<FileText size={16} className="md:w-[18px] md:h-[18px]" />}
-                className="flex-1 sm:flex-initial text-sm md:text-base"
-              >
-                {t('outline.importExport')}
-                <ChevronDown size={14} className={`ml-1 transition-transform duration-200 ${fileMenuOpen ? 'rotate-180' : ''}`} />
-              </Button>
-              {fileMenuOpen && (
-                <div className="absolute top-full left-0 mt-1 z-50 w-full rounded-lg border border-gray-200 dark:border-border-primary bg-white dark:bg-background-secondary shadow-lg dark:shadow-none overflow-hidden">
-                  <button
-                    type="button"
-                    onClick={() => { handleExportOutline(); setFileMenuOpen(false); }}
-                    disabled={currentProject.pages.length === 0}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-gray-600 dark:text-foreground-tertiary hover:bg-gray-50 dark:hover:bg-background-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
-                  >
-                    <Download size={14} />
-                    {t('outline.export')}
-                  </button>
-                  <div className="border-t border-gray-100 dark:border-border-primary" />
-                  <button
-                    type="button"
-                    onClick={() => { setIsImportModalOpen(true); setFileMenuOpen(false); }}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-gray-600 dark:text-foreground-tertiary hover:bg-gray-50 dark:hover:bg-background-hover transition-colors duration-150"
-                  >
-                    <Upload size={14} />
-                    {t('outline.import')}
-                  </button>
-                </div>
-              )}
-            </div>
-            {/* 手机端：保存按钮 */}
-            <Button
-              variant="secondary"
-              icon={<Save size={16} className="md:w-[18px] md:h-[18px]" />}
-              onClick={async () => await saveAllPages()}
-              className="md:hidden flex-1 sm:flex-initial text-sm md:text-base"
-            >
-              {t('common.save')}
-            </Button>
-            <span className="text-xs md:text-sm text-gray-500 dark:text-foreground-tertiary whitespace-nowrap">
-              {t('outline.pageCount', { count: String(currentProject.pages.length) })}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* 主内容区 */}
-      <main className="flex-1 flex flex-col md:flex-row gap-3 md:gap-6 p-3 md:p-6 overflow-y-auto min-h-0 relative">
-        {/* 左侧：可编辑文本区域（可收起） */}
-        <div
-          className="flex-shrink-0 transition-[width] duration-300 ease-in-out hidden md:block"
-          style={{ width: isPanelOpen ? undefined : 0 }}
-        >
-          <div
-            className="w-[320px] lg:w-[360px] xl:w-[400px] transition-[opacity,transform] duration-300 ease-in-out md:sticky md:top-0"
-            style={{
-              opacity: isPanelOpen ? 1 : 0,
-              transform: isPanelOpen ? 'translateX(0)' : 'translateX(-16px)',
-              pointerEvents: isPanelOpen ? 'auto' : 'none',
-            }}
-          >
-            <div className="bg-white dark:bg-background-secondary rounded-card shadow-md border border-gray-100 dark:border-border-primary overflow-hidden">
-              <div className="px-4 py-2.5 flex items-center gap-2 border-b border-gray-100 dark:border-border-secondary">
-                {currentProject.creation_type === 'idea'
-                  ? <Sparkle size={14} className="text-cyan-500 flex-shrink-0" />
-                  : <FileText size={14} className="text-cyan-500 flex-shrink-0" />}
-                <span className="text-xs font-medium text-gray-500 dark:text-foreground-tertiary">{inputLabel}</span>
-                <div className="ml-auto flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setIsPanelOpen(false)}
-                    className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-foreground-secondary rounded hover:bg-gray-100 dark:hover:bg-background-hover transition-colors"
-                  >
-                    <PanelLeftClose size={14} />
-                  </button>
-                </div>
-              </div>
-              <MarkdownTextarea
-                ref={desktopTextareaRef}
-                value={inputText}
-                onChange={handleInputChange}
-                onBlur={handleSaveInputText}
-                onPaste={handleImagePaste}
-                onFiles={handleImageFiles}
-                onSelectFromLibrary={() => { setActiveMaterialTarget('input'); setIsMaterialSelectorOpen(true); }}
-                placeholder={inputPlaceholder}
-                rows={12}
-                className="border-0 rounded-none shadow-none"
-              />
-            </div>
-            <ReferenceFileList
-              projectId={projectId}
-              onFileClick={setPreviewFileId}
-              className="mt-3"
-              showToast={show}
-            />
-          </div>
-        </div>
-
-        {/* 收起时的把手 - 绝对定位贴左边缘 */}
-        {!isPanelOpen && (
-          <button
-            type="button"
-            onClick={() => setIsPanelOpen(true)}
-            className="hidden md:flex absolute left-0 top-6 z-10 items-center justify-center w-6 h-14 bg-white dark:bg-background-secondary border border-l-0 border-gray-200 dark:border-border-primary rounded-r-lg shadow-md text-gray-400 hover:text-cyan-500 hover:border-cyan-300 dark:hover:border-cyan-500/40 hover:shadow-lg transition-all"
-          >
-            <PanelLeftOpen size={14} />
-          </button>
-        )}
-
-        {/* 移动端：始终显示卡片 */}
-        <div className="md:hidden w-full flex-shrink-0">
-          <div className="bg-white dark:bg-background-secondary rounded-card shadow-md border border-gray-100 dark:border-border-primary overflow-hidden">
-            <div className="px-4 py-2.5 flex items-center gap-2 border-b border-gray-100 dark:border-border-secondary">
+      <main className="flex-1 overflow-y-auto min-h-0 p-4 md:p-7">
+        <section className="grid grid-cols-1 xl:grid-cols-2 gap-4 md:gap-6">
+          <div className="bg-white dark:bg-background-secondary rounded-2xl shadow-lg shadow-sky-100/60 dark:shadow-none border border-sky-100 dark:border-border-primary overflow-hidden">
+            <div className="h-12 px-5 flex items-center gap-2 border-b border-slate-100 dark:border-border-secondary">
               {currentProject.creation_type === 'idea'
-                ? <Sparkle size={14} className="text-cyan-500 flex-shrink-0" />
-                : <FileText size={14} className="text-cyan-500 flex-shrink-0" />}
-              <span className="text-xs font-medium text-gray-500 dark:text-foreground-tertiary">{inputLabel}</span>
+                ? <Sparkle size={18} className="text-sky-500" />
+                : <FileText size={18} className="text-sky-500" />}
+              <h2 className="font-bold text-slate-800 dark:text-foreground-primary">{inputLabel}</h2>
             </div>
             <MarkdownTextarea
-              ref={mobileTextareaRef}
+              ref={desktopTextareaRef}
               value={inputText}
               onChange={handleInputChange}
               onBlur={handleSaveInputText}
@@ -789,22 +611,94 @@ export const OutlineEditor: React.FC = () => {
               onFiles={handleImageFiles}
               onSelectFromLibrary={() => { setActiveMaterialTarget('input'); setIsMaterialSelectorOpen(true); }}
               placeholder={inputPlaceholder}
-              rows={6}
-              className="border-0 rounded-none shadow-none"
+              rows={7}
+              className="border-0 rounded-none shadow-none min-h-[230px]"
             />
           </div>
-          <ReferenceFileList
-            projectId={projectId}
-            onFileClick={setPreviewFileId}
-            className="mt-3"
-            showToast={show}
-          />
-        </div>
 
-        {/* 右侧：大纲列表 */}
-        <div className="flex-1 min-w-0">
+          <div className="bg-white dark:bg-background-secondary rounded-2xl shadow-lg shadow-sky-100/60 dark:shadow-none border border-sky-100 dark:border-border-primary overflow-hidden">
+            <div className="h-12 px-5 flex items-center gap-2 border-b border-slate-100 dark:border-border-secondary">
+              <SlidersHorizontal size={18} className="text-sky-500" />
+              <h2 className="font-bold text-slate-800 dark:text-foreground-primary">{t('outline.outlineRequirements')}</h2>
+            </div>
+            <div data-testid="outline-requirements-textarea">
+              <MarkdownTextarea
+                ref={reqTextareaRef}
+                value={outlineRequirements}
+                onChange={(val) => { setOutlineRequirements(val); setIsRequirementsDirty(true); }}
+                onPaste={handleReqImagePaste}
+                onFiles={handleReqImageFiles}
+                onSelectFromLibrary={() => { setActiveMaterialTarget('requirements'); setIsMaterialSelectorOpen(true); }}
+                placeholder={t('outline.outlineRequirementsPlaceholder')}
+                rows={7}
+                showImagePreview={false}
+                className="border-0 rounded-none shadow-none min-h-[230px]"
+              />
+            </div>
+            <div className="px-5 pb-4">
+              <PresetCapsules
+                type="outline"
+                onAppend={(text) => {
+                  setOutlineRequirements((prev) => prev ? `${prev}\n${text}` : text);
+                  setIsRequirementsDirty(true);
+                }}
+              />
+            </div>
+          </div>
+        </section>
+
+        <ReferenceFileList
+          projectId={projectId}
+          onFileClick={setPreviewFileId}
+          className="mt-4"
+          showToast={show}
+        />
+
+        <section className="mt-6 grid grid-cols-1 lg:grid-cols-[290px_1fr] gap-5 md:gap-6">
+          <aside className="bg-white dark:bg-background-secondary rounded-2xl shadow-md border border-sky-100 dark:border-border-primary p-3 lg:sticky lg:top-4 lg:max-h-[calc(100vh-110px)] overflow-hidden">
+            <div className="flex items-center justify-between px-2 pb-3">
+              <div>
+                <h3 className="flex items-center gap-2 font-bold text-slate-700 dark:text-foreground-primary">
+                  <List size={17} className="text-sky-500" />
+                  {t('outline.pageNavigation')}
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">{t('outline.pageNavigationHint')}</p>
+              </div>
+              <span className="rounded-full bg-sky-50 px-3 py-1 text-sm font-semibold text-sky-700">
+                {t('outline.pageCount', { count: String(currentProject.pages.length) })}
+              </span>
+            </div>
+            <div className="space-y-2 overflow-y-auto pr-1 max-h-[520px]">
+              {currentProject.pages.map((page, index) => {
+                const selected = selectedPageId === page.id;
+                const navTitle = page.part || page.outline_content?.title || t('outline.titleLabel');
+                const navSubtitle = page.part ? page.outline_content?.title : page.outline_content?.points?.[0];
+                return (
+                  <button
+                    key={page.id || `nav-${index}`}
+                    type="button"
+                    onClick={() => {
+                      setSelectedPageId(page.id || null);
+                      document.getElementById(`outline-page-${page.id || index}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }}
+                    className={`w-full text-left rounded-xl border px-3 py-2.5 transition-all ${
+                      selected
+                        ? 'border-sky-300 bg-sky-50 shadow-sm'
+                        : 'border-slate-100 bg-white hover:border-sky-200 hover:bg-sky-50/60 dark:border-border-primary dark:bg-background-secondary dark:hover:bg-background-hover'
+                    }`}
+                  >
+                    <span className="text-xs font-semibold text-slate-400">{t('outline.page', { num: index + 1 })}</span>
+                    <span className="block mt-0.5 text-sm font-bold text-slate-700 dark:text-foreground-primary line-clamp-1">{navTitle}</span>
+                    <span className="block text-xs text-slate-500 dark:text-foreground-tertiary line-clamp-1">{navSubtitle || t('outline.keyPoints')}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </aside>
+
+          <div className="min-w-0">
           {currentProject.pages.length === 0 && !isOutlineStreaming ? (
-            <div className="text-center py-12 md:py-20">
+            <div className="text-center py-12 md:py-20 bg-white dark:bg-background-secondary rounded-2xl border border-sky-100 dark:border-border-primary shadow-sm">
               <div className="flex justify-center mb-4">
                 <FileText size={48} className="text-gray-300" />
               </div>
@@ -825,10 +719,11 @@ export const OutlineEditor: React.FC = () => {
                 items={currentProject.pages.map((p, idx) => p.id || `page-${idx}`)}
                 strategy={verticalListSortingStrategy}
               >
-                <div className="space-y-3 md:space-y-4">
+                <div className="space-y-4 md:space-y-5">
                   {currentProject.pages.map((page, index) => (
                     <div
                       key={page.id || `page-${index}`}
+                      id={`outline-page-${page.id || index}`}
                       className={isOutlineStreaming ? 'animate-slide-in-up' : ''}
                       style={isOutlineStreaming ? { animationDelay: `${index * 60}ms` } : undefined}
                     >
@@ -875,7 +770,8 @@ export const OutlineEditor: React.FC = () => {
               </SortableContext>
             </DndContext>
           )}
-        </div>
+          </div>
+        </section>
       </main>
       {ConfirmDialog}
       <ToastContainer />

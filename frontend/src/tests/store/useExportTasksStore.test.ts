@@ -1,6 +1,11 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { act } from '@testing-library/react'
 import { useExportTasksStore } from '@/store/useExportTasksStore'
+import { getTaskStatus } from '@/api/endpoints'
+
+vi.mock('@/api/endpoints', () => ({
+  getTaskStatus: vi.fn(),
+}))
 
 describe('useExportTasksStore', () => {
   beforeEach(() => {
@@ -132,5 +137,26 @@ describe('useExportTasksStore', () => {
     expect(useExportTasksStore.getState().tasks.map(task => task.id)).toEqual([
       'active-current',
     ])
+  })
+
+  it('keeps polling tasks active when a status request times out', async () => {
+    vi.mocked(getTaskStatus).mockRejectedValueOnce({ code: 'ECONNABORTED', message: 'timeout' })
+
+    act(() => {
+      useExportTasksStore.getState().addTask({
+        id: 'video-timeout',
+        taskId: 'task-video',
+        projectId: 'project-a',
+        type: 'video',
+        status: 'PROCESSING',
+      })
+    })
+
+    await act(async () => {
+      await useExportTasksStore.getState().pollTask('video-timeout', 'project-a', 'task-video')
+    })
+
+    expect(useExportTasksStore.getState().tasks[0].status).toBe('PROCESSING')
+    expect(useExportTasksStore.getState().tasks[0].errorMessage).toBeUndefined()
   })
 })

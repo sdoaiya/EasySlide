@@ -20,6 +20,20 @@ class EmptyGlobalExtractor:
         return TextStyleResult(font_color_rgb=(255, 0, 0), confidence=0.9)
 
 
+class SlowLocalExtractor:
+    def extract_batch_with_full_image(self, full_image, text_elements, **kwargs):
+        return {
+            elem["element_id"]: TextStyleResult(is_bold=True, confidence=0.9)
+            for elem in text_elements
+        }
+
+    def extract(self, image, text_content=None, **kwargs):
+        import time
+
+        time.sleep(0.2)
+        return TextStyleResult(font_color_rgb=(255, 0, 0), confidence=0.9)
+
+
 class EditableImageStub:
     class BBox:
         def __init__(self):
@@ -87,3 +101,19 @@ def test_hybrid_style_extraction_reports_missing_global_results_when_not_fail_fa
 
     assert "text_0" in results
     assert failures == [("text_0", "全局识别未返回完整结果")]
+
+
+def test_hybrid_style_extraction_skips_slow_local_results(tmp_path):
+    editable_images = _make_editable_images(tmp_path)
+
+    results, failures = ExportService._batch_extract_text_styles_hybrid(
+        editable_images=editable_images,
+        text_attribute_extractor=SlowLocalExtractor(),
+        max_workers=2,
+        fail_fast=False,
+        local_timeout_seconds=0.05,
+    )
+
+    assert "text_0" in results
+    assert results["text_0"].is_bold is True
+    assert failures == [("text_0", "单个识别超时，已使用全局样式")]

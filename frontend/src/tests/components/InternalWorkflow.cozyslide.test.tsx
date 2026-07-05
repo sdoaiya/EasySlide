@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { OutlineEditor } from '@/pages/OutlineEditor';
@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => {
     id: 'project-1',
     title: 'EasySlide demo',
     creation_type: 'ppt_renovation',
-    pages: [],
+    pages: [] as any[],
     idea_prompt: '',
     outline_text: '',
     description_text: '',
@@ -43,7 +43,9 @@ const mocks = vi.hoisted(() => {
     setError: vi.fn(),
   };
 
-  return { store };
+  const toastShow = vi.fn();
+
+  return { store, toastShow };
 });
 
 vi.mock('@/store/useProjectStore', () => {
@@ -64,6 +66,7 @@ vi.mock('@/store/useExportTasksStore', () => ({
 
 vi.mock('@/api/client', () => ({
   getImageUrl: vi.fn(() => ''),
+  getStaticAssetUrl: vi.fn((path: string) => path),
 }));
 
 vi.mock('@/api/endpoints', () => ({
@@ -135,7 +138,7 @@ vi.mock('@/components/shared', () => ({
   ProjectSettingsModal: () => null,
   ExportTasksPanel: () => null,
   TextStyleSelector: () => null,
-  useToast: () => ({ show: vi.fn(), ToastContainer: () => null }),
+  useToast: () => ({ show: mocks.toastShow, ToastContainer: () => null }),
   useConfirm: () => ({ confirm: vi.fn(), ConfirmDialog: null }),
 }));
 
@@ -174,6 +177,7 @@ function renderAt(path: string, element: React.ReactNode) {
 describe('EasySlide internal workflow chrome', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.store.currentProject.pages = [];
   });
 
   it('labels the outline editor as the content-structure step', () => {
@@ -200,5 +204,43 @@ describe('EasySlide internal workflow chrome', () => {
     expect(screen.getByText('Step 3 · 视觉成稿')).toBeInTheDocument();
     expect(screen.getByText('生成图片、预览并导出交付')).toBeInTheDocument();
     expect(screen.getByText('还没有页面')).toBeInTheDocument();
+  });
+
+  it('shows backend ElevenLabs voice errors when enabling TTS fails', async () => {
+    const endpoints = await import('@/api/endpoints');
+    mocks.store.currentProject.pages = [{
+      id: 'page-1',
+      page_id: 'page-1',
+      order_index: 0,
+      status: 'COMPLETED',
+      generated_image_path: '/files/page-1.png',
+      outline_content: { title: 'Slide 1', points: [] },
+      description_content: { text: 'Desc 1' },
+    }];
+    vi.mocked(endpoints.getSettings).mockResolvedValueOnce({
+      data: { output_language: 'zh', elevenlabs_api_key_length: 1 },
+    } as any);
+    vi.mocked(endpoints.getElevenLabsVoices).mockRejectedValueOnce({
+      response: {
+        data: {
+          error: { message: 'ElevenLabs API Key 未配置' },
+        },
+      },
+      message: 'Request failed with status code 400',
+    });
+
+    renderAt('/project/project-1/preview', <SlidePreview />);
+
+    fireEvent.click(screen.getByRole('button', { name: '导出 导出' }));
+    fireEvent.click(screen.getByRole('button', { name: '导出为讲解视频' }));
+    fireEvent.click(await screen.findByRole('button', { name: '高级配置' }));
+    fireEvent.click(screen.getByLabelText('使用 ElevenLabs 语音合成'));
+
+    await waitFor(() => {
+      expect(mocks.toastShow).toHaveBeenCalledWith({
+        message: 'ElevenLabs API Key 未配置',
+        type: 'error',
+      });
+    });
   });
 });

@@ -1,12 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Download, X, Trash2, FileText, Clock, CheckCircle, XCircle, Loader2, AlertTriangle, HelpCircle, Settings, Film, FileSpreadsheet, Image } from 'lucide-react';
+import { Download, X, Trash2, FileText, Clock, CheckCircle, XCircle, Loader2, AlertTriangle, HelpCircle, Settings, RefreshCw } from 'lucide-react';
 import { useExportTasksStore, type ExportTask, type ExportTaskType } from '@/store/useExportTasksStore';
 import { useT } from '@/hooks/useT';
 import type { Page } from '@/types';
 import { Button } from './Button';
-import { useConfirm } from './ConfirmDialog';
 import { cn } from '@/utils';
-import * as api from '@/api/endpoints';
 
 // Export 组件自包含翻译
 const exportI18n = {
@@ -19,14 +17,9 @@ const exportI18n = {
       warningsCount: "导出警告 ({{count}} 条)", detailInfo: "详细信息",
       styleExtractionFailed: "样式提取失败 ({{count}} 个)", textRenderFailed: "文本渲染失败 ({{count}} 个)",
       moreItems: "... 还有 {{count}} 条", exportFailed: "导出失败", preparing: "准备中...",
+      retry: "重试",
       settingsTip: "可在「项目设置 → 导出设置」中调整配置或开启「返回半成品」选项",
       codexReconnectTip: "如果是 Codex 授权过期或连接中断，也可以前往设置重新连接 OpenAI 授权后再试",
-      exportedFiles: "已导出文件",
-      deleteExportTitle: "删除导出文件",
-      deleteExportMessage: "确定要删除「{{filename}}」吗？此操作会移除服务器上的文件。",
-      deleteExportConfirm: "删除文件",
-      deleteExportFailed: "删除导出文件失败",
-      dismissDeleteError: "关闭删除错误",
     },
     shared: { historyRecords: "历史记录" }
   },
@@ -39,14 +32,9 @@ const exportI18n = {
       warningsCount: "Export Warnings ({{count}})", detailInfo: "Details",
       styleExtractionFailed: "Style extraction failed ({{count}})", textRenderFailed: "Text render failed ({{count}})",
       moreItems: "... {{count}} more", exportFailed: "Export Failed", preparing: "Preparing...",
+      retry: "Retry",
       settingsTip: "Adjust settings in \"Project Settings → Export Settings\" or enable \"Allow Partial Results\"",
       codexReconnectTip: "If Codex authorization expired or the connection was interrupted, reconnect OpenAI authorization in Settings and try again.",
-      exportedFiles: "Exported Files",
-      deleteExportTitle: "Delete Exported File",
-      deleteExportMessage: "Delete \"{{filename}}\" from the server?",
-      deleteExportConfirm: "Delete File",
-      deleteExportFailed: "Failed to delete exported file",
-      dismissDeleteError: "Dismiss delete error",
     },
     shared: { historyRecords: "History Records" }
   }
@@ -197,7 +185,12 @@ const WarningsModal: React.FC<{
   );
 };
 
-const TaskItem: React.FC<{ task: ExportTask; pages: Page[]; onRemove: () => void }> = ({ task, pages, onRemove }) => {
+const TaskItem: React.FC<{
+  task: ExportTask;
+  pages: Page[];
+  onRemove: () => void;
+  onRetry?: (task: ExportTask) => void;
+}> = ({ task, pages, onRemove, onRetry }) => {
   const t = useT(exportI18n);
   const [showWarningsModal, setShowWarningsModal] = useState(false);
   
@@ -215,6 +208,19 @@ const TaskItem: React.FC<{ task: ExportTask; pages: Page[]; onRemove: () => void
   };
 
   const pageRangeText = getPageRangeText(task.pageIds, pages, t);
+  const handleDownload = async () => {
+    if (window.electronAPI?.saveDownload) {
+      await window.electronAPI.saveDownload(task.downloadUrl!, task.filename);
+      return;
+    }
+
+    const a = document.createElement('a');
+    a.href = task.downloadUrl!;
+    a.download = task.filename || '';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
 
   const getProgressPercent = () => {
     if (!task.progress) return 0;
@@ -359,19 +365,24 @@ const TaskItem: React.FC<{ task: ExportTask; pages: Page[]; onRemove: () => void
       </div>
       
       <div className="flex items-center gap-1 flex-shrink-0">
+        {task.status === 'FAILED' && onRetry && (
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<RefreshCw size={14} />}
+            onClick={() => onRetry(task)}
+            className="text-xs px-2 py-1"
+          >
+            {t('export.retry')}
+          </Button>
+        )}
+
         {task.status === 'COMPLETED' && task.downloadUrl && (
           <Button
             variant="primary"
             size="sm"
             icon={<Download size={14} />}
-            onClick={() => {
-              const a = document.createElement('a');
-              a.href = task.downloadUrl!;
-              a.download = task.filename || '';
-              document.body.appendChild(a);
-              a.click();
-              document.body.removeChild(a);
-            }}
+            onClick={handleDownload}
             className="text-xs px-2 py-1"
           >
             {t('common.download')}
@@ -394,40 +405,13 @@ interface ExportTasksPanelProps {
   projectId?: string;
   pages?: Page[];
   className?: string;
+  onRetry?: (task: ExportTask) => void;
 }
 
-interface ExportedFile {
-  filename: string;
-  type: string;
-  size: number;
-  modified_at: string;
-  download_url: string;
-}
-
-const FileTypeIcon: React.FC<{ type: string }> = ({ type }) => {
-  switch (type) {
-    case 'video': return <Film size={14} className="text-red-500" />;
-    case 'pptx': return <FileSpreadsheet size={14} className="text-orange-500" />;
-    case 'pdf': return <FileText size={14} className="text-blue-500" />;
-    case 'images': case 'image': return <Image size={14} className="text-green-500" />;
-    default: return <FileText size={14} className="text-gray-400" />;
-  }
-};
-
-const formatFileSize = (bytes: number): string => {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-};
-
-export const ExportTasksPanel: React.FC<ExportTasksPanelProps> = ({ projectId, pages = [], className }) => {
+export const ExportTasksPanel: React.FC<ExportTasksPanelProps> = ({ projectId, pages = [], className, onRetry }) => {
   const t = useT(exportI18n);
   const [isExpanded, setIsExpanded] = useState(true);
   const { tasks, removeTask, clearCompleted, restoreActiveTasks } = useExportTasksStore();
-  const [exportedFiles, setExportedFiles] = useState<ExportedFile[]>([]);
-  const [deletingFilename, setDeletingFilename] = useState<string | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-  const { confirm, ConfirmDialog } = useConfirm();
 
   const filteredTasks = projectId
     ? tasks.filter(task => task.projectId === projectId)
@@ -444,56 +428,13 @@ export const ExportTasksPanel: React.FC<ExportTasksPanelProps> = ({ projectId, p
     restoreActiveTasks();
   }, []);
 
-  // 从服务端加载已导出文件列表
-  useEffect(() => {
-    if (!projectId) return;
-    api.listExports(projectId)
-      .then(res => setExportedFiles(res.data?.files || []))
-      .catch(() => {});
-  }, [projectId, completedTasks.length]);
-
   useEffect(() => {
     if (activeTasks.length > 0 && !isExpanded) {
       setIsExpanded(true);
     }
   }, [activeTasks.length, isExpanded]);
 
-  const deleteExportedFile = async (file: ExportedFile) => {
-    if (!projectId) return;
-
-    setDeletingFilename(file.filename);
-    setDeleteError(null);
-    try {
-      await api.deleteExport(projectId, file.filename);
-      setExportedFiles(prev => prev.filter(item => item.filename !== file.filename));
-      tasks
-        .filter(task => (
-          task.projectId === projectId
-          && (task.filename === file.filename || task.downloadUrl?.endsWith(`/${file.filename}`))
-        ))
-        .forEach(task => removeTask(task.id));
-    } catch (error: any) {
-      setDeleteError(error?.response?.data?.error?.message || error?.message || t('export.deleteExportFailed'));
-    } finally {
-      setDeletingFilename(null);
-    }
-  };
-
-  const confirmDeleteExportedFile = (file: ExportedFile) => {
-    confirm(
-      t('export.deleteExportMessage', { filename: file.filename }),
-      () => deleteExportedFile(file),
-      {
-        title: t('export.deleteExportTitle'),
-        confirmText: t('export.deleteExportConfirm'),
-        cancelText: t('common.cancel'),
-        variant: 'danger',
-      }
-    );
-  };
-
-  // 同时没有任务也没有文件时隐藏面板
-  if (filteredTasks.length === 0 && exportedFiles.length === 0) {
+  if (filteredTasks.length === 0) {
     return null;
   }
   
@@ -529,6 +470,7 @@ export const ExportTasksPanel: React.FC<ExportTasksPanelProps> = ({ projectId, p
                   task={task}
                   pages={pages}
                   onRemove={() => removeTask(task.id)}
+                  onRetry={onRetry}
                 />
               ))}
             </div>
@@ -552,75 +494,13 @@ export const ExportTasksPanel: React.FC<ExportTasksPanelProps> = ({ projectId, p
                   task={task}
                   pages={pages}
                   onRemove={() => removeTask(task.id)}
+                  onRetry={onRetry}
                 />
-              ))}
-            </div>
-          )}
-
-          {/* 服务端已导出文件 */}
-          {exportedFiles.length > 0 && (
-            <div className="p-2 border-t border-gray-100 dark:border-border-primary">
-              <div className="px-3 py-1 mb-1">
-                <span className="text-xs text-gray-400">{t('export.exportedFiles')}</span>
-              </div>
-              {deleteError && (
-                <div className="mx-3 mb-2 flex items-center justify-between gap-2 rounded border border-red-200 bg-red-50 px-2 py-1.5 text-xs text-red-700">
-                  <span className="break-words">{deleteError}</span>
-                  <button
-                    type="button"
-                    onClick={() => setDeleteError(null)}
-                    className="flex-shrink-0 rounded p-0.5 text-red-500 transition-colors hover:bg-red-100 hover:text-red-700"
-                    aria-label={t('export.dismissDeleteError')}
-                    title={t('export.dismissDeleteError')}
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
-              )}
-              {exportedFiles.map(file => (
-                <div key={file.filename} className="flex items-center gap-3 py-2 px-3 hover:bg-gray-50 dark:hover:bg-background-hover rounded-lg transition-colors">
-                  <FileTypeIcon type={file.type} />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm text-gray-700 dark:text-foreground-secondary truncate" title={file.filename}>
-                      {file.filename}
-                    </div>
-                    <div className="text-xs text-gray-400">
-                      {formatFileSize(file.size)} · {new Date(file.modified_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                    </div>
-                  </div>
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    icon={<Download size={14} />}
-                    onClick={() => {
-                      const a = document.createElement('a');
-                      a.href = file.download_url;
-                      a.download = file.filename;
-                      document.body.appendChild(a);
-                      a.click();
-                      document.body.removeChild(a);
-                    }}
-                    className="text-xs px-2 py-1"
-                  >
-                    {t('common.download')}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    icon={deletingFilename === file.filename ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
-                    onClick={() => confirmDeleteExportedFile(file)}
-                    disabled={deletingFilename !== null}
-                    className="px-2 text-red-600 hover:text-red-700 hover:bg-red-50"
-                    title={t('common.delete')}
-                    aria-label={`${t('common.delete')} ${file.filename}`}
-                  />
-                </div>
               ))}
             </div>
           )}
         </div>
       )}
-      {ConfirmDialog}
     </div>
   );
 };

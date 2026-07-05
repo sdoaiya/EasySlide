@@ -194,8 +194,8 @@ export function normalizeErrorMessage(errorMessage: string | null | undefined): 
   ) {
     if (isCodexContext) {
       return isZh
-        ? '连接 Codex 服务时中断，导致导出失败。请稍后重试；如果反复出现，可前往设置重新连接 OpenAI 授权后再试。'
-        : 'The connection to Codex was interrupted and the export failed. Please try again later, or reconnect OpenAI authorization in Settings if it keeps happening.';
+        ? '连接 Codex 服务时中断，导致导出失败。请稍后重试；如果开着 VPN/代理，请切换节点或暂时关闭后再试。反复出现时，可前往设置重新连接 OpenAI 授权。'
+        : 'The connection to Codex was interrupted and the export failed. Please try again later; if VPN/proxy is enabled, switch nodes or temporarily disable it, then retry. If it keeps happening, reconnect OpenAI authorization in Settings.';
     }
     return isZh
       ? '网络连接中断，导致操作失败。请稍后重试。'

@@ -4,6 +4,8 @@ Unit tests for FileParserService provider-specific behavior.
 
 import os
 import tempfile
+import io
+import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -90,3 +92,26 @@ def test_generate_single_caption_vertex_uses_provider_factory():
     finally:
         if os.path.exists(image_path):
             os.remove(image_path)
+
+
+def test_download_markdown_uses_configured_upload_folder(tmp_path):
+    service = FileParserService(
+        mineru_token='test-token',
+        provider_format='openai',
+        upload_folder=tmp_path / 'runtime_uploads',
+    )
+
+    zip_bytes = io.BytesIO()
+    with zipfile.ZipFile(zip_bytes, 'w') as z:
+        z.writestr('full.md', '# ok')
+
+    response = MagicMock()
+    response.content = zip_bytes.getvalue()
+    response.raise_for_status.return_value = None
+
+    with patch('services.file_parser_service.requests.get', return_value=response):
+        markdown, extract_id, error = service._download_markdown('https://example.test/result.zip')
+
+    assert error is None
+    assert markdown == '# ok'
+    assert (tmp_path / 'runtime_uploads' / 'mineru_files' / extract_id / 'full.md').exists()

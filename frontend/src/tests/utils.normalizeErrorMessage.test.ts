@@ -28,6 +28,7 @@ describe('normalizeErrorMessage', () => {
   test('maps codex ssl eof failures to retry guidance', () => {
     const message = normalizeErrorMessage("HTTPSConnectionPool(host='chatgpt.com', port=443): Max retries exceeded with url: /backend-api/codex/responses (Caused by SSLError(SSLEOFError(8, '[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1017)')))");
     expect(message).toContain('Codex');
+    expect(message).toContain('VPN');
     expect(message).toContain('稍后重试');
     expect(message).toContain('OpenAI 授权');
     expect(message).not.toContain('OpenAI 账号');
