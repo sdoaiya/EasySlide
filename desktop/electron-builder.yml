@@ -1,0 +1,32 @@
+appId: com.easyslide.desktop
+productName: EasySlide
+directories:
+  output: ${env.ELECTRON_BUILDER_OUT_DIR}
+electronDist: node_modules/electron/dist
+files:
+  - main.js
+  - preload.js
+  - package.json
+extraResources:
+  - from: resources/frontend
+    to: frontend
+  - from: resources/backend
+    to: backend
+  - from: resources/icon.png
+    to: icon.png
+win:
+  target:
+    - nsis
+  artifactName: EasySlide-${version}-Setup.${ext}
+  icon: resources/icon.ico
+mac:
+  target:
+    - dmg
+    - zip
+  artifactName: EasySlide-${version}-mac-${arch}.${ext}
+  icon: resources/icon.icns
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true

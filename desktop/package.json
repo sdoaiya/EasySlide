@@ -1,0 +1,17 @@
+{
+  "name": "easyslide-desktop",
+  "private": true,
+  "description": "EasySlide desktop wrapper",
+  "author": "Anionex",
+  "version": "0.3.0",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --config electron-builder.yml --win",
+    "dist:mac": "electron-builder --config electron-builder.yml --mac"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  }
+}

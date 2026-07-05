@@ -1,0 +1,5 @@
+APP_NAME = "EasySlide"
+API_NAME = "EasySlide API"
+API_RUNNING_MESSAGE = "EasySlide API is running"
+API_DESCRIPTION = "EasySlide AI presentation workspace"
+EXPORT_CREATOR = "easyslide"
