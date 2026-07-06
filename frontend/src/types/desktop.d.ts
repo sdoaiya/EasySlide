@@ -6,6 +6,9 @@ declare global {
       getBackendPort: () => Promise<number>;
       openExternal: (url: string) => Promise<void>;
       openDataDir: () => Promise<string>;
+      getExportDir: () => Promise<string>;
+      chooseExportDir: () => Promise<string>;
+      openExportDir: () => Promise<string>;
       saveDownload: (url: string, filename?: string) => Promise<string | null>;
       minimizeWindow: () => void;
       maximizeWindow: () => void;

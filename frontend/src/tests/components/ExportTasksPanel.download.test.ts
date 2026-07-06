@@ -10,4 +10,21 @@ describe('ExportTasksPanel downloads', () => {
 
     expect(panel).toContain('electronAPI?.saveDownload');
   });
+
+  it('saves desktop downloads to the configured export directory', () => {
+    const main = source('../desktop/main.js');
+
+    expect(main).toContain("ipcMain.handle('get-export-dir'");
+    expect(main).toContain("ipcMain.handle('choose-export-dir'");
+    expect(main).toContain('getConfiguredExportDir()');
+    expect(main).not.toContain('dialog.showSaveDialog');
+  });
+
+  it('shows export directory controls in settings', () => {
+    const settings = source('src/pages/Settings.tsx');
+
+    expect(settings).toContain('chooseExportDir');
+    expect(settings).toContain('openExportDir');
+    expect(settings).toContain('导出路径');
+  });
 });

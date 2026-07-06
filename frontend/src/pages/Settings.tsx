@@ -26,6 +26,7 @@ const settingsI18n = {
         textReasoning: "文本推理模式", imageReasoning: "图像推理模式",
         baiduOcr: "百度 Inpaint 配置", serviceTest: "服务测试", lazyllmConfig: "LazyLLM 厂商配置",
         vendorApiKeys: "厂商 API Key 配置",
+        exportConfig: "导出设置",
         advancedSettings: "高级设置",
         elevenlabs: "ElevenLabs 语音合成"
       },
@@ -134,6 +135,12 @@ const settingsI18n = {
         copyLink: "复制链接",
       },
       apiKeyTip: { before: "若使用 API Key 模式，可前往 ", linkLabel: "OpenAI Platform", after: " 创建和管理密钥" },
+      exportPath: {
+        label: "导出路径",
+        description: "下载导出的文件会直接保存到此目录；应用重启后，后台生成导出文件也会使用此目录。",
+        desktopOnly: "导出路径设置仅桌面版可用",
+        notSet: "未读取到导出路径",
+      },
       serviceTest: {
         title: "服务测试", description: "提前验证关键服务配置是否可用，避免使用期间异常。",
         tip: "提示：图像生成测试可能需要数分钟（取决于模型），请耐心等待。",
@@ -152,13 +159,14 @@ const settingsI18n = {
           parsePreview: "解析预览：{{preview}}"
         }
       },
-      actions: { save: "保存设置", saving: "保存中...", resetToDefault: "重置为默认配置", openDataDir: "打开数据目录" },
+      actions: { save: "保存设置", saving: "保存中...", resetToDefault: "重置为默认配置", openDataDir: "打开数据目录", chooseExportDir: "选择导出路径", openExportDir: "打开导出路径" },
       messages: {
         loadFailed: "加载设置失败", saveSuccess: "设置保存成功", saveFailed: "保存设置失败",
         resetConfirm: "将把大模型、图像生成和并发等所有配置恢复为环境默认值，已保存的自定义设置将丢失，确定继续吗？",
         resetTitle: "确认重置为默认配置", resetSuccess: "设置已重置", resetFailed: "重置设置失败",
         testServiceTip: "建议在本页底部进行服务测试，验证关键配置",
         resetConfirmBtn: "确定重置", resetCancelBtn: "取消", unknownError: "未知错误",
+        exportDirUpdated: "导出路径已更新",
         testSuccess: "测试成功"
       }
     }
@@ -183,6 +191,7 @@ const settingsI18n = {
         textReasoning: "Text Reasoning Mode", imageReasoning: "Image Reasoning Mode",
         baiduOcr: "Baidu Inpaint Configuration", serviceTest: "Service Test", lazyllmConfig: "LazyLLM Provider Configuration",
         vendorApiKeys: "Vendor API Key Configuration",
+        exportConfig: "Export Settings",
         advancedSettings: "Advanced Settings",
         elevenlabs: "ElevenLabs Text-to-Speech"
       },
@@ -291,6 +300,12 @@ const settingsI18n = {
         copyLink: "Copy link",
       },
       apiKeyTip: { before: "For API key mode, create and manage keys in ", linkLabel: "OpenAI Platform", after: "" },
+      exportPath: {
+        label: "Export Path",
+        description: "Downloaded export files are saved here directly. After restarting the app, backend export generation will also use this folder.",
+        desktopOnly: "Export path settings are only available in the desktop app",
+        notSet: "Export path not loaded",
+      },
       serviceTest: {
         title: "Service Test", description: "Verify key service configurations before use to avoid issues.",
         tip: "Tip: Image generation tests may take several minutes depending on the model, please be patient.",
@@ -309,13 +324,14 @@ const settingsI18n = {
           parsePreview: "Parse preview: {{preview}}"
         }
       },
-      actions: { save: "Save Settings", saving: "Saving...", resetToDefault: "Reset to Default", openDataDir: "Open Data Folder" },
+      actions: { save: "Save Settings", saving: "Saving...", resetToDefault: "Reset to Default", openDataDir: "Open Data Folder", chooseExportDir: "Choose Export Path", openExportDir: "Open Export Path" },
       messages: {
         loadFailed: "Failed to load settings", saveSuccess: "Settings saved successfully", saveFailed: "Failed to save settings",
         resetConfirm: "This will reset all configurations (LLM, image generation, concurrency, etc.) to environment defaults. Custom settings will be lost. Continue?",
         resetTitle: "Confirm Reset to Default", resetSuccess: "Settings reset successfully", resetFailed: "Failed to reset settings",
         testServiceTip: "It's recommended to test services at the bottom of this page to verify configurations",
         resetConfirmBtn: "Confirm Reset", resetCancelBtn: "Cancel", unknownError: "Unknown error",
+        exportDirUpdated: "Export path updated",
         testSuccess: "Test passed"
       }
     }
@@ -542,6 +558,7 @@ export const Settings: React.FC = () => {
   const [openAITextModels, setOpenAITextModels] = useState<string[]>([]);
   const [openAIImageModels, setOpenAIImageModels] = useState<string[]>([]);
   const [openAIModelsLoading, setOpenAIModelsLoading] = useState(false);
+  const [exportDir, setExportDir] = useState('');
 
   const refreshOpenAIModels = async (connected: boolean) => {
     if (!connected) {
@@ -838,7 +855,14 @@ export const Settings: React.FC = () => {
 
   useEffect(() => {
     loadSettings();
+    loadExportDir();
   }, []);
+
+  const loadExportDir = async () => {
+    if (!window.electronAPI?.getExportDir) return;
+    const dir = await window.electronAPI.getExportDir();
+    setExportDir(dir);
+  };
 
   const loadSettings = async () => {
     setIsLoading(true);
@@ -976,6 +1000,24 @@ export const Settings: React.FC = () => {
       return;
     }
     await window.electronAPI.openDataDir();
+  };
+
+  const handleChooseExportDir = async () => {
+    if (!window.electronAPI?.chooseExportDir) {
+      show({ message: t('settings.exportPath.desktopOnly'), type: 'info' });
+      return;
+    }
+    const dir = await window.electronAPI.chooseExportDir();
+    setExportDir(dir);
+    show({ message: t('settings.messages.exportDirUpdated'), type: 'success' });
+  };
+
+  const handleOpenExportDir = async () => {
+    if (!window.electronAPI?.openExportDir) {
+      show({ message: t('settings.exportPath.desktopOnly'), type: 'info' });
+      return;
+    }
+    await window.electronAPI.openExportDir();
   };
 
   const handleFieldChange = (key: string, value: any) => {
@@ -1433,6 +1475,39 @@ export const Settings: React.FC = () => {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+
+        <div className="rounded-[2rem] border border-slate-100 bg-white p-6 md:p-8 shadow-sm dark:bg-background-secondary dark:border-border-primary">
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-foreground-primary mb-2 flex items-center">
+            <FolderOpen size={20} />
+            <span className="ml-2">{t('settings.sections.exportConfig')}</span>
+          </h2>
+          <p className="text-sm text-gray-500 dark:text-foreground-tertiary mb-4">{t('settings.exportPath.description')}</p>
+          <div className="rounded-2xl border border-sky-100 bg-sky-50/50 p-4 dark:border-border-primary dark:bg-background-primary">
+            <div className="text-sm font-medium text-gray-700 dark:text-foreground-secondary mb-2">{t('settings.exportPath.label')}</div>
+            <div className="min-h-10 rounded-xl bg-white px-3 py-2 text-sm text-slate-700 shadow-sm break-all dark:bg-background-secondary dark:text-foreground-secondary">
+              {exportDir || t('settings.exportPath.notSet')}
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Button
+                variant="secondary"
+                icon={<FolderOpen size={18} />}
+                onClick={handleChooseExportDir}
+              >
+                {t('settings.actions.chooseExportDir')}
+              </Button>
+              <Button
+                variant="secondary"
+                icon={<FolderOpen size={18} />}
+                onClick={handleOpenExportDir}
+              >
+                {t('settings.actions.openExportDir')}
+              </Button>
+            </div>
+            {!window.electronAPI?.chooseExportDir && (
+              <p className="mt-3 text-xs text-amber-600">{t('settings.exportPath.desktopOnly')}</p>
+            )}
           </div>
         </div>
 

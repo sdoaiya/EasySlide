@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
@@ -29,11 +29,35 @@ function getUserDataDirs() {
   };
 }
 
+function getDesktopSettingsPath() {
+  return path.join(getUserDataDirs().root, 'desktop-settings.json');
+}
+
+function readDesktopSettings() {
+  try {
+    return JSON.parse(fs.readFileSync(getDesktopSettingsPath(), 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+function writeDesktopSettings(settings) {
+  const settingsPath = getDesktopSettingsPath();
+  ensureDir(path.dirname(settingsPath));
+  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+}
+
+function getConfiguredExportDir() {
+  const exportDir = readDesktopSettings().exportDir;
+  return exportDir ? String(exportDir) : getUserDataDirs().exportsDir;
+}
+
 function startBackend() {
   const dirs = getUserDataDirs();
+  const exportDir = getConfiguredExportDir();
   ensureDir(path.dirname(dirs.databasePath));
   ensureDir(dirs.uploadsDir);
-  ensureDir(dirs.exportsDir);
+  ensureDir(exportDir);
 
   const backendBinary = process.platform === 'win32' ? 'easyslide-backend.exe' : 'easyslide-backend';
   const backendEntry = app.isPackaged
@@ -48,7 +72,7 @@ function startBackend() {
     BACKEND_PORT: String(BACKEND_PORT),
     DATABASE_PATH: dirs.databasePath,
     UPLOAD_FOLDER: dirs.uploadsDir,
-    EXPORT_FOLDER: dirs.exportsDir,
+    EXPORT_FOLDER: exportDir,
     CORS_ORIGINS: `http://127.0.0.1:${BACKEND_PORT}`,
   };
 
@@ -119,12 +143,12 @@ function getAppIconPath() {
     : path.join(__dirname, 'resources', 'icon.png');
 }
 
-function getAvailableDownloadPath(filename) {
+function getAvailablePath(dir, filename) {
   const parsed = path.parse(filename || 'download');
-  let target = path.join(app.getPath('downloads'), filename || 'download');
+  let target = path.join(dir, filename || 'download');
   let index = 1;
   while (fs.existsSync(target)) {
-    target = path.join(app.getPath('downloads'), `${parsed.name} (${index})${parsed.ext}`);
+    target = path.join(dir, `${parsed.name} (${index})${parsed.ext}`);
     index += 1;
   }
   return target;
@@ -209,11 +233,43 @@ ipcMain.handle('open-data-dir', async () => {
   ensureDir(dirs.root);
   return shell.openPath(dirs.root);
 });
+ipcMain.handle('get-export-dir', () => {
+  const exportDir = getConfiguredExportDir();
+  ensureDir(exportDir);
+  return exportDir;
+});
+ipcMain.handle('choose-export-dir', async () => {
+  const currentDir = getConfiguredExportDir();
+  ensureDir(currentDir);
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    title: '选择导出路径',
+    defaultPath: currentDir,
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  if (canceled || !filePaths[0]) {
+    return currentDir;
+  }
+
+  const exportDir = filePaths[0];
+  writeDesktopSettings({
+    ...readDesktopSettings(),
+    exportDir,
+  });
+  ensureDir(exportDir);
+  return exportDir;
+});
+ipcMain.handle('open-export-dir', async () => {
+  const exportDir = getConfiguredExportDir();
+  ensureDir(exportDir);
+  return shell.openPath(exportDir);
+});
 ipcMain.handle('save-download', async (_event, url, filename) => {
   const rawUrl = String(url || '');
   const sourceUrl = rawUrl.startsWith('http') ? rawUrl : `http://127.0.0.1:${BACKEND_PORT}${rawUrl}`;
   const suggestedName = filename || decodeURIComponent(path.basename(new URL(sourceUrl).pathname)) || 'download';
-  const filePath = getAvailableDownloadPath(suggestedName);
+  const exportDir = getConfiguredExportDir();
+  ensureDir(exportDir);
+  const filePath = getAvailablePath(exportDir, suggestedName);
 
   const file = fs.createWriteStream(filePath);
   await new Promise((resolve, reject) => {
