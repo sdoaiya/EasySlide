@@ -384,6 +384,31 @@ class TestProjectUpdate:
         assert data['data']['project_title'] == '新的项目标题'
         assert data['data']['idea_prompt'] == before_data['data']['idea_prompt']
 
+    @pytest.mark.parametrize('field', [
+        'export_allow_partial',
+        'export_high_fidelity_editable',
+    ])
+    @pytest.mark.parametrize('value', [True, False])
+    def test_update_project_accepts_boolean_export_settings(self, client, sample_project, field, value):
+        project_id = sample_project['project_id']
+
+        response = client.put(f'/api/projects/{project_id}', json={field: value})
+
+        data = assert_success_response(response)
+        assert data['data'][field] is value
+
+    @pytest.mark.parametrize('field', [
+        'export_allow_partial',
+        'export_high_fidelity_editable',
+    ])
+    def test_update_project_rejects_string_export_settings(self, client, sample_project, field):
+        project_id = sample_project['project_id']
+
+        response = client.put(f'/api/projects/{project_id}', json={field: 'false'})
+
+        data = assert_error_response(response, 400)
+        assert data['error']['message'] == f'{field} must be a boolean'
+
 
 class TestProjectDelete:
     """项目删除测试"""

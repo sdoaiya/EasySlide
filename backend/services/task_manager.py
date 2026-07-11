@@ -22,6 +22,24 @@ from utils.image_utils import check_image_resolution
 logger = logging.getLogger(__name__)
 
 
+def _set_export_task_progress(task: Task, progress: dict):
+    """Update progress without discarding restart data saved by the controller."""
+    resume = task.get_progress().get('_resume')
+    if resume:
+        progress['_resume'] = resume
+    task.set_progress(progress)
+
+
+def _wait_if_export_task_paused(task_id: str):
+    """Pause cooperatively at export progress boundaries."""
+    while True:
+        db.session.expire_all()
+        task = Task.query.get(task_id)
+        if not task or task.status != 'PAUSED':
+            return
+        time.sleep(0.25)
+
+
 def get_image_prompt_field_names() -> set:
     """读取设置中允许进入文生图 prompt 的额外字段名。"""
     try:
@@ -1565,7 +1583,8 @@ def export_editable_pptx_with_recursive_analysis_task(
     max_workers: int = 4,
     export_extractor_method: str = 'hybrid',
     export_inpaint_method: str = 'hybrid',
-    enable_icon_subject_extraction: bool = True,
+    export_high_fidelity_editable: bool = False,
+    enable_icon_subject_extraction: bool = False,
     app=None
 ):
     """
@@ -1591,7 +1610,7 @@ def export_editable_pptx_with_recursive_analysis_task(
         export_inpaint_method: 背景修复方法 ('generative', 'baidu', 'hybrid')
         app: Flask应用实例
     """
-    logger.info(f"🚀 Task {task_id} started: export_editable_pptx_with_recursive_analysis (project={project_id}, depth={max_depth}, workers={max_workers}, extractor={export_extractor_method}, inpaint={export_inpaint_method}, icon_subject_extraction={enable_icon_subject_extraction})")
+    logger.info(f"🚀 Task {task_id} started: export_editable_pptx_with_recursive_analysis (project={project_id}, depth={max_depth}, workers={max_workers}, extractor={export_extractor_method}, inpaint={export_inpaint_method}, high_fidelity={export_high_fidelity_editable})")
     
     if app is None:
         raise ValueError("Flask app instance must be provided")
@@ -1606,6 +1625,13 @@ def export_editable_pptx_with_recursive_analysis_task(
         logger.info(f"开始递归分析导出任务 {task_id} for project {project_id}")
 
         try:
+            _wait_if_export_task_paused(task_id)
+            task = Task.query.get(task_id)
+            if not task:
+                return
+            task.status = 'PROCESSING'
+            db.session.commit()
+
             # Get project
             project = Project.query.get(project_id)
             if not project:
@@ -1613,6 +1639,9 @@ def export_editable_pptx_with_recursive_analysis_task(
 
             # 读取项目的导出设置：是否允许返回半成品
             export_allow_partial = project.export_allow_partial or False
+            export_high_fidelity_editable = bool(
+                export_high_fidelity_editable or project.export_high_fidelity_editable
+            )
             fail_fast = not export_allow_partial
             logger.info(f"导出设置: export_allow_partial={export_allow_partial}, fail_fast={fail_fast}")
 
@@ -1639,7 +1668,7 @@ def export_editable_pptx_with_recursive_analysis_task(
             
             # 初始化任务进度（包含消息日志）
             task = Task.query.get(task_id)
-            task.set_progress({
+            _set_export_task_progress(task, {
                 "total": 100,  # 使用百分比
                 "completed": 0,
                 "failed": 0,
@@ -1657,6 +1686,7 @@ def export_editable_pptx_with_recursive_analysis_task(
                 """更新任务进度到数据库"""
                 nonlocal progress_messages
                 try:
+                    _wait_if_export_task_paused(task_id)
                     # 添加新消息到日志
                     new_message = f"[{step}] {message}"
                     progress_messages.append(new_message)
@@ -1667,7 +1697,7 @@ def export_editable_pptx_with_recursive_analysis_task(
                     # 更新数据库
                     task = Task.query.get(task_id)
                     if task:
-                        task.set_progress({
+                        _set_export_task_progress(task, {
                             "total": 100,
                             "completed": percent,
                             "failed": 0,
@@ -1710,27 +1740,83 @@ def export_editable_pptx_with_recursive_analysis_task(
             
             # Step 2: 创建文字属性提取器
             from services.image_editability import TextAttributeExtractorFactory
-            text_attribute_extractor = TextAttributeExtractorFactory.create_caption_model_extractor()
-            progress_callback("准备", "文字属性提取器已初始化", 5)
+            text_attribute_extractor = None
+            style_extractor_warning = None
+            try:
+                text_attribute_extractor = TextAttributeExtractorFactory.create_caption_model_extractor()
+                progress_callback("准备", "文字属性提取器已初始化", 5)
+            except Exception as e:
+                logger.warning("文字属性提取器初始化失败，使用默认文本样式: %s", e)
+                style_extractor_warning = "文本样式模型初始化失败，已使用默认文本样式继续导出"
+                progress_callback("准备", style_extractor_warning, 5)
+
+            # Step 2.5: create image editing provider for high-fidelity asset-sheet separation
+            image_editing_provider = None
+            image_editing_warning = None
+            if export_high_fidelity_editable:
+                try:
+                    from services.ai_providers import get_image_provider
+                    from models.settings import Settings
+                    from config import Config
+                    settings = Settings.query.first()
+                    model = (settings.image_model if settings else None) or Config.IMAGE_MODEL
+                    image_editing_provider = get_image_provider(model=model)
+                    progress_callback("准备", f"图像编辑模型已初始化（{model}）", 5)
+                except Exception as e:
+                    logger.warning("无法初始化图像编辑 provider: %s", e)
+                    image_editing_warning = "高保真前景分离模型初始化失败，本次将保留原始图片元素"
+
             
             # Step 3: 调用导出方法（使用项目的导出设置）
             logger.info(f"Step 3: 创建可编辑PPTX (extractor={export_extractor_method}, inpaint={export_inpaint_method}, fail_fast={fail_fast})...")
             progress_callback("配置", f"提取方法: {export_extractor_method}, 背景修复: {export_inpaint_method}", 6)
 
-            _, export_warnings = ExportService.create_editable_pptx_with_recursive_analysis(
-                image_paths=image_paths,
-                output_file=output_path,
-                slide_width_pixels=slide_width,
-                slide_height_pixels=slide_height,
-                max_depth=max_depth,
-                max_workers=max_workers,
-                text_attribute_extractor=text_attribute_extractor,
-                progress_callback=progress_callback,
-                export_extractor_method=export_extractor_method,
-                export_inpaint_method=export_inpaint_method,
-                enable_icon_subject_extraction=enable_icon_subject_extraction,
-                fail_fast=fail_fast
-            )
+            try:
+                _, export_warnings = ExportService.create_editable_pptx_with_recursive_analysis(
+                    image_paths=image_paths,
+                    output_file=output_path,
+                    slide_width_pixels=slide_width,
+                    slide_height_pixels=slide_height,
+                    max_depth=max_depth,
+                    max_workers=max_workers,
+                    text_attribute_extractor=text_attribute_extractor,
+                    progress_callback=progress_callback,
+                    export_extractor_method=export_extractor_method,
+                    export_inpaint_method=export_inpaint_method,
+                    export_high_fidelity_editable=export_high_fidelity_editable,
+                    image_editing_provider=image_editing_provider,
+                    enable_icon_subject_extraction=False,
+                    fail_fast=fail_fast
+                )
+            except ExportError as e:
+                if (
+                    e.error_type != 'layout_analysis'
+                    or export_inpaint_method == 'none'
+                    or e.details.get('pending_pages')
+                ):
+                    raise
+                progress_callback("背景修复", "版面元素已识别，背景修复阶段异常；跳过背景修复重试导出", 40)
+                _, export_warnings = ExportService.create_editable_pptx_with_recursive_analysis(
+                    image_paths=image_paths,
+                    output_file=output_path,
+                    slide_width_pixels=slide_width,
+                    slide_height_pixels=slide_height,
+                    max_depth=max_depth,
+                    max_workers=max_workers,
+                    text_attribute_extractor=text_attribute_extractor,
+                    progress_callback=progress_callback,
+                    export_extractor_method=export_extractor_method,
+                    export_inpaint_method='none',
+                    export_high_fidelity_editable=export_high_fidelity_editable,
+                    image_editing_provider=image_editing_provider,
+                    enable_icon_subject_extraction=False,
+                    fail_fast=fail_fast
+                )
+                export_warnings.add_warning("背景修复失败，已跳过背景修复生成可编辑PPTX")
+
+            for warning in (style_extractor_warning, image_editing_warning):
+                if warning and warning not in export_warnings.other_warnings:
+                    export_warnings.add_warning(warning)
             
             logger.info(f"✓ 可编辑PPTX已创建: {output_path}")
             
@@ -1749,9 +1835,11 @@ def export_editable_pptx_with_recursive_analysis_task(
             
             task = Task.query.get(task_id)
             if task:
+                _wait_if_export_task_paused(task_id)
+                db.session.refresh(task)
                 task.status = 'COMPLETED'
                 task.completed_at = datetime.utcnow()
-                task.set_progress({
+                _set_export_task_progress(task, {
                     "total": 100,
                     "completed": 100,
                     "failed": 0,
@@ -1778,6 +1866,8 @@ def export_editable_pptx_with_recursive_analysis_task(
             # 标记任务失败，包含详细错误信息
             task = Task.query.get(task_id)
             if task:
+                if task.status == 'PAUSED':
+                    return
                 task.status = 'FAILED'
                 # 构建详细的错误消息
                 error_message = f"{e.message}"
@@ -1786,7 +1876,7 @@ def export_editable_pptx_with_recursive_analysis_task(
                 task.error_message = error_message
                 task.completed_at = datetime.utcnow()
                 # 在 progress 中保存详细错误信息
-                task.set_progress({
+                _set_export_task_progress(task, {
                     "total": 100,
                     "completed": 0,
                     "failed": 1,
@@ -1806,6 +1896,8 @@ def export_editable_pptx_with_recursive_analysis_task(
             # 标记任务失败
             task = Task.query.get(task_id)
             if task:
+                if task.status == 'PAUSED':
+                    return
                 task.status = 'FAILED'
                 task.error_message = str(e)
                 task.completed_at = datetime.utcnow()
@@ -1867,6 +1959,7 @@ def export_video_task(
             """进度回调 — percent 范围对应 generate_narration_video 的内部进度 (20-95%)"""
             nonlocal progress_messages
             try:
+                _wait_if_export_task_paused(task_id)
                 new_message = f"[{step}] {message}"
                 progress_messages.append(new_message)
                 if len(progress_messages) > max_messages:
@@ -1878,7 +1971,7 @@ def export_video_task(
 
                 task = Task.query.get(task_id)
                 if task:
-                    task.set_progress({
+                    _set_export_task_progress(task, {
                         "total": 100,
                         "completed": mapped_pct,
                         "failed": 0,
@@ -1891,6 +1984,7 @@ def export_video_task(
                 logger.warning(f"更新进度失败: {e}")
 
         try:
+            _wait_if_export_task_paused(task_id)
             task = Task.query.get(task_id)
             if not task:
                 logger.error(f"Task {task_id} not found")
@@ -1905,7 +1999,7 @@ def export_video_task(
             logger.info(f"视频导出设置: export_allow_partial={export_allow_partial}, fail_fast={fail_fast}")
 
             task.status = 'PROCESSING'
-            task.set_progress({
+            _set_export_task_progress(task, {
                 "total": 100,
                 "completed": 0,
                 "failed": 0,
@@ -2124,9 +2218,11 @@ def export_video_task(
 
             task = Task.query.get(task_id)
             if task:
+                _wait_if_export_task_paused(task_id)
+                db.session.refresh(task)
                 task.status = 'COMPLETED'
                 task.completed_at = datetime.utcnow()
-                task.set_progress({
+                _set_export_task_progress(task, {
                     "total": 100,
                     "completed": 100,
                     "failed": 0,
@@ -2146,6 +2242,8 @@ def export_video_task(
 
             task = Task.query.get(task_id)
             if task:
+                if task.status == 'PAUSED':
+                    return
                 task.status = 'FAILED'
                 task.error_message = str(e)
                 task.completed_at = datetime.utcnow()

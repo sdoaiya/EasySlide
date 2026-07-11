@@ -74,6 +74,20 @@ test.describe('Preview text style template - Mock tests', () => {
     await expect(page.getByText(/应用风格|Apply Style/)).toBeVisible()
   })
 
+  test('preview canvas and controls fit within the desktop viewport', async ({ page }) => {
+    await page.setViewportSize({ width: 1600, height: 900 })
+    await setupMocks(page)
+    await page.goto(`${BASE_URL}/project/mock-proj/preview`)
+
+    const canvas = await page.getByTestId('slide-preview-canvas').boundingBox()
+    const controls = await page.getByTestId('slide-preview-controls').boundingBox()
+
+    expect(canvas).not.toBeNull()
+    expect(controls).not.toBeNull()
+    expect(canvas!.y + canvas!.height).toBeLessThanOrEqual(controls!.y)
+    expect(controls!.y + controls!.height).toBeLessThanOrEqual(900)
+  })
+
   test('clicking preset style fills textarea', async ({ page }) => {
     await setupMocks(page)
     await page.goto(`${BASE_URL}/project/mock-proj/preview`)

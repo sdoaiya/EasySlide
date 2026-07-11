@@ -15,12 +15,15 @@ export const Toast: React.FC<ToastProps> = ({
   onClose,
   duration = type === 'error' ? 5000 : 3000,
 }) => {
+  const onCloseRef = React.useRef(onClose);
+  onCloseRef.current = onClose;
+
   useEffect(() => {
     if (duration > 0) {
-      const timer = setTimeout(onClose, duration);
+      const timer = setTimeout(() => onCloseRef.current(), duration);
       return () => clearTimeout(timer);
     }
-  }, [duration, onClose]);
+  }, [duration]);
 
   const icons = {
     success: <CheckCircle size={20} />,
@@ -69,23 +72,25 @@ export const useToast = () => {
     });
   };
 
-  const remove = (id: string) => {
+  const remove = React.useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
-  };
+  }, []);
+
+  const ToastContainer = React.useCallback(() => (
+    <div className="fixed top-20 right-4 z-50 flex flex-col items-end gap-2 pointer-events-none">
+      {toasts.map((toast) => (
+        <div key={toast.id} className="pointer-events-auto">
+          <Toast
+            {...toast.props}
+            onClose={() => remove(toast.id)}
+          />
+        </div>
+      ))}
+    </div>
+  ), [remove, toasts]);
 
   return {
     show,
-    ToastContainer: () => (
-      <div className="fixed top-20 right-4 z-50 flex flex-col items-end gap-2 pointer-events-none">
-        {toasts.map((toast) => (
-          <div key={toast.id} className="pointer-events-auto">
-            <Toast
-              {...toast.props}
-              onClose={() => remove(toast.id)}
-            />
-          </div>
-        ))}
-      </div>
-    ),
+    ToastContainer,
   };
 };

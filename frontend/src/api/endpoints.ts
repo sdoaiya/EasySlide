@@ -598,6 +598,16 @@ export const getTaskStatus = async (projectId: string, taskId: string): Promise<
   return response.data;
 };
 
+export const pauseTask = async (projectId: string, taskId: string): Promise<ApiResponse<Task>> => {
+  const response = await apiClient.post<ApiResponse<Task>>(`/api/projects/${projectId}/tasks/${taskId}/pause`);
+  return response.data;
+};
+
+export const resumeTask = async (projectId: string, taskId: string): Promise<ApiResponse<Task>> => {
+  const response = await apiClient.post<ApiResponse<Task>>(`/api/projects/${projectId}/tasks/${taskId}/resume`);
+  return response.data;
+};
+
 // ===== 旁白 (Narration) =====
 
 /**
@@ -1352,6 +1362,20 @@ export const getOpenAIOAuthStatus = async (): Promise<ApiResponse<{ connected: b
  */
 export const getOpenAIOAuthModels = async (): Promise<ApiResponse<{ models: string[]; text_models?: string[]; image_models?: string[] }>> => {
   const response = await apiClient.get<ApiResponse<{ models: string[]; text_models?: string[]; image_models?: string[] }>>('/api/settings/openai-oauth/models');
+  return response.data;
+};
+
+export interface ModelOptionsRequest {
+  provider: string;
+  model_type: 'text' | 'image' | 'image_caption';
+  api_key?: string;
+  api_base_url?: string;
+}
+
+export const getModelOptions = async (
+  data: ModelOptionsRequest
+): Promise<ApiResponse<{ models: string[] }>> => {
+  const response = await apiClient.post<ApiResponse<{ models: string[] }>>('/api/settings/model-options', data);
   return response.data;
 };
 

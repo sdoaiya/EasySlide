@@ -478,8 +478,8 @@ class ServiceConfig:
             max_depth: 最大递归深度（默认1）
             min_image_size: 最小图片尺寸
             min_image_area: 最小图片面积
-            segmentation_provider: 百度智能抠图 Provider（可选），用于图标主体提取
-            enable_icon_subject_extraction: 是否启用图标主体提取（默认 False，需配合 provider）
+            segmentation_provider: 保留给旧调用方的兼容参数，当前不启用
+            enable_icon_subject_extraction: 保留给旧调用方的兼容参数，当前不启用
         """
         self.upload_folder = upload_folder
         self.extractor_registry = extractor_registry
@@ -527,7 +527,7 @@ class ServiceConfig:
             use_hybrid_extractor: 是否使用混合提取器（默认True，会被 extractor_method 覆盖）
             use_hybrid_inpaint: 是否使用混合Inpaint（默认True，会被 inpaint_method 覆盖）
             extractor_method: 组件提取方法，'mineru' 或 'hybrid'（优先于 use_hybrid_extractor）
-            inpaint_method: 背景修复方法，'generative', 'baidu', 'hybrid'（优先于 use_hybrid_inpaint）
+            inpaint_method: 背景修复方法，'generative', 'baidu', 'hybrid', 'none'（优先于 use_hybrid_inpaint）
             **kwargs: 其他配置参数
                 - max_depth: 最大递归深度（默认1）
                 - min_image_size: 最小图片尺寸（默认200）
@@ -612,7 +612,9 @@ class ServiceConfig:
         
         logger.info(f"inpaint_method={effective_inpaint_method}")
         
-        if effective_inpaint_method == 'hybrid':
+        if effective_inpaint_method == 'none':
+            logger.info("跳过背景修复（inpaint_method=none）")
+        elif effective_inpaint_method == 'hybrid':
             # 混合Inpaint提供者（百度修复 + 生成式画质提升）
             hybrid_inpaint = InpaintProviderFactory.create_hybrid_inpaint_provider(
                 ai_service=ai_service,
@@ -653,17 +655,6 @@ class ServiceConfig:
             inpaint_registry.register_default(generative_provider)
             logger.info("✅ 重绘注册表已创建（GenerativeEdit通用）")
         
-        # 创建主体抠图 Provider（默认 RMBG-2.0 ONNX 本地推理，用于图标透明背景）
-        enable_icon_subject_extraction = kwargs.get('enable_icon_subject_extraction', False)
-        segmentation_provider = None
-        if enable_icon_subject_extraction:
-            try:
-                from services.ai_providers.image import create_rmbg_segmentation_provider
-                segmentation_provider = create_rmbg_segmentation_provider()
-                logger.info("✅ RMBG-2.0 主体抠图 Provider 已创建（用于图标透明背景）")
-            except Exception as e:
-                logger.warning(f"创建主体抠图 Provider 失败: {e}")
-
         return cls(
             upload_folder=upload_path,
             extractor_registry=extractor_registry,
@@ -671,8 +662,8 @@ class ServiceConfig:
             max_depth=kwargs.get('max_depth', 1),
             min_image_size=kwargs.get('min_image_size', 200),
             min_image_area=kwargs.get('min_image_area', 40000),
-            segmentation_provider=segmentation_provider,
-            enable_icon_subject_extraction=enable_icon_subject_extraction and segmentation_provider is not None,
+            segmentation_provider=None,
+            enable_icon_subject_extraction=False,
         )
 
 

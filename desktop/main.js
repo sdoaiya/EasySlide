@@ -9,6 +9,8 @@ let mainWindow;
 let backendProcess;
 let tray;
 let isQuitting = false;
+let quitPreparationStarted = false;
+let quitPreparationComplete = false;
 
 const BACKEND_PORT = 5011;
 
@@ -128,6 +130,35 @@ function stopBackend() {
   backendProcess.kill();
 }
 
+function pauseActiveExports() {
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    const req = http.request({
+      hostname: '127.0.0.1',
+      port: BACKEND_PORT,
+      path: '/api/projects/tasks/pause-active-exports',
+      method: 'POST',
+    }, (res) => {
+      res.resume();
+      res.on('end', finish);
+      res.on('error', finish);
+    });
+    timer = setTimeout(() => {
+      req.destroy();
+      finish();
+    }, 1800);
+    req.on('error', finish);
+    req.end();
+  });
+}
+
 function isNewerVersion(current, latest) {
   const parse = (value) => value.split('.').map((part) => Number.parseInt(part, 10) || 0);
   const [cMajor, cMinor, cPatch] = parse(current);
@@ -221,9 +252,23 @@ app.on('window-all-closed', () => {
   }
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
   isQuitting = true;
-  stopBackend();
+  if (quitPreparationComplete) {
+    return;
+  }
+
+  event.preventDefault();
+  if (quitPreparationStarted) {
+    return;
+  }
+
+  quitPreparationStarted = true;
+  pauseActiveExports().finally(() => {
+    quitPreparationComplete = true;
+    stopBackend();
+    app.quit();
+  });
 });
 
 ipcMain.handle('get-backend-port', () => BACKEND_PORT);

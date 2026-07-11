@@ -33,10 +33,8 @@ const projectSettingsI18n = {
       backgroundBaidu: "百度 Inpaint 服务获取", backgroundBaiduDesc: "使用百度图像修复 API，速度快但画质一般，需要在全局设置中配置百度 Inpaint Key",
       usesAiModel: "使用文生图模型",
       costTip: "标有「使用文生图模型」的选项会调用AI图片生成API（如Gemini），每页会产生额外的API调用费用。如果需要控制成本，可选择「百度 Inpaint」方式。",
-      iconSubjectExtraction: "图标透明背景",
-      iconSubjectExtractionDesc: "开启后，导出时对识别为图标的图片调用本地 RMBG-2.0 模型抠图，获取透明背景 PNG 后再贴入 PPT，避免图标自带的原 PPT 背景在新底色上突兀显示。仅对识别为图标的元素生效，照片/插图保持原矩形裁剪。",
-      iconSubjectExtractionTip: "基于 RMBG-2.0 ONNX 模型本地推理，首次使用会自动下载约 512MB 模型；单张图标处理失败时会自动回退到原矩形裁剪，不影响导出。",
       errorHandling: "错误处理策略", errorHandlingDesc: "配置导出过程中遇到错误时的处理方式",
+      highFidelityEditable: "高保真可编辑导出", highFidelityEditableDesc: "开启后才会对复杂图标、徽章和装饰物尝试逐元素分离。可能调用外部图像编辑模型，耗时和成本更高，默认关闭。",
       allowPartialResult: "允许返回半成品", allowPartialResultDesc: "开启后，导出过程中遇到错误（如样式提取失败、文本渲染失败等）时会跳过错误继续导出，最终可能得到不完整的结果。关闭时，任何错误都会立即停止导出并提示具体原因。",
       allowPartialResultWarning: "开启此选项可能导致导出的 PPTX 文件中部分文字样式丢失、元素位置错误或内容缺失。建议仅在需要快速获取结果且可以接受质量损失时开启。",
       saveExportSettings: "保存导出设置",
@@ -69,10 +67,8 @@ const projectSettingsI18n = {
       backgroundBaidu: "Baidu Inpaint", backgroundBaiduDesc: "Use Baidu image repair API, fast but average quality. Configure the Baidu Inpaint key in global settings.",
       usesAiModel: "Uses AI Image Model",
       costTip: "Options marked \"Uses AI Image Model\" will call AI image generation API (like Gemini), incurring extra API costs per page. To control costs, choose \"Baidu Inpaint\".",
-      iconSubjectExtraction: "Icon Transparent Background",
-      iconSubjectExtractionDesc: "When enabled, images detected as icons during export are processed via the local RMBG-2.0 model to produce transparent-background PNGs before being placed in the PPT, avoiding the icon's original background clashing with the new slide background. Only applies to elements classified as icons; photos and illustrations keep the original rectangular crop.",
-      iconSubjectExtractionTip: "Powered by local RMBG-2.0 ONNX inference. The ~512MB model is downloaded automatically on first use. If extraction fails for an individual icon, it falls back silently to the original rectangular crop without affecting export.",
       errorHandling: "Error Handling Strategy", errorHandlingDesc: "Configure how to handle errors during export",
+      highFidelityEditable: "High-fidelity Editable Export", highFidelityEditableDesc: "When enabled, complex icons, badges, and decorations may be separated into editable assets. This can call external image editing models and costs more, so it is off by default.",
       allowPartialResult: "Allow Partial Results", allowPartialResultDesc: "When enabled, export will skip errors (like style extraction or text rendering failures) and continue, potentially resulting in incomplete output. When disabled, any error will stop export immediately with a specific reason.",
       allowPartialResultWarning: "Enabling this option may result in PPTX files with missing text styles, mispositioned elements, or missing content. Only enable when you need quick results and can accept quality loss.",
       saveExportSettings: "Save Export Settings",
@@ -96,11 +92,11 @@ interface ProjectSettingsModalProps {
   exportExtractorMethod?: ExportExtractorMethod;
   exportInpaintMethod?: ExportInpaintMethod;
   exportAllowPartial?: boolean;
-  enableIconSubjectExtraction?: boolean;
+  exportHighFidelityEditable?: boolean;
   onExportExtractorMethodChange?: (value: ExportExtractorMethod) => void;
   onExportInpaintMethodChange?: (value: ExportInpaintMethod) => void;
   onExportAllowPartialChange?: (value: boolean) => void;
-  onEnableIconSubjectExtractionChange?: (value: boolean) => void;
+  onExportHighFidelityEditableChange?: (value: boolean) => void;
   onSaveExportSettings?: () => void;
   isSavingExportSettings?: boolean;
   aspectRatio?: string;
@@ -126,11 +122,11 @@ export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
   exportExtractorMethod = 'hybrid',
   exportInpaintMethod = 'hybrid',
   exportAllowPartial = false,
-  enableIconSubjectExtraction = true,
+  exportHighFidelityEditable = false,
   onExportExtractorMethodChange,
   onExportInpaintMethodChange,
   onExportAllowPartialChange,
-  onEnableIconSubjectExtractionChange,
+  onExportHighFidelityEditableChange,
   onSaveExportSettings,
   isSavingExportSettings = false,
   aspectRatio = '16:9',
@@ -416,37 +412,25 @@ export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
 
                 <div className="space-y-4">
                   <div>
-                    <h4 className="text-base font-semibold text-gray-900 dark:text-foreground-primary mb-2">{t('projectSettings.iconSubjectExtraction')}</h4>
-                  </div>
-                  <label className="flex items-start gap-3 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={enableIconSubjectExtraction}
-                      onChange={(e) => onEnableIconSubjectExtractionChange?.(e.target.checked)}
-                      className="mt-1 w-4 h-4 text-cyan-600 focus:ring-cyan-500 rounded"
-                    />
-                    <div className="flex-1">
-                      <div className="font-medium text-gray-900 dark:text-foreground-primary">{t('projectSettings.iconSubjectExtraction')}</div>
-                      <div className="text-sm text-gray-600 dark:text-foreground-tertiary mt-1">
-                        {t('projectSettings.iconSubjectExtractionDesc')}
-                      </div>
-                    </div>
-                  </label>
-                  <div className="pl-4 border-l-4 border-sky-300 dark:border-sky-600 flex items-start gap-2">
-                    <AlertTriangle size={16} className="text-sky-600 dark:text-sky-400 flex-shrink-0 mt-0.5" />
-                    <p className="text-xs text-gray-700 dark:text-foreground-secondary">
-                      <strong>{t('projectSettings.tip')}：</strong>{t('projectSettings.iconSubjectExtractionTip')}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="space-y-4">
-                  <div>
                     <h4 className="text-base font-semibold text-gray-900 dark:text-foreground-primary mb-2">{t('projectSettings.errorHandling')}</h4>
                     <p className="text-sm text-gray-600 dark:text-foreground-tertiary">
                       {t('projectSettings.errorHandlingDesc')}
                     </p>
                   </div>
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={exportHighFidelityEditable}
+                      onChange={(e) => onExportHighFidelityEditableChange?.(e.target.checked)}
+                      className="mt-1 w-4 h-4 text-cyan-600 focus:ring-cyan-500 rounded"
+                    />
+                    <div className="flex-1">
+                      <div className="font-medium text-gray-900 dark:text-foreground-primary">{t('projectSettings.highFidelityEditable')}</div>
+                      <div className="text-sm text-gray-600 dark:text-foreground-tertiary mt-1">
+                        {t('projectSettings.highFidelityEditableDesc')}
+                      </div>
+                    </div>
+                  </label>
                   <label className="flex items-start gap-3 cursor-pointer">
                     <input
                       type="checkbox"

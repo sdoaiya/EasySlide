@@ -163,6 +163,16 @@ vi.mock('@/components/shared/TemplateSelector', () => ({
   getTemplateFile: vi.fn(),
 }));
 
+vi.mock('@/components/shared/PresetCapsules', () => ({
+  default: ({ type }: { type: string }) => (
+    <div data-testid={`${type}-presets`}>
+      <button type="button" data-testid={`${type}-add-preset`} className="text-sky-600">
+        自定义
+      </button>
+    </div>
+  ),
+}));
+
 function renderAt(path: string, element: React.ReactNode) {
   window.history.pushState({}, '', path);
   return render(
@@ -178,6 +188,8 @@ describe('EasySlide internal workflow chrome', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.store.currentProject.pages = [];
+    mocks.store.currentProject.creation_type = 'ppt_renovation';
+    mocks.store.generateOutlineStream.mockResolvedValue({ complete: true });
   });
 
   it('labels the outline editor as the content-structure step', () => {
@@ -187,6 +199,20 @@ describe('EasySlide internal workflow chrome', () => {
     expect(screen.getByText('整理想法、素材和页面顺序')).toBeInTheDocument();
     expect(screen.getByText('还没有页面')).toBeInTheDocument();
     expect(container.innerHTML).not.toMatch(/banana|yellow|orange|amber/);
+  });
+
+  it('waits for a manual click before generating an idea outline', async () => {
+    mocks.store.currentProject.creation_type = 'idea';
+
+    renderAt('/project/project-1/outline', <OutlineEditor />);
+
+    expect(mocks.store.generateOutlineStream).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: '自动生成大纲' }));
+
+    await waitFor(() => {
+      expect(mocks.store.generateOutlineStream).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('labels the detail editor as the page-narrative step', () => {
@@ -204,6 +230,23 @@ describe('EasySlide internal workflow chrome', () => {
     expect(screen.getByText('Step 3 · 视觉成稿')).toBeInTheDocument();
     expect(screen.getByText('生成图片、预览并导出交付')).toBeInTheDocument();
     expect(screen.getByText('还没有页面')).toBeInTheDocument();
+  });
+
+  it('fits the slide preview within the available viewport height', () => {
+    mocks.store.currentProject.pages = [{
+      id: 'page-1',
+      page_id: 'page-1',
+      order_index: 0,
+      status: 'COMPLETED',
+      generated_image_path: '/files/page-1.png',
+      outline_content: { title: 'Slide 1', points: [] },
+      description_content: { text: 'Desc 1' },
+    }];
+
+    renderAt('/project/project-1/preview', <SlidePreview />);
+
+    expect(screen.getByTestId('slide-preview-viewport')).toHaveClass('overflow-hidden');
+    expect(screen.getByTestId('slide-preview-canvas').style.width).toContain('cqh');
   });
 
   it('shows backend ElevenLabs voice errors when enabling TTS fails', async () => {

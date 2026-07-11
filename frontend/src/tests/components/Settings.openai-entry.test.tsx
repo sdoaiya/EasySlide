@@ -8,6 +8,7 @@ const endpointMocks = vi.hoisted(() => ({
   getOpenAIOAuthStatus: vi.fn(),
   getOpenAIOAuthUrl: vi.fn(),
   getOpenAIOAuthModels: vi.fn(),
+  getModelOptions: vi.fn(),
   getElevenLabsVoices: vi.fn(),
   checkForUpdates: vi.fn(),
 }));
@@ -28,6 +29,7 @@ vi.mock('@/api/endpoints', async () => {
     getOpenAIOAuthStatus: endpointMocks.getOpenAIOAuthStatus,
     getOpenAIOAuthUrl: endpointMocks.getOpenAIOAuthUrl,
     getOpenAIOAuthModels: endpointMocks.getOpenAIOAuthModels,
+    getModelOptions: endpointMocks.getModelOptions,
     getElevenLabsVoices: endpointMocks.getElevenLabsVoices,
     checkForUpdates: endpointMocks.checkForUpdates,
   };
@@ -51,6 +53,10 @@ describe('Settings OpenAI entry', () => {
         image_models: ['gpt-image-2', 'gpt-image-1'],
         models: ['gpt-5.5', 'gpt-5.4-mini', 'gpt-image-2', 'gpt-image-1'],
       },
+    });
+    endpointMocks.getModelOptions.mockResolvedValue({
+      success: true,
+      data: { models: ['gpt-4o-mini', 'gpt-4.1-mini'] },
     });
     endpointMocks.getElevenLabsVoices.mockResolvedValue({ data: { voices: [] } });
     endpointMocks.checkForUpdates.mockResolvedValue({ data: { status: 'unknown', update_available: false, message: '', repository: '', current: { is_docker: false }, latest: null } });
@@ -248,5 +254,52 @@ describe('Settings OpenAI entry', () => {
     expect(await screen.findByDisplayValue('gpt-5.5')).toBeInTheDocument();
     expect(await screen.findByDisplayValue('gpt-image-2')).toBeInTheDocument();
     expect(screen.getAllByDisplayValue('Codex (OpenAI OAuth)').length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('lets users pick a referenced model for a model field', async () => {
+    render(
+      <MemoryRouter>
+        <SettingsPage />
+      </MemoryRouter>
+    );
+
+    const referenceButtons = await screen.findAllByRole('button', { name: /Model Reference|模型引用/i });
+    fireEvent.click(referenceButtons[0]);
+
+    expect(endpointMocks.getModelOptions).toHaveBeenCalledWith({
+      provider: 'openai',
+      model_type: 'text',
+      api_key: '',
+      api_base_url: '',
+    });
+
+    fireEvent.click(await screen.findByRole('button', { name: 'gpt-4o-mini' }));
+
+    expect(await screen.findByDisplayValue('gpt-4o-mini')).toBeInTheDocument();
+  });
+
+  it('shows provider model lookup errors instead of a raw 502 message', async () => {
+    endpointMocks.getModelOptions.mockRejectedValueOnce({
+      message: 'Request failed with status code 502',
+      response: {
+        data: {
+          error: {
+            message: '模型列表读取失败: 请检查 VPN 或 API Base URL',
+          },
+        },
+      },
+    });
+
+    render(
+      <MemoryRouter>
+        <SettingsPage />
+      </MemoryRouter>
+    );
+
+    const referenceButtons = await screen.findAllByRole('button', { name: /Model Reference|模型引用/i });
+    fireEvent.click(referenceButtons[0]);
+
+    expect(await screen.findByText('模型列表读取失败: 请检查 VPN 或 API Base URL')).toBeInTheDocument();
+    expect(screen.queryByText('Request failed with status code 502')).not.toBeInTheDocument();
   });
 });

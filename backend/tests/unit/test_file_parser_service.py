@@ -6,6 +6,7 @@ import os
 import tempfile
 import io
 import zipfile
+import requests
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -109,9 +110,60 @@ def test_download_markdown_uses_configured_upload_folder(tmp_path):
     response.content = zip_bytes.getvalue()
     response.raise_for_status.return_value = None
 
-    with patch('services.file_parser_service.requests.get', return_value=response):
+    with patch.object(service, '_mineru_request', return_value=response):
         markdown, extract_id, error = service._download_markdown('https://example.test/result.zip')
 
     assert error is None
     assert markdown == '# ok'
+    assert (tmp_path / 'runtime_uploads' / 'mineru_files' / extract_id / 'full.md').exists()
+
+
+def test_mineru_requests_ignore_system_proxy_by_default(monkeypatch):
+    monkeypatch.delenv('MINERU_USE_SYSTEM_PROXY', raising=False)
+
+    service = FileParserService(mineru_token='test-token')
+
+    assert service._mineru_session.trust_env is False
+
+
+def test_mineru_requests_can_opt_into_system_proxy(monkeypatch):
+    monkeypatch.setenv('MINERU_USE_SYSTEM_PROXY', 'true')
+
+    service = FileParserService(mineru_token='test-token')
+
+    assert service._mineru_session.trust_env is True
+
+
+def test_download_markdown_retries_incomplete_download(tmp_path):
+    service = FileParserService(
+        mineru_token='test-token',
+        provider_format='openai',
+        upload_folder=tmp_path / 'runtime_uploads',
+    )
+
+    zip_bytes = io.BytesIO()
+    with zipfile.ZipFile(zip_bytes, 'w') as z:
+        z.writestr('full.md', '# retried')
+
+    response = MagicMock()
+    response.content = zip_bytes.getvalue()
+    response.raise_for_status.return_value = None
+
+    with (
+        patch.object(
+            service,
+            '_mineru_request',
+            side_effect=[
+                requests.exceptions.ChunkedEncodingError('connection broken'),
+                response,
+            ],
+        ) as request,
+        patch('services.file_parser_service.time.sleep') as sleep,
+    ):
+        markdown, extract_id, error = service._download_markdown('https://example.test/result.zip')
+
+    assert error is None
+    assert markdown == '# retried'
+    assert request.call_count == 2
+    sleep.assert_called_once_with(2)
     assert (tmp_path / 'runtime_uploads' / 'mineru_files' / extract_id / 'full.md').exists()

@@ -53,6 +53,8 @@ KEN_BURNS_EFFECTS = _tts_mod.KEN_BURNS_EFFECTS
 KEN_BURNS_MAX_ZOOM = _tts_mod.KEN_BURNS_MAX_ZOOM
 composite_video = _tts_mod.composite_video
 _run_ffmpeg_command = _tts_mod._run_ffmpeg_command
+_hidden_subprocess_kwargs = _tts_mod._hidden_subprocess_kwargs
+_format_elevenlabs_api_error = _tts_mod._format_elevenlabs_api_error
 _wait_for_process_with_idle_watchdog = _tts_mod._wait_for_process_with_idle_watchdog
 _split_narration_to_sentences = _tts_mod._split_narration_to_sentences
 _build_timed_subtitle_entries = _tts_mod._build_timed_subtitle_entries
@@ -91,6 +93,48 @@ class TestModuleConstants:
         assert inspect.signature(burn_subtitles).parameters['idle_timeout'].default == 600.0
         assert inspect.signature(_tts_mod.mux_video_audio).parameters['idle_timeout'].default == 600.0
         assert inspect.signature(composite_video).parameters['idle_timeout'].default == 600.0
+
+
+class TestHiddenSubprocessKwargs:
+    """测试 Windows 桌面端子进程静默参数"""
+
+    def test_non_windows_returns_no_extra_kwargs(self, monkeypatch):
+        monkeypatch.setattr(_tts_mod.os, 'name', 'posix')
+
+        assert _hidden_subprocess_kwargs() == {}
+
+    def test_windows_hides_child_console(self, monkeypatch):
+        class FakeStartupInfo:
+            def __init__(self):
+                self.dwFlags = 0
+                self.wShowWindow = None
+
+        monkeypatch.setattr(_tts_mod.os, 'name', 'nt')
+        monkeypatch.setattr(_tts_mod.subprocess, 'STARTUPINFO', FakeStartupInfo, raising=False)
+        monkeypatch.setattr(_tts_mod.subprocess, 'STARTF_USESHOWWINDOW', 1, raising=False)
+        monkeypatch.setattr(_tts_mod.subprocess, 'SW_HIDE', 0, raising=False)
+        monkeypatch.setattr(_tts_mod.subprocess, 'CREATE_NO_WINDOW', 0x08000000, raising=False)
+
+        kwargs = _hidden_subprocess_kwargs()
+
+        assert kwargs['creationflags'] == 0x08000000
+        assert kwargs['startupinfo'].dwFlags & 1
+        assert kwargs['startupinfo'].wShowWindow == 0
+
+
+class TestElevenLabsApiErrorFormatting:
+    """测试 ElevenLabs 错误提示"""
+
+    def test_invalid_voice_tells_user_to_reselect_voice(self):
+        message = _format_elevenlabs_api_error(
+            400,
+            "voice_not_found",
+            "Invalid voice 'IKne3meq5aSn9XLyUdCD'.",
+            {},
+        )
+
+        assert "声音无效" in message
+        assert "重新选择声音" in message
 
 
 class TestGetDefaultVoice:

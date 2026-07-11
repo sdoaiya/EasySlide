@@ -4,6 +4,7 @@ import { ProjectSettingsModal } from '@/components/shared/ProjectSettingsModal';
 
 describe('ProjectSettingsModal export copy', () => {
   it('describes export settings with built-in Paddle OCR and keeps Baidu for inpaint only', () => {
+    const onHighFidelityChange = vi.fn();
     render(
       <ProjectSettingsModal
         isOpen
@@ -17,6 +18,7 @@ describe('ProjectSettingsModal export copy', () => {
         isSavingRequirements={false}
         isSavingTemplateStyle={false}
         onSaveExportSettings={vi.fn()}
+        onExportHighFidelityEditableChange={onHighFidelityChange}
       />
     );
 
@@ -27,5 +29,9 @@ describe('ProjectSettingsModal export copy', () => {
     expect(screen.getByText('百度 Inpaint 服务获取')).toBeInTheDocument();
     expect(screen.queryByText(/百度高精度OCR/)).not.toBeInTheDocument();
     expect(screen.queryByText('百度抹除服务获取')).not.toBeInTheDocument();
+    expect(screen.getByText('高保真可编辑导出')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /高保真可编辑导出/ }));
+    expect(onHighFidelityChange).toHaveBeenCalledWith(true);
   });
 });

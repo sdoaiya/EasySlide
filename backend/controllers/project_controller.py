@@ -363,10 +363,13 @@ def update_project(project_id):
             project.export_extractor_method = data['export_extractor_method']
         if 'export_inpaint_method' in data:
             project.export_inpaint_method = data['export_inpaint_method']
+        for field in ('export_allow_partial', 'export_high_fidelity_editable'):
+            if field in data and not isinstance(data[field], bool):
+                return bad_request(f"{field} must be a boolean")
         if 'export_allow_partial' in data:
             project.export_allow_partial = data['export_allow_partial']
-        if 'enable_icon_subject_extraction' in data:
-            project.enable_icon_subject_extraction = bool(data['enable_icon_subject_extraction'])
+        if 'export_high_fidelity_editable' in data:
+            project.export_high_fidelity_editable = data['export_high_fidelity_editable']
         
         # Update page order if provided
         if 'pages_order' in data:
@@ -1127,6 +1130,77 @@ def get_task_status(project_id, task_id):
     except Exception as e:
         logger.error(f"get_task_status failed: {str(e)}", exc_info=True)
         return error_response('SERVER_ERROR', str(e), 500)
+
+
+@project_bp.route('/<project_id>/tasks/<task_id>/pause', methods=['POST'])
+def pause_export_task(project_id, task_id):
+    task = Task.query.get(task_id)
+    if not task or task.project_id != project_id:
+        return not_found('Task')
+    if task.task_type not in {'EXPORT_EDITABLE_PPTX', 'EXPORT_VIDEO'}:
+        return bad_request('Only asynchronous export tasks can be paused')
+    if task.status in {'PENDING', 'PROCESSING', 'RUNNING'}:
+        task.status = 'PAUSED'
+        db.session.commit()
+    return success_response(task.to_dict())
+
+
+@project_bp.route('/<project_id>/tasks/<task_id>/resume', methods=['POST'])
+def resume_export_task(project_id, task_id):
+    task = Task.query.get(task_id)
+    if not task or task.project_id != project_id:
+        return not_found('Task')
+    if task.task_type not in {'EXPORT_EDITABLE_PPTX', 'EXPORT_VIDEO'}:
+        return bad_request('Only asynchronous export tasks can be resumed')
+    if task.status != 'PAUSED':
+        return success_response(task.to_dict())
+
+    if task_manager.is_task_active(task.id):
+        task.status = 'PROCESSING'
+        db.session.commit()
+        return success_response(task.to_dict())
+
+    resume = task.get_progress().get('_resume')
+    if not isinstance(resume, dict) or not isinstance(resume.get('kwargs'), dict):
+        return bad_request('This export task cannot be resumed')
+
+    from services.task_manager import (
+        export_editable_pptx_with_recursive_analysis_task,
+        export_video_task,
+    )
+
+    task_func = {
+        'editable-pptx': export_editable_pptx_with_recursive_analysis_task,
+        'video': export_video_task,
+    }.get(resume.get('kind'))
+    if task_func is None:
+        return bad_request('Unknown export task type')
+
+    task.status = 'PENDING'
+    task.error_message = None
+    task.completed_at = None
+    db.session.commit()
+    task_manager.submit_task(
+        task.id,
+        task_func,
+        file_service=FileService(current_app.config['UPLOAD_FOLDER']),
+        app=current_app._get_current_object(),
+        **resume['kwargs'],
+    )
+    return success_response(task.to_dict())
+
+
+@project_bp.route('/tasks/pause-active-exports', methods=['POST'])
+def pause_active_export_tasks():
+    tasks = Task.query.filter(
+        Task.task_type.in_(['EXPORT_EDITABLE_PPTX', 'EXPORT_VIDEO']),
+        Task.status.in_(['PENDING', 'PROCESSING', 'RUNNING']),
+    ).all()
+    for task in tasks:
+        task.status = 'PAUSED'
+    if tasks:
+        db.session.commit()
+    return success_response({'paused_count': len(tasks)})
 
 
 @project_bp.route('/<project_id>/refine/outline', methods=['POST'])

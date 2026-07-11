@@ -159,6 +159,7 @@ def create_app():
     with app.app_context():
         db.create_all()
         _ensure_desktop_sqlite_schema(app)
+        _pause_interrupted_export_tasks()
         # Load settings from database and sync to app.config
         _load_settings_to_config(app)
 
@@ -171,6 +172,8 @@ def create_app():
             return  # not enabled
         if not request.path.startswith('/api/'):
             return  # non-API routes (health, static, etc.)
+        if request.path == '/api/projects/tasks/pause-active-exports':
+            return  # local desktop shutdown hook
         if request.path.startswith('/api/access-code/'):
             return  # allow check/verify endpoints
         code = request.headers.get('X-Access-Code', '')
@@ -234,6 +237,20 @@ def create_app():
     return app
 
 
+def _pause_interrupted_export_tasks():
+    """Exports cannot keep running after the desktop backend exits."""
+    from models import Task
+
+    tasks = Task.query.filter(
+        Task.task_type.in_(['EXPORT_EDITABLE_PPTX', 'EXPORT_VIDEO']),
+        Task.status.in_(['PENDING', 'PROCESSING', 'RUNNING']),
+    ).all()
+    for task in tasks:
+        task.status = 'PAUSED'
+    if tasks:
+        db.session.commit()
+
+
 def _ensure_desktop_sqlite_schema(app):
     """Add columns that db.create_all() cannot add to upgraded desktop SQLite DBs."""
     if not os.getenv('DATABASE_PATH') or not app.config['SQLALCHEMY_DATABASE_URI'].startswith('sqlite:///'):
@@ -248,7 +265,8 @@ def _ensure_desktop_sqlite_schema(app):
             'export_extractor_method': "VARCHAR(50) DEFAULT 'hybrid'",
             'export_inpaint_method': "VARCHAR(50) DEFAULT 'hybrid'",
             'export_allow_partial': 'BOOLEAN DEFAULT 0',
-            'enable_icon_subject_extraction': 'BOOLEAN DEFAULT 1',
+            'export_high_fidelity_editable': 'BOOLEAN NOT NULL DEFAULT 0',
+            'enable_icon_subject_extraction': 'BOOLEAN DEFAULT 0',
             'image_aspect_ratio': "VARCHAR(10) DEFAULT '16:9'",
         },
         'pages': {

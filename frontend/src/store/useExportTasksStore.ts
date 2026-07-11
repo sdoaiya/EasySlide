@@ -12,7 +12,7 @@ const exportI18n = {
 const t = getT(exportI18n);
 
 // Note: Backend uses 'RUNNING' but we also accept 'PROCESSING' for compatibility
-export type ExportTaskStatus = 'PENDING' | 'PROCESSING' | 'RUNNING' | 'COMPLETED' | 'FAILED';
+export type ExportTaskStatus = 'PENDING' | 'PROCESSING' | 'RUNNING' | 'PAUSED' | 'COMPLETED' | 'FAILED';
 export type ExportTaskType = 'pptx' | 'pdf' | 'editable-pptx' | 'images' | 'video';
 
 export interface ExportTask {
@@ -55,8 +55,12 @@ interface ExportTasksState {
   removeTask: (id: string) => void;
   clearCompleted: (projectId?: string | null) => void;
   pollTask: (id: string, projectId: string, taskId: string) => Promise<void>;
+  pauseTask: (id: string) => Promise<void>;
+  resumeTask: (id: string) => Promise<void>;
   restoreActiveTasks: () => void; // 恢复正在进行的任务并重新开始轮询
 }
+
+const pollTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 export const useExportTasksStore = create<ExportTasksState>()(
   persist(
@@ -120,7 +124,13 @@ export const useExportTasksStore = create<ExportTasksState>()(
       },
 
       pollTask: async (id, projectId, taskId) => {
+        const existingTimer = pollTimers.get(id);
+        if (existingTimer) clearTimeout(existingTimer);
+
         const poll = async () => {
+          pollTimers.delete(id);
+          if (get().tasks.find(task => task.id === id)?.status === 'PAUSED') return;
+
           try {
             const response = await api.getTaskStatus(projectId, taskId);
             const task = response.data;
@@ -169,10 +179,13 @@ export const useExportTasksStore = create<ExportTasksState>()(
             } else if (task.status === 'PENDING' || task.status === 'RUNNING' || task.status === 'PROCESSING') {
               get().updateTask(id, updates);
               // Continue polling
-              setTimeout(poll, 2000);
+              pollTimers.set(id, setTimeout(poll, 2000));
+            } else if (task.status === 'PAUSED') {
+              get().updateTask(id, updates);
             }
           } catch (error: any) {
             console.error('[ExportTasksStore] Poll error:', error);
+            if (error?.code === 'ECONNABORTED') return;
             get().updateTask(id, {
               status: 'FAILED',
               errorMessage: normalizeErrorMessage(error.message || t('exportStore.pollFailed')),
@@ -182,6 +195,24 @@ export const useExportTasksStore = create<ExportTasksState>()(
         };
 
         await poll();
+      },
+
+      pauseTask: async (id) => {
+        const task = get().tasks.find(item => item.id === id);
+        if (!task) return;
+        await api.pauseTask(task.projectId, task.taskId);
+        const timer = pollTimers.get(id);
+        if (timer) clearTimeout(timer);
+        pollTimers.delete(id);
+        get().updateTask(id, { status: 'PAUSED' });
+      },
+
+      resumeTask: async (id) => {
+        const task = get().tasks.find(item => item.id === id);
+        if (!task) return;
+        await api.resumeTask(task.projectId, task.taskId);
+        get().updateTask(id, { status: 'RUNNING' });
+        await get().pollTask(id, task.projectId, task.taskId);
       },
 
       restoreActiveTasks: () => {

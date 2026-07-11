@@ -7,6 +7,7 @@ import re
 import shutil
 import sys
 import tempfile
+import requests as http_requests
 from pathlib import Path
 from datetime import datetime, timezone
 from contextlib import contextmanager
@@ -25,10 +26,80 @@ from services.update_check_service import check_for_update
 
 logger = logging.getLogger(__name__)
 ALLOWED_PROVIDER_FORMATS = {"openai", "gemini", "lazyllm", "codex"} | LAZYLLM_VENDORS
+MODEL_OPTION_TYPES = {"text", "image", "image_caption"}
 
 settings_bp = Blueprint(
     "settings", __name__, url_prefix="/api/settings"
 )
+
+
+def _openai_models_url(api_base_url: str | None) -> str:
+    base = (api_base_url or current_app.config.get("OPENAI_API_BASE") or "https://api.openai.com/v1").strip()
+    base = base.rstrip("/")
+    if base.endswith("/models"):
+        return base
+    if not base.endswith("/v1"):
+        base = f"{base}/v1"
+    return f"{base}/models"
+
+
+def _models_from_openai_response(payload: dict, model_type: str) -> list[str]:
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, list):
+        return []
+    models = []
+    for item in data:
+        if isinstance(item, dict) and isinstance(item.get("id"), str):
+            model = item["id"]
+            lowered = model.lower()
+            is_image = lowered.startswith(("gpt-image-", "dall-e-"))
+            if model_type == "image":
+                if is_image:
+                    models.append(model)
+                continue
+            if is_image or lowered.startswith(("text-embedding-", "omni-moderation-", "whisper-")):
+                continue
+            if any(marker in lowered for marker in ("-tts", "-transcribe", "realtime", "audio")):
+                continue
+            models.append(model)
+    return sorted(set(models))
+
+
+def _models_from_gemini_response(payload: dict, model_type: str) -> list[str]:
+    data = payload.get("models") if isinstance(payload, dict) else None
+    if not isinstance(data, list):
+        return []
+
+    names = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name") or item.get("displayName")
+        if not isinstance(name, str):
+            continue
+        model = name.rsplit("/", 1)[-1]
+        methods = item.get("supportedGenerationMethods") or []
+        is_image_model = (
+            "image" in model.lower()
+            or "imagen" in model.lower()
+            or any("image" in str(method).lower() for method in methods)
+        )
+        if model_type == "image" and not is_image_model:
+            continue
+        names.append(model)
+    return sorted(set(names))
+
+
+def _fallback_model_options(provider: str, model_type: str) -> list[str]:
+    if provider == "openai":
+        if model_type == "image":
+            return ["gpt-image-2", "gpt-image-1.5", "gpt-image-1", "gpt-image-1-mini"]
+        return ["gpt-5.5", "gpt-5.4-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini"]
+    if provider == "gemini":
+        if model_type == "image":
+            return ["imagen-4.0-generate-preview-06-06", "imagen-3.0-generate-001"]
+        return ["gemini-3-flash-preview", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"]
+    return []
 
 
 @contextmanager
@@ -514,6 +585,96 @@ def get_elevenlabs_voices():
     except Exception as e:
         logger.exception("[elevenlabs-voices] 获取声音列表失败")
         return error_response("ELEVENLABS_VOICES_ERROR", f"获取 ElevenLabs 声音列表失败: {e}", 500)
+
+
+@settings_bp.route("/model-options", methods=["POST"], strict_slashes=False)
+def get_model_options():
+    """POST /api/settings/model-options - List models from the selected provider."""
+    data = request.get_json(silent=True) or {}
+    provider = str(data.get("provider") or "").strip().lower()
+    model_type = str(data.get("model_type") or "text").strip()
+    api_key = str(data.get("api_key") or "").strip()
+    requested_api_base_url = data.get("api_base_url") if "api_base_url" in data else None
+    api_base_url = str(requested_api_base_url or "").strip()
+
+    if provider not in {"openai", "gemini"}:
+        return error_response(
+            "MODEL_OPTIONS_UNSUPPORTED_PROVIDER",
+            "该提供商暂不支持自动读取模型，请继续手动填写",
+            400,
+        )
+    if model_type not in MODEL_OPTION_TYPES:
+        return bad_request("model_type must be one of text, image, image_caption")
+
+    settings = Settings.get_settings()
+    saved_source = getattr(settings, f"{model_type}_model_source", None) or settings.ai_provider_format
+    source_matches = not saved_source or saved_source == provider
+    saved_api_key = getattr(settings, f"{model_type}_api_key", None) if source_matches else None
+    saved_api_base_url = getattr(settings, f"{model_type}_api_base_url", None) if source_matches else None
+    global_api_key = settings.api_key if settings.ai_provider_format == provider else None
+    global_api_base_url = settings.api_base_url if settings.ai_provider_format == provider else None
+    if provider == "openai":
+        api_key = (
+            api_key
+            or saved_api_key
+            or current_app.config.get(f"{model_type.upper()}_API_KEY")
+            or global_api_key
+            or current_app.config.get("OPENAI_API_KEY")
+        )
+    else:
+        api_key = (
+            api_key
+            or saved_api_key
+            or current_app.config.get(f"{model_type.upper()}_API_KEY")
+            or global_api_key
+            or current_app.config.get("GOOGLE_API_KEY")
+        )
+
+    if requested_api_base_url is None:
+        api_base_url = (
+            saved_api_base_url
+            or current_app.config.get(f"{model_type.upper()}_API_BASE")
+            or global_api_base_url
+        )
+
+    if not api_key:
+        return error_response("MODEL_OPTIONS_API_KEY_MISSING", "请先填写 API Key 后再读取模型列表", 400)
+
+    try:
+        if provider == "openai":
+            response = http_requests.get(
+                _openai_models_url(api_base_url),
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=15,
+            )
+            response.raise_for_status()
+            models = _models_from_openai_response(response.json(), model_type)
+        else:
+            base = api_base_url or current_app.config.get("GOOGLE_API_BASE") or "https://generativelanguage.googleapis.com/v1beta"
+            base = base.rstrip("/")
+            response = http_requests.get(
+                f"{base}/models",
+                headers={"x-goog-api-key": api_key},
+                timeout=15,
+            )
+            response.raise_for_status()
+            models = _models_from_gemini_response(response.json(), model_type)
+
+        return success_response({"models": models})
+    except http_requests.RequestException as e:
+        status_code = getattr(getattr(e, "response", None), "status_code", None)
+        status_suffix = f"（HTTP {status_code}）" if status_code else ""
+        logger.warning("[model-options] provider=%s request failed%s", provider, status_suffix)
+        fallback_models = _fallback_model_options(provider, model_type)
+        if fallback_models:
+            return success_response({
+                "models": fallback_models,
+                "warning": f"模型列表在线读取失败，已显示常用模型{status_suffix}",
+            })
+        return error_response("MODEL_OPTIONS_REQUEST_FAILED", f"模型列表读取失败{status_suffix}", 502)
+    except Exception:
+        logger.error("[model-options] provider=%s unexpected error", provider)
+        return error_response("MODEL_OPTIONS_ERROR", "模型列表读取失败", 500)
 
 
 @settings_bp.route("/active-config", methods=["GET"], strict_slashes=False)

@@ -86,7 +86,9 @@ class FileParserService:
         self.mineru_model_version = mineru_model_version
         self.get_upload_url_api = f"{mineru_api_base}/api/v4/file-urls/batch"
         self.get_result_api_template = f"{mineru_api_base}/api/v4/extract-results/batch/{{}}"
-        
+        self._mineru_session = requests.Session()
+        self._mineru_session.trust_env = os.getenv("MINERU_USE_SYSTEM_PROXY", "").lower() in {"1", "true", "yes", "on"}
+
         self._image_caption_model = image_caption_model
         self._provider_format = _get_ai_provider_format(provider_format)
         if upload_folder is None:
@@ -97,6 +99,10 @@ class FileParserService:
                 upload_folder = None
         self._caption_provider = None
         self._upload_folder = Path(upload_folder).resolve() if upload_folder else None
+
+    def _mineru_request(self, method: str, url: str, **kwargs) -> requests.Response:
+        """Send MinerU HTTP requests without inheriting VPN/system proxy by default."""
+        return self._mineru_session.request(method, url, **kwargs)
     
     def _get_caption_provider(self):
         """Lazily initialize caption provider via the provider factory"""
@@ -300,7 +306,8 @@ class FileParserService:
         }
         
         try:
-            response = requests.post(
+            response = self._mineru_request(
+                "POST",
                 self.get_upload_url_api,
                 headers=headers,
                 json=upload_data,
@@ -327,7 +334,8 @@ class FileParserService:
         """Upload file to MinerU"""
         try:
             with open(file_path, 'rb') as f:
-                response = requests.put(
+                response = self._mineru_request(
+                    "PUT",
                     upload_url,
                     data=f,
                     headers={"Authorization": None},  # Remove auth for upload
@@ -366,7 +374,7 @@ class FileParserService:
                 return None, None, error_msg
             
             try:
-                response = requests.get(result_url, headers=headers, timeout=30)
+                response = self._mineru_request("GET", result_url, headers=headers, timeout=30)
                 response.raise_for_status()
                 task_info = response.json()
                 
@@ -397,14 +405,28 @@ class FileParserService:
     
     def _download_markdown(self, zip_url: str) -> tuple[Optional[str], Optional[str], Optional[str]]:
         """Download and extract markdown from result zip, save images to local server
-        
+
         Returns:
             Tuple of (markdown_content, extract_id, error_message)
         """
         try:
-            response = requests.get(zip_url, timeout=60)
-            response.raise_for_status()
-            
+            zip_content = None
+            for attempt in range(1, 4):
+                try:
+                    response = self._mineru_request("GET", zip_url, timeout=120)
+                    response.raise_for_status()
+                    zip_content = response.content
+                    break
+                except requests.exceptions.RequestException as e:
+                    if attempt == 3:
+                        raise
+                    logger.warning(
+                        "Failed to download MinerU result ZIP (attempt %s/3): %s",
+                        attempt,
+                        e,
+                    )
+                    time.sleep(attempt * 2)
+
             # Generate unique directory name for this extraction
             import uuid
             extract_id = str(uuid.uuid4())[:8]
@@ -426,7 +448,7 @@ class FileParserService:
             markdown_content = None
             markdown_file_path = None
             
-            with zipfile.ZipFile(io.BytesIO(response.content)) as z:
+            with zipfile.ZipFile(io.BytesIO(zip_content)) as z:
                 # Extract all files
                 z.extractall(mineru_storage)
                 logger.info(f"Extracted {len(z.namelist())} files from ZIP")

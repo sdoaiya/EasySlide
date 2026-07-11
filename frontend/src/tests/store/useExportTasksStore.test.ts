@@ -1,14 +1,18 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { act } from '@testing-library/react'
 import { useExportTasksStore } from '@/store/useExportTasksStore'
-import { getTaskStatus } from '@/api/endpoints'
+import { getTaskStatus, pauseTask as pauseTaskApi, resumeTask as resumeTaskApi } from '@/api/endpoints'
 
 vi.mock('@/api/endpoints', () => ({
   getTaskStatus: vi.fn(),
+  pauseTask: vi.fn(),
+  resumeTask: vi.fn(),
 }))
 
 describe('useExportTasksStore', () => {
   beforeEach(() => {
+    vi.useRealTimers()
+    vi.clearAllMocks()
     act(() => {
       useExportTasksStore.setState({ tasks: [] })
     })
@@ -137,6 +141,60 @@ describe('useExportTasksStore', () => {
     expect(useExportTasksStore.getState().tasks.map(task => task.id)).toEqual([
       'active-current',
     ])
+  })
+
+  it('pauses a running task and stops its scheduled polling', async () => {
+    vi.useFakeTimers()
+    vi.mocked(getTaskStatus).mockResolvedValue({ data: { status: 'RUNNING' } } as any)
+    vi.mocked(pauseTaskApi).mockResolvedValue({ data: { status: 'PAUSED' } } as any)
+    useExportTasksStore.getState().addTask({
+      id: 'export-1', taskId: 'task-1', projectId: 'project-a', type: 'pptx', status: 'RUNNING',
+    })
+
+    await useExportTasksStore.getState().pollTask('export-1', 'project-a', 'task-1')
+    await useExportTasksStore.getState().pauseTask('export-1')
+    await vi.advanceTimersByTimeAsync(2000)
+
+    expect(pauseTaskApi).toHaveBeenCalledWith('project-a', 'task-1')
+    expect(useExportTasksStore.getState().tasks[0].status).toBe('PAUSED')
+    expect(getTaskStatus).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not fake a paused status when the pause API fails', async () => {
+    vi.mocked(pauseTaskApi).mockRejectedValue(new Error('network error'))
+    useExportTasksStore.getState().addTask({
+      id: 'export-1', taskId: 'task-1', projectId: 'project-a', type: 'pptx', status: 'RUNNING',
+    })
+
+    await expect(useExportTasksStore.getState().pauseTask('export-1')).rejects.toThrow('network error')
+
+    expect(useExportTasksStore.getState().tasks[0].status).toBe('RUNNING')
+  })
+
+  it('resumes a paused task and restarts polling', async () => {
+    vi.mocked(resumeTaskApi).mockResolvedValue({ data: { status: 'RUNNING' } } as any)
+    vi.mocked(getTaskStatus).mockResolvedValue({ data: { status: 'COMPLETED' } } as any)
+    useExportTasksStore.getState().addTask({
+      id: 'export-1', taskId: 'task-1', projectId: 'project-a', type: 'pptx', status: 'PAUSED',
+    })
+
+    await useExportTasksStore.getState().resumeTask('export-1')
+
+    expect(resumeTaskApi).toHaveBeenCalledWith('project-a', 'task-1')
+    expect(getTaskStatus).toHaveBeenCalledWith('project-a', 'task-1')
+    expect(useExportTasksStore.getState().tasks[0].status).toBe('COMPLETED')
+  })
+
+  it('does not fake a running status when the resume API fails', async () => {
+    vi.mocked(resumeTaskApi).mockRejectedValue(new Error('network error'))
+    useExportTasksStore.getState().addTask({
+      id: 'export-1', taskId: 'task-1', projectId: 'project-a', type: 'pptx', status: 'PAUSED',
+    })
+
+    await expect(useExportTasksStore.getState().resumeTask('export-1')).rejects.toThrow('network error')
+
+    expect(useExportTasksStore.getState().tasks[0].status).toBe('PAUSED')
+    expect(getTaskStatus).not.toHaveBeenCalled()
   })
 
   it('keeps polling tasks active when a status request times out', async () => {

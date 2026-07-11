@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Download, X, Trash2, FileText, Clock, CheckCircle, XCircle, Loader2, AlertTriangle, HelpCircle, Settings, RefreshCw } from 'lucide-react';
+import { Download, X, Trash2, FileText, Clock, CheckCircle, XCircle, Loader2, AlertTriangle, HelpCircle, Settings, RefreshCw, Pause, Play } from 'lucide-react';
 import { useExportTasksStore, type ExportTask, type ExportTaskType } from '@/store/useExportTasksStore';
 import { useT } from '@/hooks/useT';
 import type { Page } from '@/types';
@@ -18,6 +18,7 @@ const exportI18n = {
       styleExtractionFailed: "样式提取失败 ({{count}} 个)", textRenderFailed: "文本渲染失败 ({{count}} 个)",
       moreItems: "... 还有 {{count}} 条", exportFailed: "导出失败", preparing: "准备中...",
       retry: "重试",
+      pause: "暂停任务", resume: "继续任务", paused: "已暂停",
       settingsTip: "可在「项目设置 → 导出设置」中调整配置或开启「返回半成品」选项",
       codexReconnectTip: "如果是 Codex 授权过期或连接中断，也可以前往设置重新连接 OpenAI 授权后再试",
     },
@@ -33,6 +34,7 @@ const exportI18n = {
       styleExtractionFailed: "Style extraction failed ({{count}})", textRenderFailed: "Text render failed ({{count}})",
       moreItems: "... {{count}} more", exportFailed: "Export Failed", preparing: "Preparing...",
       retry: "Retry",
+      pause: "Pause task", resume: "Resume task", paused: "Paused",
       settingsTip: "Adjust settings in \"Project Settings → Export Settings\" or enable \"Allow Partial Results\"",
       codexReconnectTip: "If Codex authorization expired or the connection was interrupted, reconnect OpenAI authorization in Settings and try again.",
     },
@@ -78,6 +80,8 @@ const TaskStatusIcon: React.FC<{ status: ExportTask['status'] }> = ({ status }) 
     case 'PROCESSING':
     case 'RUNNING':
       return <Loader2 size={16} className="text-banana-500 animate-spin" />;
+    case 'PAUSED':
+      return <Pause size={16} className="text-amber-500" />;
     case 'COMPLETED':
       return <CheckCircle size={16} className="text-green-500" />;
     case 'FAILED':
@@ -189,8 +193,10 @@ const TaskItem: React.FC<{
   task: ExportTask;
   pages: Page[];
   onRemove: () => void;
+  onPause: () => void;
+  onResume: () => void;
   onRetry?: (task: ExportTask) => void;
-}> = ({ task, pages, onRemove, onRetry }) => {
+}> = ({ task, pages, onRemove, onPause, onResume, onRetry }) => {
   const t = useT(exportI18n);
   const [showWarningsModal, setShowWarningsModal] = useState(false);
   
@@ -233,6 +239,8 @@ const TaskItem: React.FC<{
 
   const progressPercent = getProgressPercent();
   const isProcessing = task.status === 'PROCESSING' || task.status === 'RUNNING' || task.status === 'PENDING';
+  const isPausable = task.type === 'editable-pptx' || task.type === 'video';
+  const showsProgress = isProcessing || task.status === 'PAUSED';
   
   const hasWarnings = task.status === 'COMPLETED' && task.progress?.warnings && task.progress.warnings.length > 0;
 
@@ -255,13 +263,13 @@ const TaskItem: React.FC<{
           </span>
         </div>
         
-        {isProcessing && (
+        {showsProgress && (
           <div className="mt-2 space-y-1.5">
             {task.progress ? (
               <>
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-semibold text-banana-600">
-                    {progressPercent > 0 ? `${progressPercent}%` : t('export.preparing')}
+                    {task.status === 'PAUSED' ? t('export.paused') : (progressPercent > 0 ? `${progressPercent}%` : t('export.preparing'))}
                   </span>
                   {task.progress.current_step && (
                     <span className="text-xs text-gray-500 dark:text-foreground-tertiary truncate max-w-[140px]" title={task.progress.current_step}>
@@ -365,6 +373,28 @@ const TaskItem: React.FC<{
       </div>
       
       <div className="flex items-center gap-1 flex-shrink-0">
+        {isProcessing && isPausable && (
+          <button
+            onClick={onPause}
+            className="p-1 text-gray-500 hover:text-banana-600 transition-colors"
+            title={t('export.pause')}
+            aria-label={t('export.pause')}
+          >
+            <Pause size={16} />
+          </button>
+        )}
+
+        {task.status === 'PAUSED' && (
+          <button
+            onClick={onResume}
+            className="p-1 text-gray-500 hover:text-banana-600 transition-colors"
+            title={t('export.resume')}
+            aria-label={t('export.resume')}
+          >
+            <Play size={16} />
+          </button>
+        )}
+
         {task.status === 'FAILED' && onRetry && (
           <Button
             variant="secondary"
@@ -411,14 +441,14 @@ interface ExportTasksPanelProps {
 export const ExportTasksPanel: React.FC<ExportTasksPanelProps> = ({ projectId, pages = [], className, onRetry }) => {
   const t = useT(exportI18n);
   const [isExpanded, setIsExpanded] = useState(true);
-  const { tasks, removeTask, clearCompleted, restoreActiveTasks } = useExportTasksStore();
+  const { tasks, removeTask, clearCompleted, restoreActiveTasks, pauseTask, resumeTask } = useExportTasksStore();
 
   const filteredTasks = projectId
     ? tasks.filter(task => task.projectId === projectId)
     : tasks;
 
   const activeTasks = filteredTasks.filter(
-    task => task.status === 'PENDING' || task.status === 'PROCESSING' || task.status === 'RUNNING'
+    task => task.status === 'PENDING' || task.status === 'PROCESSING' || task.status === 'RUNNING' || task.status === 'PAUSED'
   );
   const completedTasks = filteredTasks.filter(
     task => task.status === 'COMPLETED' || task.status === 'FAILED'
@@ -470,6 +500,8 @@ export const ExportTasksPanel: React.FC<ExportTasksPanelProps> = ({ projectId, p
                   task={task}
                   pages={pages}
                   onRemove={() => removeTask(task.id)}
+                  onPause={() => void pauseTask(task.id).catch(console.error)}
+                  onResume={() => void resumeTask(task.id).catch(console.error)}
                   onRetry={onRetry}
                 />
               ))}
@@ -494,6 +526,8 @@ export const ExportTasksPanel: React.FC<ExportTasksPanelProps> = ({ projectId, p
                   task={task}
                   pages={pages}
                   onRemove={() => removeTask(task.id)}
+                  onPause={() => void pauseTask(task.id).catch(console.error)}
+                  onResume={() => void resumeTask(task.id).catch(console.error)}
                   onRetry={onRetry}
                 />
               ))}

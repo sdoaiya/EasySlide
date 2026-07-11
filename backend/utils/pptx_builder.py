@@ -3,6 +3,7 @@ PPTX Builder - utilities for creating editable PPTX files
 Based on OpenDCAI/DataFlow-Agent's implementation
 """
 import os
+import math
 import logging
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, Tuple
@@ -358,7 +359,8 @@ class PPTXBuilder:
         dpi: int = None,
         align: str = 'left',
         text_style: Any = None,
-        allow_math_conversion: bool = True
+        allow_math_conversion: bool = True,
+        font_size_override: Optional[float] = None
     ):
         """
         Add text element to slide
@@ -376,6 +378,7 @@ class PPTXBuilder:
             allow_math_conversion: Whether a fully-LaTeX text element may be rendered
                         as native PowerPoint math. Fallback callers disable this to avoid
                         retrying the same unsupported conversion.
+            font_size_override: Explicit font size in points from OCR/layout hints.
         """
         dpi = dpi or self.DEFAULT_DPI
         
@@ -458,8 +461,17 @@ class PPTXBuilder:
             return text
         actual_text = replace_some_chars(actual_text)
         
-        # Calculate font size
-        font_size = self.calculate_font_size(bbox, actual_text, text_level, dpi)
+        # Keep OCR/MinerU hints within safe bounds and never exceed the fitted size.
+        fitted_font_size = self.calculate_font_size(bbox, actual_text, text_level, dpi)
+        font_size = fitted_font_size
+        if font_size_override is not None:
+            try:
+                hinted_font_size = float(font_size_override)
+                if math.isfinite(hinted_font_size) and hinted_font_size > 0:
+                    hinted_font_size = max(self.MIN_FONT_SIZE, min(self.MAX_FONT_SIZE, hinted_font_size))
+                    font_size = min(hinted_font_size, fitted_font_size)
+            except (TypeError, ValueError):
+                pass
         
         # Determine effective alignment - text_style优先，否则使用参数
         effective_align = align

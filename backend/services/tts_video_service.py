@@ -42,6 +42,20 @@ _FFMPEG_IDLE_TIMEOUT_SECONDS = 600.0
 _FFMPEG_PROGRESS_INTERVAL_SECONDS = 1.0
 
 
+def _hidden_subprocess_kwargs() -> dict:
+    """Hide child process consoles on Windows desktop builds."""
+    if os.name != 'nt':
+        return {}
+
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = subprocess.SW_HIDE
+    return {
+        'creationflags': subprocess.CREATE_NO_WINDOW,
+        'startupinfo': startupinfo,
+    }
+
+
 def _inject_ffmpeg_progress_args(cmd: List[str]) -> List[str]:
     """为 FFmpeg 命令追加进度输出，便于 idle watchdog 判断进程是否卡死。"""
     if '-progress' in cmd:
@@ -130,6 +144,7 @@ def _run_ffmpeg_command(
         _inject_ffmpeg_progress_args(cmd),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
+        **_hidden_subprocess_kwargs(),
     )
     _wait_for_process_with_idle_watchdog(proc, error_prefix, idle_timeout=idle_timeout)
 
@@ -183,7 +198,7 @@ def create_placeholder_frame(
         output_path,
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=15, **_hidden_subprocess_kwargs())
     if result.returncode != 0:
         # fallback: 纯色背景（无文字）
         logger.warning(f"Placeholder with text failed, using plain background: {result.stderr[-200:]}")
@@ -196,7 +211,7 @@ def create_placeholder_frame(
             '-update', '1',
             output_path,
         ]
-        result2 = subprocess.run(cmd_plain, capture_output=True, text=True, timeout=15)
+        result2 = subprocess.run(cmd_plain, capture_output=True, text=True, timeout=15, **_hidden_subprocess_kwargs())
         if result2.returncode != 0:
             raise RuntimeError(f"FFmpeg placeholder frame failed: {result2.stderr[-300:]}")
 
@@ -220,6 +235,7 @@ def _detect_cjk_font_file() -> Optional[str]:
         result = subprocess.run(
             ['fc-match', '-f', '%{file}', ':lang=zh'],
             capture_output=True, text=True, timeout=5,
+            **_hidden_subprocess_kwargs(),
         )
         path = result.stdout.strip()
         if path and os.path.exists(path):
@@ -241,6 +257,7 @@ def check_ffmpeg_available(ffmpeg_path: str = 'ffmpeg') -> bool:
         subprocess.run(
             [ffmpeg_path, '-version'],
             capture_output=True, check=True, timeout=5,
+            **_hidden_subprocess_kwargs(),
         )
         return True
     except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
@@ -253,6 +270,7 @@ def check_ffmpeg_ass_filter_available(ffmpeg_path: str = 'ffmpeg') -> bool:
         result = subprocess.run(
             [ffmpeg_path, '-hide_banner', '-filters'],
             capture_output=True, text=True, check=True, timeout=5,
+            **_hidden_subprocess_kwargs(),
         )
     except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
         return False
@@ -270,7 +288,7 @@ def get_audio_duration(audio_path: str, ffmpeg_path: str = 'ffmpeg') -> float:
         '-of', 'default=noprint_wrappers=1:nokey=1',
         audio_path,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=10)
+    result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=10, **_hidden_subprocess_kwargs())
     return float(result.stdout.strip())
 
 
@@ -363,6 +381,69 @@ def generate_tts_audio_sync(
     return duration
 
 
+def _format_elevenlabs_api_error(status: Optional[int], err_status: str, msg: str, detail: dict) -> str:
+    lowered = (msg or '').lower()
+    if err_status == 'quota_exceeded' or 'quota' in lowered or 'credits' in lowered:
+        return f"ElevenLabs 免费配额已不足：{msg}"
+    if err_status == 'invalid_api_key' or status == 401:
+        return "ElevenLabs 认证失败，请检查 API Key 是否有效"
+    if (
+        err_status in {'voice_not_found', 'voice_not_found_on_voice_id', 'invalid_voice'}
+        or 'invalid voice' in lowered
+        or 'voice not found' in lowered
+    ):
+        return f"ElevenLabs 声音无效或当前 API Key 无权访问，请在导出视频弹窗重新选择声音：{msg}"
+    if status == 402 or detail.get('code') == 'paid_plan_required':
+        return f"ElevenLabs 该声音需要付费套餐：{msg}"
+    return f"ElevenLabs API 错误 (HTTP {status})：{msg}"
+
+
+def _is_fatal_elevenlabs_tts_error(status: Optional[int], err_status: str, msg: str, detail: dict) -> bool:
+    lowered = (msg or '').lower()
+    return (
+        err_status == 'quota_exceeded'
+        or 'quota' in lowered
+        or 'credits' in lowered
+        or err_status == 'invalid_api_key'
+        or status == 401
+        or err_status in {'voice_not_found', 'voice_not_found_on_voice_id', 'invalid_voice'}
+        or 'invalid voice' in lowered
+        or 'voice not found' in lowered
+        or status == 402
+        or detail.get('code') == 'paid_plan_required'
+    )
+
+
+def _elevenlabs_error_parts(error) -> Tuple[Optional[int], str, str, dict]:
+    status = getattr(error, 'status_code', None)
+    body = getattr(error, 'body', None)
+    detail = body.get('detail', {}) if isinstance(body, dict) else {}
+    detail = detail if isinstance(detail, dict) else {}
+    err_status = detail.get('status', '')
+    msg = detail.get('message') or str(error)
+    return status, err_status, msg, detail
+
+
+def _write_elevenlabs_audio_response(response, output_path: str) -> None:
+    audio = getattr(response, 'audio', None)
+    if audio is None and isinstance(response, dict):
+        audio = response.get('audio')
+    if isinstance(audio, str):
+        import base64
+        audio = base64.b64decode(audio)
+
+    with open(output_path, 'wb') as f:
+        if isinstance(audio, (bytes, bytearray)):
+            f.write(audio)
+            return
+        if isinstance(response, (bytes, bytearray)):
+            f.write(response)
+            return
+        for chunk in response:
+            if chunk:
+                f.write(chunk)
+
+
 def generate_elevenlabs_audio_sync(
     text: str,
     output_path: str,
@@ -404,15 +485,34 @@ def generate_elevenlabs_audio_sync(
             voice_settings=voice_settings,
         )
 
+    def _convert_audio_only(model_id: str):
+        return client.text_to_speech.convert(
+            text=text,
+            voice_id=voice_id,
+            model_id=model_id,
+            output_format='mp3_44100_128',
+            voice_settings=voice_settings,
+        )
+
     alignment_dict: Optional[dict] = None
     try:
         try:
             response = _convert_with_timestamps('eleven_v3')
         except ElevenLabsApiError as e:
-            logger.warning(
-                f"eleven_v3 不可用 (status={getattr(e, 'status_code', None)})，回退到 eleven_multilingual_v2"
-            )
-            response = _convert_with_timestamps('eleven_multilingual_v2')
+            status, err_status, msg, detail = _elevenlabs_error_parts(e)
+            if _is_fatal_elevenlabs_tts_error(status, err_status, msg, detail):
+                raise RuntimeError(_format_elevenlabs_api_error(status, err_status, msg, detail)) from e
+            logger.warning(f"eleven_v3 时间戳接口不可用，回退到 multilingual_v2: {msg}")
+            try:
+                response = _convert_with_timestamps('eleven_multilingual_v2')
+            except ElevenLabsApiError as e2:
+                status, err_status, msg, detail = _elevenlabs_error_parts(e2)
+                if _is_fatal_elevenlabs_tts_error(status, err_status, msg, detail):
+                    raise RuntimeError(_format_elevenlabs_api_error(status, err_status, msg, detail)) from e2
+                logger.warning(f"ElevenLabs 时间戳接口不可用，回退到普通音频合成: {msg}")
+                _write_elevenlabs_audio_response(_convert_audio_only('eleven_multilingual_v2'), output_path)
+                duration = get_audio_duration(output_path, ffmpeg_path)
+                return duration, None
 
         # SDK 内部使用 audio_base_64（Python 属性名）/ audio_base64（JSON 别名）
         audio_b64 = (
@@ -448,19 +548,8 @@ def generate_elevenlabs_audio_sync(
                     ],
                 }
     except ElevenLabsApiError as e:
-        status = getattr(e, 'status_code', None)
-        body = getattr(e, 'body', None)
-        detail = body.get('detail', {}) if isinstance(body, dict) else {}
-        err_status = detail.get('status', '') if isinstance(detail, dict) else ''
-        msg = (detail.get('message') if isinstance(detail, dict) else None) or str(e)
-        if err_status == 'quota_exceeded' or 'quota' in msg.lower() or 'credits' in msg.lower():
-            raise RuntimeError(f"ElevenLabs 免费配额已不足：{msg}") from e
-        elif err_status == 'invalid_api_key' or status == 401:
-            raise RuntimeError(f"ElevenLabs 认证失败，请检查 API Key 是否有效") from e
-        elif status == 402 or (isinstance(detail, dict) and detail.get('code') == 'paid_plan_required'):
-            raise RuntimeError(f"ElevenLabs 该声音需要付费套餐：{msg}") from e
-        else:
-            raise RuntimeError(f"ElevenLabs API 错误 (HTTP {status})：{msg}") from e
+        status, err_status, msg, detail = _elevenlabs_error_parts(e)
+        raise RuntimeError(_format_elevenlabs_api_error(status, err_status, msg, detail)) from e
 
     duration = get_audio_duration(output_path, ffmpeg_path)
     logger.debug(
@@ -879,6 +968,7 @@ def create_ken_burns_clip(
         stdin=subprocess.PIPE,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
+        **_hidden_subprocess_kwargs(),
     )
 
     try:
@@ -1223,6 +1313,7 @@ def _resolve_cjk_font_file() -> Optional[Tuple[str, str]]:
         result = subprocess.run(
             ['fc-match', '-f', '%{file}|%{family}', ':lang=zh'],
             capture_output=True, text=True, timeout=5, env=env,
+            **_hidden_subprocess_kwargs(),
         )
         out = result.stdout.strip()
         if out and '|' in out:
@@ -1570,15 +1661,19 @@ def generate_narration_video(
             elevenlabs_config and elevenlabs_config.get('api_key')
             and len(narration_indexes) >= 2
         ):
-            whole_text_pairs = _generate_elevenlabs_whole_and_split(
-                pages_data, narration_indexes, tmp_dir,
-                api_key=elevenlabs_config['api_key'],
-                voice_id=elevenlabs_config.get('voice_id') or 'JBFqnCBsd6RMkjVDRZzb',
-                ffmpeg_path=ffmpeg_path,
-                speed=speed,
-                progress_callback=progress_callback,
-            )
-            whole_text_results = dict(zip(narration_indexes, whole_text_pairs))
+            try:
+                whole_text_pairs = _generate_elevenlabs_whole_and_split(
+                    pages_data, narration_indexes, tmp_dir,
+                    api_key=elevenlabs_config['api_key'],
+                    voice_id=elevenlabs_config.get('voice_id') or 'JBFqnCBsd6RMkjVDRZzb',
+                    ffmpeg_path=ffmpeg_path,
+                    speed=speed,
+                    progress_callback=progress_callback,
+                )
+                whole_text_results = dict(zip(narration_indexes, whole_text_pairs))
+            except RuntimeError as e:
+                logger.warning(f"ElevenLabs 整段合成失败，回退到逐页合成: {e}")
+                whole_text_results = None
 
         for i, page in enumerate(pages_data):
             narration = page.get('narration_text')

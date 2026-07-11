@@ -441,6 +441,21 @@ def export_editable_pptx(project_id):
         
         if not isinstance(max_workers, int) or max_workers < 1 or max_workers > 16:
             return bad_request("max_workers must be an integer between 1 and 16")
+
+        export_extractor_method = project.export_extractor_method or 'hybrid'
+        export_inpaint_method = project.export_inpaint_method or 'hybrid'
+        export_high_fidelity_editable = project.export_high_fidelity_editable or False
+        resume_kwargs = {
+            "project_id": project_id,
+            "filename": filename,
+            "page_ids": selected_page_ids if selected_page_ids else None,
+            "max_depth": max_depth,
+            "max_workers": max_workers,
+            "export_extractor_method": export_extractor_method,
+            "export_inpaint_method": export_inpaint_method,
+            "export_high_fidelity_editable": export_high_fidelity_editable,
+            "enable_icon_subject_extraction": False,
+        }
         
         # Create task record
         task = Task(
@@ -448,6 +463,7 @@ def export_editable_pptx(project_id):
             task_type='EXPORT_EDITABLE_PPTX',
             status='PENDING'
         )
+        task.set_progress({"_resume": {"kind": "editable-pptx", "kwargs": resume_kwargs}})
         db.session.add(task)
         db.session.commit()
         
@@ -463,16 +479,9 @@ def export_editable_pptx(project_id):
         app = current_app._get_current_object()
         
         # 读取项目的导出设置
-        export_extractor_method = project.export_extractor_method or 'hybrid'
-        export_inpaint_method = project.export_inpaint_method or 'hybrid'
-        enable_icon_subject_extraction = (
-            True if project.enable_icon_subject_extraction is None
-            else bool(project.enable_icon_subject_extraction)
-        )
         logger.info(
             f"Export settings: extractor={export_extractor_method}, "
-            f"inpaint={export_inpaint_method}, "
-            f"icon_subject_extraction={enable_icon_subject_extraction}"
+            f"inpaint={export_inpaint_method}, high_fidelity={export_high_fidelity_editable}"
         )
 
         # 使用递归分析任务（不需要 ai_service，使用 ImageEditabilityService）
@@ -487,7 +496,8 @@ def export_editable_pptx(project_id):
             max_workers=max_workers,
             export_extractor_method=export_extractor_method,
             export_inpaint_method=export_inpaint_method,
-            enable_icon_subject_extraction=enable_icon_subject_extraction,
+            export_high_fidelity_editable=export_high_fidelity_editable,
+            enable_icon_subject_extraction=False,
             app=app
         )
         
@@ -584,6 +594,24 @@ def export_video(project_id):
             task_type='EXPORT_VIDEO',
             status='PENDING',
         )
+        task.set_progress({
+            "_resume": {
+                "kind": "video",
+                "kwargs": {
+                    "project_id": project_id,
+                    "filename": filename,
+                    "voice": voice,
+                    "rate": rate,
+                    "speed": speed,
+                    "generate_narration": generate_narration,
+                    "enable_ken_burns": enable_ken_burns,
+                    "include_no_image_pages": include_no_image_pages,
+                    "page_ids": selected_page_ids if selected_page_ids else None,
+                    "language": language,
+                    "narration_config": narration_config,
+                },
+            },
+        })
         db.session.add(task)
         db.session.commit()
 

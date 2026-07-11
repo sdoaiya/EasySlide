@@ -27,7 +27,8 @@ class Project(db.Model):
     export_extractor_method = db.Column(db.String(50), nullable=True, default='hybrid')  # 组件提取方法: mineru, hybrid
     export_inpaint_method = db.Column(db.String(50), nullable=True, default='hybrid')  # 背景图获取方法: generative, baidu, hybrid
     export_allow_partial = db.Column(db.Boolean, nullable=True, default=False)  # 是否允许返回半成品（导出出错时继续而非停止）
-    enable_icon_subject_extraction = db.Column(db.Boolean, nullable=True, default=True)  # 是否对小尺寸图标走百度智能抠图
+    export_high_fidelity_editable = db.Column(db.Boolean, nullable=False, default=False)  # 高保真可编辑导出（高级开关，默认关闭）
+    enable_icon_subject_extraction = db.Column(db.Boolean, nullable=True, default=False)  # 已废弃
     image_aspect_ratio = db.Column(db.String(10), nullable=False, server_default='16:9', default='16:9')
     status = db.Column(db.String(50), nullable=False, default='DRAFT')
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
@@ -68,7 +69,8 @@ class Project(db.Model):
             'export_extractor_method': self.export_extractor_method or 'hybrid',
             'export_inpaint_method': self.export_inpaint_method or 'hybrid',
             'export_allow_partial': self.export_allow_partial or False,
-            'enable_icon_subject_extraction': True if self.enable_icon_subject_extraction is None else bool(self.enable_icon_subject_extraction),
+            'export_high_fidelity_editable': self.export_high_fidelity_editable or False,
+            'enable_icon_subject_extraction': False,
             'image_aspect_ratio': self.image_aspect_ratio,
             'status': self.status,
             'created_at': created_at_str,

@@ -197,7 +197,6 @@ export const OutlineEditor: React.FC = () => {
   }, [isOutlineStreaming]);
   const { confirm, ConfirmDialog } = useConfirm();
   const { show, ToastContainer } = useToast();
-  const autoGenerateStartedRef = useRef<string | null>(null);
 
   // 主输入框 ref，用于素材/图片 markdown 插入到光标处。
   const desktopTextareaRef = useRef<MarkdownTextareaRef>(null);
@@ -401,28 +400,6 @@ export const OutlineEditor: React.FC = () => {
     await doGenerate();
   };
 
-  useEffect(() => {
-    if (!currentProject?.id || currentProject.pages.length > 0 || isOutlineStreaming) return;
-    if (!['idea', 'outline', 'descriptions'].includes(currentProject.creation_type || 'idea')) return;
-    if (autoGenerateStartedRef.current === currentProject.id) return;
-
-    autoGenerateStartedRef.current = currentProject.id;
-    void (async () => {
-      try {
-        const result = await generateOutlineStream();
-        const { currentProject: updatedProject } = useProjectStore.getState();
-        const pageCount = updatedProject?.pages.length ?? 0;
-        if (result && (!result.complete || pageCount === 0)) {
-          show({ message: t('outline.messages.generateIncomplete'), type: 'warning' });
-        }
-      } catch (error: any) {
-        console.error('自动生成大纲失败:', error);
-        const message = error.message || t('outline.messages.generateFailed');
-        show({ message, type: 'error' });
-      }
-    })();
-  }, [currentProject?.id, currentProject?.pages.length, currentProject?.creation_type, generateOutlineStream, isOutlineStreaming, show, t]);
-
   const handleAiRefineOutline = useCallback(async (requirement: string, previousRequirements: string[]) => {
     if (!currentProject || !projectId) return;
 
@@ -593,8 +570,8 @@ export const OutlineEditor: React.FC = () => {
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto min-h-0 p-4 md:p-7">
-        <section className="grid grid-cols-1 xl:grid-cols-2 gap-4 md:gap-6">
+      <main className="flex-1 overflow-y-auto min-h-0 p-4 md:p-6">
+        <section className="grid grid-cols-1 xl:grid-cols-2 gap-4">
           <div className="bg-white dark:bg-background-secondary rounded-2xl shadow-lg shadow-sky-100/60 dark:shadow-none border border-sky-100 dark:border-border-primary overflow-hidden">
             <div className="h-12 px-5 flex items-center gap-2 border-b border-slate-100 dark:border-border-secondary">
               {currentProject.creation_type === 'idea'
@@ -611,8 +588,8 @@ export const OutlineEditor: React.FC = () => {
               onFiles={handleImageFiles}
               onSelectFromLibrary={() => { setActiveMaterialTarget('input'); setIsMaterialSelectorOpen(true); }}
               placeholder={inputPlaceholder}
-              rows={7}
-              className="border-0 rounded-none shadow-none min-h-[230px]"
+              rows={4}
+              className="border-0 rounded-none shadow-none min-h-[128px]"
             />
           </div>
 
@@ -630,9 +607,9 @@ export const OutlineEditor: React.FC = () => {
                 onFiles={handleReqImageFiles}
                 onSelectFromLibrary={() => { setActiveMaterialTarget('requirements'); setIsMaterialSelectorOpen(true); }}
                 placeholder={t('outline.outlineRequirementsPlaceholder')}
-                rows={7}
+                rows={4}
                 showImagePreview={false}
-                className="border-0 rounded-none shadow-none min-h-[230px]"
+                className="border-0 rounded-none shadow-none min-h-[128px]"
               />
             </div>
             <div className="px-5 pb-4">
@@ -654,8 +631,8 @@ export const OutlineEditor: React.FC = () => {
           showToast={show}
         />
 
-        <section className="mt-6 grid grid-cols-1 lg:grid-cols-[290px_1fr] gap-5 md:gap-6">
-          <aside className="bg-white dark:bg-background-secondary rounded-2xl shadow-md border border-sky-100 dark:border-border-primary p-3 lg:sticky lg:top-4 lg:max-h-[calc(100vh-110px)] overflow-hidden">
+        <section className="mt-4 grid grid-cols-1 lg:grid-cols-[290px_1fr] gap-5 md:gap-6">
+          <aside className="bg-white dark:bg-background-secondary rounded-2xl shadow-md border border-sky-100 dark:border-border-primary p-3 lg:sticky lg:top-4 lg:max-h-[calc(100vh-110px)] overflow-hidden flex flex-col">
             <div className="flex items-center justify-between px-2 pb-3">
               <div>
                 <h3 className="flex items-center gap-2 font-bold text-slate-700 dark:text-foreground-primary">
@@ -668,7 +645,7 @@ export const OutlineEditor: React.FC = () => {
                 {t('outline.pageCount', { count: String(currentProject.pages.length) })}
               </span>
             </div>
-            <div className="space-y-2 overflow-y-auto pr-1 max-h-[520px]">
+            <div className="flex-1 min-h-0 space-y-2 overflow-y-auto pr-1">
               {currentProject.pages.map((page, index) => {
                 const selected = selectedPageId === page.id;
                 const navTitle = page.part || page.outline_content?.title || t('outline.titleLabel');

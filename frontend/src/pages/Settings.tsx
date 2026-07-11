@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Home, Key, Image, Zap, Save, RotateCcw, Globe, FileText, Brain, ArrowUp, HelpCircle, Link2, ChevronDown, Volume2, Info, Settings as SettingsIcon, Sparkles, LayoutDashboard, FolderOpen, Box, ImagePlus } from 'lucide-react';
+import { Home, Key, Image, Zap, Save, RotateCcw, Globe, FileText, Brain, ArrowUp, HelpCircle, Link2, ChevronDown, Volume2, Info, Settings as SettingsIcon, Sparkles, LayoutDashboard, FolderOpen, Box, ImagePlus, List } from 'lucide-react';
 import { useT } from '@/hooks/useT';
 import { getStaticAssetUrl } from '@/api/client';
 
@@ -84,6 +84,12 @@ const settingsI18n = {
         imageModelDesc: "用于生成页面图片的模型名称",
         imageCaptionModel: "图片识别模型", imageCaptionModelPlaceholder: "留空使用环境变量配置 (如: gemini-3-flash-preview)",
         imageCaptionModelDesc: "用于识别参考文件中的图片并生成描述",
+        modelReference: "模型引用",
+        modelReferenceTitle: "选择模型",
+        modelReferenceLoading: "正在读取模型列表...",
+        modelReferenceEmpty: "当前提供商没有返回可选模型",
+        modelReferenceError: "模型列表读取失败",
+        modelReferenceUnsupported: "该提供商暂不支持自动读取模型，请继续手动填写",
         mineruApiBase: "MinerU API Base", mineruApiBasePlaceholder: "留空使用环境变量配置 (如: https://mineru.net)",
         mineruApiBaseDesc: "MinerU 服务地址，用于解析参考文件",
         mineruToken: "MinerU Token", mineruTokenPlaceholder: "输入新的 MinerU Token",
@@ -249,6 +255,12 @@ const settingsI18n = {
         imageModelDesc: "Model name for generating page images",
         imageCaptionModel: "Image Caption Model", imageCaptionModelPlaceholder: "Leave empty to use env config (e.g., gemini-3-flash-preview)",
         imageCaptionModelDesc: "Model for recognizing images in reference files and generating descriptions",
+        modelReference: "Model Reference",
+        modelReferenceTitle: "Choose Model",
+        modelReferenceLoading: "Loading models...",
+        modelReferenceEmpty: "No models returned by the current provider",
+        modelReferenceError: "Failed to load model list",
+        modelReferenceUnsupported: "This provider does not support automatic model lookup yet. Please fill it manually.",
         mineruApiBase: "MinerU API Base", mineruApiBasePlaceholder: "Leave empty to use env config (e.g., https://mineru.net)",
         mineruApiBaseDesc: "MinerU service address for parsing reference files",
         mineruToken: "MinerU Token", mineruTokenPlaceholder: "Enter new MinerU Token",
@@ -439,6 +451,18 @@ const initialFormData = {
   elevenlabs_api_key: '',
 };
 
+type ModelType = 'text' | 'image' | 'image_caption';
+type ModelFieldKey = 'text_model' | 'image_model' | 'image_caption_model';
+
+interface ModelPickerState {
+  isOpen: boolean;
+  modelKey: ModelFieldKey | null;
+  label: string;
+  models: string[];
+  loading: boolean;
+  error: string;
+}
+
 const isLazyllmVendor = (vendor: string) =>
   LAZYLLM_VENDOR_SET.has(vendor) && vendor !== 'openai';
 
@@ -521,6 +545,13 @@ const settingsPayloadFromResponse = (response: unknown): SettingsType | null => 
   return null;
 };
 
+const apiErrorMessage = (error: unknown, fallback: string): string => {
+  const err = error as { response?: { data?: { error?: string | { message?: string } } }; message?: string };
+  const payload = err.response?.data?.error;
+  if (typeof payload === 'string') return payload;
+  return payload?.message || err.message || fallback;
+};
+
 // Settings 组件 - 纯嵌入模式（可复用）
 export const Settings: React.FC = () => {
   const t = useT(settingsI18n);
@@ -559,6 +590,14 @@ export const Settings: React.FC = () => {
   const [openAIImageModels, setOpenAIImageModels] = useState<string[]>([]);
   const [openAIModelsLoading, setOpenAIModelsLoading] = useState(false);
   const [exportDir, setExportDir] = useState('');
+  const [modelPicker, setModelPicker] = useState<ModelPickerState>({
+    isOpen: false,
+    modelKey: null,
+    label: '',
+    models: [],
+    loading: false,
+    error: '',
+  });
 
   const refreshOpenAIModels = async (connected: boolean) => {
     if (!connected) {
@@ -699,6 +738,69 @@ export const Settings: React.FC = () => {
       openai_image_api_protocol: provider === 'openai' ? 'images' : prev.openai_image_api_protocol,
     }));
     show({ message: t('settings.openaiOAuth.recommendedApplied'), type: 'success' });
+  };
+
+  const handleOpenModelReference = async (item: {
+    modelKey: ModelFieldKey;
+    modelType: ModelType;
+    sourceKey: keyof typeof initialFormData;
+    apiKeyKey: keyof typeof initialFormData;
+    apiBaseKey: keyof typeof initialFormData;
+    label: string;
+  }) => {
+    const provider = ((formData[item.sourceKey] as string) || formData.ai_provider_format || 'gemini').trim();
+    setModelPicker({
+      isOpen: true,
+      modelKey: item.modelKey,
+      label: item.label,
+      models: [],
+      loading: true,
+      error: '',
+    });
+
+    try {
+      let models: string[] = [];
+      if (provider === 'codex') {
+        const resp = await api.getOpenAIOAuthModels();
+        const allModels = resp.data?.models || [];
+        if (item.modelType === 'image') {
+          models = resp.data?.image_models || allModels.filter((model) => model.includes('image'));
+        } else {
+          models = resp.data?.text_models || allModels.filter((model) => !model.includes('image'));
+        }
+      } else if (API_KEY_PROVIDERS.has(provider)) {
+        const resp = await api.getModelOptions({
+          provider,
+          model_type: item.modelType,
+          api_key: (formData[item.apiKeyKey] as string) || formData.api_key,
+          api_base_url: (formData[item.apiBaseKey] as string) || formData.api_base_url,
+        });
+        if (!resp.success) {
+          const errorPayload = (resp as unknown as { error?: string | { message?: string } }).error;
+          const message = typeof errorPayload === 'string' ? errorPayload : errorPayload?.message;
+          if (message) throw new Error(message);
+        }
+        models = resp.data?.models || [];
+      } else {
+        throw new Error(t('settings.fields.modelReferenceUnsupported'));
+      }
+
+      setModelPicker(prev => ({
+        ...prev,
+        models,
+        loading: false,
+        error: models.length ? '' : t('settings.fields.modelReferenceEmpty'),
+      }));
+    } catch (error) {
+      const message = apiErrorMessage(error, t('settings.fields.modelReferenceError'));
+      setModelPicker(prev => ({ ...prev, loading: false, error: message }));
+    }
+  };
+
+  const handleChooseReferencedModel = (model: string) => {
+    if (!modelPicker.modelKey) return;
+    handleFieldChange(modelPicker.modelKey, model);
+    setModelPicker(prev => ({ ...prev, isOpen: false }));
   };
 
   // 配置驱动的表单区块定义（使用翻译）
@@ -973,6 +1075,7 @@ export const Settings: React.FC = () => {
           if (resetSettings) {
             setSettings(resetSettings);
             setFormData(formDataFromSettings(resetSettings));
+            sessionStorage.setItem('easyslide-settings', JSON.stringify(resetSettings));
             show({ message: t('settings.messages.resetSuccess'), type: 'success' });
           }
         } catch (error: any) {
@@ -1118,7 +1221,7 @@ export const Settings: React.FC = () => {
           }
           // 如果是 PENDING 或 PROCESSING，继续轮询
         } catch (pollError: any) {
-          const errorMessage = pollError?.response?.data?.error?.message || pollError?.message || t('settings.serviceTest.testFailed');
+          const errorMessage = apiErrorMessage(pollError, t('settings.serviceTest.testFailed'));
           finish({ status: 'error', message: errorMessage }, `${t('settings.serviceTest.testFailed')}: ${errorMessage}`, 'error');
         }
       }, 2000); // 每2秒轮询一次
@@ -1129,7 +1232,7 @@ export const Settings: React.FC = () => {
       }, 600000); // 10 分钟，覆盖 gpt-image-2 等慢模型的生成时间
 
     } catch (error: any) {
-      const errorMessage = error?.response?.data?.error?.message || error?.message || t('common.unknownError');
+      const errorMessage = apiErrorMessage(error, t('common.unknownError'));
       updateServiceTest(key, { status: 'error', message: errorMessage });
       show({ message: `${t('settings.serviceTest.testFailed')}: ${errorMessage}`, type: 'error' });
     }
@@ -1275,7 +1378,8 @@ export const Settings: React.FC = () => {
   // 模型配置项定义：每种模型类型的 key、source key、api key/base key、标签等
   const modelConfigItems = [
     {
-      modelKey: 'text_model' as keyof typeof initialFormData,
+      modelKey: 'text_model' as ModelFieldKey,
+      modelType: 'text' as ModelType,
       sourceKey: 'text_model_source' as keyof typeof initialFormData,
       apiKeyKey: 'text_api_key' as keyof typeof initialFormData,
       apiBaseKey: 'text_api_base_url' as keyof typeof initialFormData,
@@ -1286,7 +1390,8 @@ export const Settings: React.FC = () => {
       sourceLabel: t('settings.fields.textModelSource'),
     },
     {
-      modelKey: 'image_model' as keyof typeof initialFormData,
+      modelKey: 'image_model' as ModelFieldKey,
+      modelType: 'image' as ModelType,
       sourceKey: 'image_model_source' as keyof typeof initialFormData,
       apiKeyKey: 'image_api_key' as keyof typeof initialFormData,
       apiBaseKey: 'image_api_base_url' as keyof typeof initialFormData,
@@ -1297,7 +1402,8 @@ export const Settings: React.FC = () => {
       sourceLabel: t('settings.fields.imageModelSource'),
     },
     {
-      modelKey: 'image_caption_model' as keyof typeof initialFormData,
+      modelKey: 'image_caption_model' as ModelFieldKey,
+      modelType: 'image_caption' as ModelType,
       sourceKey: 'image_caption_model_source' as keyof typeof initialFormData,
       apiKeyKey: 'image_caption_api_key' as keyof typeof initialFormData,
       apiBaseKey: 'image_caption_api_base_url' as keyof typeof initialFormData,
@@ -1320,13 +1426,24 @@ export const Settings: React.FC = () => {
     return (
       <div key={item.modelKey} className="pb-6 border-b border-gray-200 dark:border-border-primary last:border-b-0 last:pb-0 space-y-3">
         {/* 模型名称 */}
-        <Input
-          label={item.label}
-          type="text"
-          placeholder={item.placeholder}
-          value={formData[item.modelKey] as string}
-          onChange={(e) => handleFieldChange(item.modelKey, e.target.value)}
-        />
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+          <div className="min-w-0 flex-1">
+            <Input
+              label={item.label}
+              type="text"
+              placeholder={item.placeholder}
+              value={formData[item.modelKey] as string}
+              onChange={(e) => handleFieldChange(item.modelKey, e.target.value)}
+            />
+          </div>
+          <Button
+            variant="secondary"
+            icon={<List size={16} />}
+            onClick={() => handleOpenModelReference(item)}
+          >
+            {t('settings.fields.modelReference')}
+          </Button>
+        </div>
         {item.description && (
           <p className="-mt-1 text-sm text-gray-500 dark:text-foreground-tertiary">{item.description}</p>
         )}
@@ -1450,6 +1567,33 @@ export const Settings: React.FC = () => {
     <>
       <ToastContainer />
       {ConfirmDialog}
+      <Modal
+        isOpen={modelPicker.isOpen}
+        onClose={() => setModelPicker(prev => ({ ...prev, isOpen: false }))}
+        title={`${t('settings.fields.modelReferenceTitle')} - ${modelPicker.label}`}
+        size="lg"
+      >
+        {modelPicker.loading ? (
+          <Loading message={t('settings.fields.modelReferenceLoading')} />
+        ) : modelPicker.error ? (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+            {modelPicker.error}
+          </div>
+        ) : (
+          <div className="grid gap-2">
+            {modelPicker.models.map((model) => (
+              <button
+                key={model}
+                type="button"
+                onClick={() => handleChooseReferencedModel(model)}
+                className="w-full rounded-lg border border-gray-200 bg-white px-4 py-2.5 text-left text-sm font-medium text-gray-800 transition-colors hover:border-cyan-300 hover:bg-cyan-50 dark:border-border-primary dark:bg-background-secondary dark:text-foreground-primary dark:hover:bg-background-hover"
+              >
+                {model}
+              </button>
+            ))}
+          </div>
+        )}
+      </Modal>
       <div className="space-y-10 pb-28">
         <div className="rounded-[1.75rem] border border-sky-100 bg-gradient-to-br from-sky-50 via-white to-emerald-50 p-5 md:p-6 shadow-sm">
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">

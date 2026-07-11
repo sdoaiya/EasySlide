@@ -74,9 +74,6 @@ const previewI18n = {
       videoCancel: "取消",
       editablePptxDialogTitle: "导出可编辑 PPTX",
       editablePptxDialogSubtitle: "选择本次导出的处理选项。",
-      editablePptxIconTransparent: "图标透明背景",
-      editablePptxIconTransparentDesc: "对识别为图标的图片调用本地 RMBG-2.0 模型抠出透明背景，避免原 PPT 底色与新底色冲突。",
-      editablePptxModelHint: "首次启用会下载约 512MB 模型到 ~/.cache/easyslide/models/，CPU 推理对内存要求较高，建议机器有 ≥ 16GB 可用内存。",
       editablePptxRangeLabel: "导出范围",
       editablePptxRangeAll: "全部 {{count}} 页",
       editablePptxRangePages: "第 {{pages}} 页（共 {{count}} 页）",
@@ -196,9 +193,6 @@ const previewI18n = {
       videoCancel: "Cancel",
       editablePptxDialogTitle: "Export Editable PPTX",
       editablePptxDialogSubtitle: "Choose processing options for this export.",
-      editablePptxIconTransparent: "Icon Transparent Background",
-      editablePptxIconTransparentDesc: "Run images classified as icons through the local RMBG-2.0 model to produce transparent-background PNGs, avoiding background color clashes.",
-      editablePptxModelHint: "First use downloads a ~512MB model to ~/.cache/easyslide/models/. CPU inference is memory-intensive; recommended: ≥16GB free memory.",
       editablePptxRangeLabel: "Export range",
       editablePptxRangeAll: "All {{count}} pages",
       editablePptxRangePages: "Pages {{pages}} ({{count}} total)",
@@ -402,7 +396,6 @@ export const SlidePreview: React.FC = () => {
   const [showPptxExportDialog, setShowPptxExportDialog] = useState(false);
   const [showVideoExportDialog, setShowVideoExportDialog] = useState(false);
   const [showEditablePptxDialog, setShowEditablePptxDialog] = useState(false);
-  const [editablePptxDialogIconTransparent, setEditablePptxDialogIconTransparent] = useState(true);
   const [pptxTransitionsEnabled, setPptxTransitionsEnabled] = useState(false);
   const [pptxTransitionEffects, setPptxTransitionEffects] = useState<PptxTransitionEffect[]>(['fade']);
   const [videoEnableKenBurns, setVideoEnableKenBurns] = useState(false);
@@ -421,6 +414,12 @@ export const SlidePreview: React.FC = () => {
   useEffect(() => { localStorage.setItem('elevenLabsEnabled', String(elevenLabsEnabled)); }, [elevenLabsEnabled]);
   useEffect(() => { if (elevenLabsVoiceId) localStorage.setItem('elevenLabsVoiceId', elevenLabsVoiceId); }, [elevenLabsVoiceId]);
   useEffect(() => { localStorage.setItem('videoSpeed', String(videoSpeed)); }, [videoSpeed]);
+  useEffect(() => {
+    if (!elevenLabsEnabled || elevenLabsVoices.length === 0) return;
+    if (!elevenLabsVoices.some(v => v.id === elevenLabsVoiceId)) {
+      setElevenLabsVoiceId(elevenLabsVoices[0].id);
+    }
+  }, [elevenLabsEnabled, elevenLabsVoiceId, elevenLabsVoices]);
   const [videoNarrationConfig, setVideoNarrationConfig] = useState<NarrationConfig>(DEFAULT_VIDEO_NARRATION_CONFIG);
   const [videoShowAdvancedNarration, setVideoShowAdvancedNarration] = useState(false);
   // 多选导出相关状态
@@ -466,8 +465,8 @@ export const SlidePreview: React.FC = () => {
   const [exportAllowPartial, setExportAllowPartial] = useState<boolean>(
     currentProject?.export_allow_partial || false
   );
-  const [enableIconSubjectExtraction, setEnableIconSubjectExtraction] = useState<boolean>(
-    currentProject?.enable_icon_subject_extraction ?? true
+  const [exportHighFidelityEditable, setExportHighFidelityEditable] = useState<boolean>(
+    currentProject?.export_high_fidelity_editable || false
   );
   const [isSavingExportSettings, setIsSavingExportSettings] = useState(false);
   // 画面比例
@@ -485,6 +484,10 @@ export const SlidePreview: React.FC = () => {
     }
     return '16/9';
   }, [aspectRatio]);
+  const previewCanvasWidth = useMemo(() => {
+    const [width, height] = aspectRatioStyle.split('/').map(Number);
+    return `min(100%, 64rem, ${(width / height) * 100}cqh)`;
+  }, [aspectRatioStyle]);
   // 1K分辨率警告对话框状态
   const [show1KWarningDialog, setShow1KWarningDialog] = useState(false);
   const [skip1KWarningChecked, setSkip1KWarningChecked] = useState(false);
@@ -580,7 +583,7 @@ export const SlidePreview: React.FC = () => {
         setExportExtractorMethod((currentProject.export_extractor_method as ExportExtractorMethod) || 'hybrid');
         setExportInpaintMethod((currentProject.export_inpaint_method as ExportInpaintMethod) || 'hybrid');
         setExportAllowPartial(currentProject.export_allow_partial || false);
-        setEnableIconSubjectExtraction(currentProject.enable_icon_subject_extraction ?? true);
+        setExportHighFidelityEditable(currentProject.export_high_fidelity_editable || false);
         setAspectRatio(currentProject.image_aspect_ratio || '16:9');
         lastProjectId.current = currentProject.id || null;
         isEditingRequirements.current = false;
@@ -598,11 +601,11 @@ export const SlidePreview: React.FC = () => {
         setExportExtractorMethod((currentProject.export_extractor_method as ExportExtractorMethod) || 'hybrid');
         setExportInpaintMethod((currentProject.export_inpaint_method as ExportInpaintMethod) || 'hybrid');
         setExportAllowPartial(currentProject.export_allow_partial || false);
-        setEnableIconSubjectExtraction(currentProject.enable_icon_subject_extraction ?? true);
+        setExportHighFidelityEditable(currentProject.export_high_fidelity_editable || false);
       }
       // 如果用户正在编辑，则不更新本地状态
     }
-  }, [currentProject?.id, currentProject?.extra_requirements, currentProject?.template_style, currentProject?.image_aspect_ratio, currentProject?.export_extractor_method, currentProject?.export_inpaint_method, currentProject?.export_allow_partial, currentProject?.enable_icon_subject_extraction]);
+  }, [currentProject?.id, currentProject?.extra_requirements, currentProject?.template_style, currentProject?.image_aspect_ratio, currentProject?.export_extractor_method, currentProject?.export_inpaint_method, currentProject?.export_allow_partial, currentProject?.export_high_fidelity_editable]);
 
   // 加载当前页面的历史版本
   useEffect(() => {
@@ -1239,8 +1242,8 @@ export const SlidePreview: React.FC = () => {
           status: 'PROCESSING',
           pageIds: pageIds,
         });
-        
-        show({ message: t('slidePreview.exportStarted'), type: 'success' });
+
+        show({ message: t('slidePreview.exportStarted'), type: 'success', duration: 2000 });
         
         const response = await apiExportEditablePPTX(projectId, undefined, pageIds);
         const taskId = response.data?.task_id;
@@ -1260,6 +1263,19 @@ export const SlidePreview: React.FC = () => {
           pollExportTask(exportTaskId, projectId, taskId);
         }
       } else if (type === 'video') {
+        const validElevenLabsVoiceId = elevenLabsVoices.some(v => v.id === elevenLabsVoiceId)
+          ? elevenLabsVoiceId
+          : elevenLabsVoices[0]?.id;
+        if (elevenLabsEnabled && !validElevenLabsVoiceId) {
+          show({
+            message: isEnglishUi
+              ? 'No available ElevenLabs voice. Please reload the voice list or check the API Key in Settings.'
+              : '没有可用的 ElevenLabs 声音，请重新加载声音列表或检查设置里的 API Key。',
+            type: 'error',
+          });
+          return;
+        }
+
         // Async export - create processing task and start polling
         addTask({
           id: exportTaskId,
@@ -1270,9 +1286,9 @@ export const SlidePreview: React.FC = () => {
           pageIds: pageIds,
         });
 
-        show({ message: t('slidePreview.exportStarted'), type: 'success' });
+        show({ message: t('slidePreview.exportStarted'), type: 'success', duration: 2000 });
 
-        const activeVoice = elevenLabsEnabled ? elevenLabsVoiceId : videoVoice;
+        const activeVoice = elevenLabsEnabled ? validElevenLabsVoiceId : videoVoice;
         const voiceLang = elevenLabsEnabled ? 'zh' : (VIDEO_VOICE_OPTIONS.flatMap(g => g.voices).find(v => v.id === videoVoice)?.lang || 'zh');
         const response = await apiExportVideo(projectId, {
           pageIds,
@@ -1414,7 +1430,7 @@ export const SlidePreview: React.FC = () => {
         export_extractor_method: exportExtractorMethod,
         export_inpaint_method: exportInpaintMethod,
         export_allow_partial: exportAllowPartial,
-        enable_icon_subject_extraction: enableIconSubjectExtraction
+        export_high_fidelity_editable: exportHighFidelityEditable
       });
       // 更新本地项目状态
       await syncProject(projectId);
@@ -1427,7 +1443,7 @@ export const SlidePreview: React.FC = () => {
     } finally {
       setIsSavingExportSettings(false);
     }
-  }, [currentProject, projectId, exportExtractorMethod, exportInpaintMethod, exportAllowPartial, enableIconSubjectExtraction, syncProject, show, t]);
+  }, [currentProject, projectId, exportExtractorMethod, exportInpaintMethod, exportAllowPartial, exportHighFidelityEditable, syncProject, show, t]);
 
   const handleSaveAspectRatio = useCallback(async () => {
     if (!currentProject || !projectId) return;
@@ -1556,7 +1572,7 @@ export const SlidePreview: React.FC = () => {
   return (
     <div className="h-screen bg-gray-50 dark:bg-background-primary flex flex-col overflow-hidden">
       {/* 顶栏 */}
-      <header className="min-h-16 bg-white dark:bg-background-secondary shadow-sm dark:shadow-background-primary/30 border-b border-gray-200 dark:border-border-primary flex items-center justify-between px-3 md:px-6 py-2 flex-shrink-0">
+      <header className="min-h-14 bg-white dark:bg-background-secondary shadow-sm dark:shadow-background-primary/30 border-b border-gray-200 dark:border-border-primary flex items-center justify-between px-3 md:px-6 py-1.5 flex-shrink-0">
         <div className="flex items-center gap-2 md:gap-4 min-w-0 flex-1">
           <Button
             variant="ghost"
@@ -1653,7 +1669,7 @@ export const SlidePreview: React.FC = () => {
                 }}
                 className="relative"
               >
-                {exportTasks.filter(t => t.projectId === projectId && (t.status === 'PROCESSING' || t.status === 'RUNNING' || t.status === 'PENDING')).length > 0 ? (
+                {exportTasks.filter(t => t.projectId === projectId && (t.status === 'PROCESSING' || t.status === 'RUNNING' || t.status === 'PENDING' || t.status === 'PAUSED')).length > 0 ? (
                   <Loader2 size={16} className="animate-spin text-sky-500" />
                 ) : (
                   <FileText size={16} />
@@ -1721,7 +1737,6 @@ export const SlidePreview: React.FC = () => {
                 <button
                   onClick={() => {
                     setShowExportMenu(false);
-                    setEditablePptxDialogIconTransparent(currentProject?.enable_icon_subject_extraction ?? true);
                     setShowEditablePptxDialog(true);
                   }}
                   disabled={!exportRangeHasAllImages}
@@ -2152,23 +2167,6 @@ export const SlidePreview: React.FC = () => {
           <div className="bg-white dark:bg-background-secondary rounded-2xl p-6 w-full max-w-md mx-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-semibold">{t('preview.editablePptxDialogTitle')}</h3>
             <p className="text-sm text-gray-500 dark:text-foreground-tertiary mt-1 mb-5">{t('preview.editablePptxDialogSubtitle')}</p>
-            <label className="flex items-start gap-3 cursor-pointer p-3 rounded-lg hover:bg-gray-50 dark:hover:bg-background-hover">
-              <input
-                type="checkbox"
-                checked={editablePptxDialogIconTransparent}
-                onChange={(e) => setEditablePptxDialogIconTransparent(e.target.checked)}
-                className="w-4 h-4 mt-0.5 rounded border-gray-300 text-sky-500 focus:ring-sky-500"
-              />
-              <div className="flex-1">
-                <div className="text-sm font-medium">{t('preview.editablePptxIconTransparent')}</div>
-                <div className="text-xs text-gray-500 dark:text-foreground-tertiary mt-1">{t('preview.editablePptxIconTransparentDesc')}</div>
-                {editablePptxDialogIconTransparent && (
-                  <div className="text-xs text-rose-600 dark:text-rose-400 mt-2 leading-relaxed">
-                    {t('preview.editablePptxModelHint')}
-                  </div>
-                )}
-              </div>
-            </label>
             {(() => {
               const totalPages = currentProject?.pages?.length ?? 0;
               const isPartial = isMultiSelectMode && selectedPageIds.size > 0;
@@ -2203,15 +2201,6 @@ export const SlidePreview: React.FC = () => {
               <button
                 onClick={async () => {
                   setShowEditablePptxDialog(false);
-                  if (projectId && (currentProject?.enable_icon_subject_extraction ?? true) !== editablePptxDialogIconTransparent) {
-                    try {
-                      await updateProject(projectId, { enable_icon_subject_extraction: editablePptxDialogIconTransparent });
-                      await syncProject(projectId);
-                    } catch (error: any) {
-                      show({ message: t('slidePreview.saveFailed', { error: error?.message || t('slidePreview.unknownError') }), type: 'error' });
-                      return;
-                    }
-                  }
                   handleExport('editable-pptx');
                 }}
                 className="px-4 py-2 text-sm bg-sky-600 text-white rounded-lg hover:bg-sky-700 transition-colors"
@@ -2388,9 +2377,15 @@ export const SlidePreview: React.FC = () => {
           ) : (
             <>
               {/* 预览区 */}
-              <div className="flex-1 overflow-y-auto min-h-0 flex items-center justify-center p-4 md:p-8">
-                <div className="max-w-5xl w-full">
-                  <div className="relative bg-white dark:bg-background-secondary rounded-lg shadow-xl overflow-hidden touch-manipulation" style={{ aspectRatio: aspectRatioStyle }}>
+              <div
+                data-testid="slide-preview-viewport"
+                className="flex-1 min-h-0 flex items-center justify-center overflow-hidden p-2 md:p-3 [container-type:size]"
+              >
+                <div
+                  data-testid="slide-preview-canvas"
+                  className="relative bg-white dark:bg-background-secondary rounded-lg shadow-xl overflow-hidden touch-manipulation"
+                  style={{ aspectRatio: aspectRatioStyle, width: previewCanvasWidth }}
+                >
                     {selectedPage?.generated_image_path ? (
                       <img
                         src={imageUrl}
@@ -2423,13 +2418,15 @@ export const SlidePreview: React.FC = () => {
                         </div>
                       </div>
                     )}
-                  </div>
                 </div>
               </div>
 
               {/* 控制栏 */}
-              <div className="bg-white dark:bg-background-secondary border-t border-gray-200 dark:border-border-primary px-3 md:px-6 py-3 md:py-4 flex-shrink-0">
-                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 max-w-5xl mx-auto">
+              <div
+                data-testid="slide-preview-controls"
+                className="bg-white dark:bg-background-secondary border-t border-gray-200 dark:border-border-primary px-3 md:px-6 py-2 flex-shrink-0"
+              >
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-2 max-w-5xl mx-auto">
                   {/* 导航 */}
                   <div className="flex items-center gap-2 w-full sm:w-auto justify-center">
                     <Button
@@ -2973,11 +2970,11 @@ export const SlidePreview: React.FC = () => {
             exportExtractorMethod={exportExtractorMethod}
             exportInpaintMethod={exportInpaintMethod}
             exportAllowPartial={exportAllowPartial}
-            enableIconSubjectExtraction={enableIconSubjectExtraction}
+            exportHighFidelityEditable={exportHighFidelityEditable}
             onExportExtractorMethodChange={setExportExtractorMethod}
             onExportInpaintMethodChange={setExportInpaintMethod}
             onExportAllowPartialChange={setExportAllowPartial}
-            onEnableIconSubjectExtractionChange={setEnableIconSubjectExtraction}
+            onExportHighFidelityEditableChange={setExportHighFidelityEditable}
             onSaveExportSettings={handleSaveExportSettings}
             isSavingExportSettings={isSavingExportSettings}
             // 画面比例

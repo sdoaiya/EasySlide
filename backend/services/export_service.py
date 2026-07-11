@@ -16,13 +16,14 @@ from concurrent.futures import TimeoutError
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
+from zipfile import BadZipFile, ZipFile, is_zipfile
 from textwrap import dedent
 from dataclasses import dataclass, field
 from pptx import Presentation
 from pptx.util import Inches
 from pptx.oxml.xmlchemy import OxmlElement
 from pptx.oxml.ns import qn
-from PIL import Image
+from PIL import Image, ImageDraw
 import io
 import tempfile
 import img2pdf
@@ -57,6 +58,7 @@ class ExportError(Exception):
         """根据错误类型返回默认帮助提示"""
         help_texts = {
             'style_extraction': '样式提取失败可能是由于百度OCR API配置问题。请检查「项目设置 -> 导出设置」中的配置，或尝试切换到「MinerU提取」方法。',
+            'layout_analysis': '版面元素识别后仍可能卡在背景修复或递归子图分析阶段。请检查背景修复配置；系统会尽量跳过背景修复继续导出可编辑PPTX。',
             'text_render': '文本渲染失败可能是由于字体或编码问题。请检查页面内容是否包含特殊字符。',
             'image_add': '图片添加失败可能是由于图片文件损坏或路径错误。请尝试重新生成该页面的图片。',
             'inpaint': '背景修复失败可能是由于API配置问题。请检查「项目设置 -> 导出设置」中的背景图获取方法配置。',
@@ -96,6 +98,9 @@ class ExportWarnings:
     
     # 其他警告
     other_warnings: List[str] = field(default_factory=list)
+
+    # 可编辑 PPTX 重建证据目录（manifest.json / validation.json）
+    rebuild_artifacts_dir: Optional[str] = None
     
     def add_style_extraction_failed(self, element_id: str, reason: str):
         """记录样式提取失败"""
@@ -171,9 +176,10 @@ class ExportWarnings:
             'image_add_failed': self.image_add_failed,
             'json_parse_failed': self.json_parse_failed,
             'other_warnings': self.other_warnings,
+            'rebuild_artifacts_dir': self.rebuild_artifacts_dir,
             'total_warnings': (
-                len(self.style_extraction_failed) + 
-                len(self.text_render_failed) + 
+                len(self.style_extraction_failed) +
+                len(self.text_render_failed) +
                 len(self.image_add_failed) +
                 len(self.json_parse_failed) +
                 len(self.other_warnings)
@@ -1144,22 +1150,16 @@ class ExportService:
                     )
                 return element_id, None, str(e)
         
-        # 并发执行全局识别和单个裁剪识别
-        logger.info(f"  并发执行: 全局识别 {len(page_text_elements)} 页 + 单个识别 {len(all_text_items)} 个元素...")
+        # 先做全图识别；只有全图漏掉的文本元素才走单个裁剪补识别。
+        logger.info(f"  全图识别 {len(page_text_elements)} 页，必要时补识别缺失文本元素...")
         local_deadline = time.monotonic() + local_timeout_seconds
-        
+
         executor = ThreadPoolExecutor(max_workers=max_workers)
         try:
             # 提交全局识别任务
             global_futures = {
                 executor.submit(extract_global_for_page, idx, data): ('global', idx)
                 for idx, data in page_text_elements.items()
-            }
-            
-            # 提交单个裁剪识别任务
-            local_futures = {
-                executor.submit(extract_local_single, item): ('local', item[0])
-                for item in all_text_items
             }
             
             # 收集全局识别结果
@@ -1197,8 +1197,20 @@ class ExportService:
                         (element_id, f"全局识别失败: {e}")
                         for element_id in expected_element_ids
                     )
-            
-            # 收集单个裁剪识别结果
+
+            missing_items = [
+                item for item in all_text_items
+                if item[0] not in global_results
+            ]
+            if missing_items:
+                logger.info(f"  补识别 {len(missing_items)} 个全图未返回的文本元素...")
+
+            local_futures = {
+                executor.submit(extract_local_single, item): ('local', item[0])
+                for item in missing_items
+            }
+
+            # 收集单个裁剪补识别结果
             remaining_futures = set(local_futures)
             while remaining_futures:
                 timeout = local_deadline - time.monotonic()
@@ -1267,8 +1279,531 @@ class ExportService:
         logger.info(f"✓ 混合策略完成: 全局识别 {len(global_results)} 个, 单个识别 {len(local_results)} 个, 合并 {len(merged_results)} 个, 失败 {len(failed_extractions)} 个")
         
         return merged_results, failed_extractions
+
+    @staticmethod
+    def _collect_foreground_bboxes_for_background_mask(elements: List, depth: int = 0) -> List[Tuple[int, int, int, int]]:
+        bboxes = []
+        for elem in elements:
+            bbox = elem.bbox if depth == 0 else getattr(elem, 'bbox_global', None) or elem.bbox
+            if bbox.x1 > bbox.x0 and bbox.y1 > bbox.y0:
+                bboxes.append((int(bbox.x0), int(bbox.y0), int(bbox.x1), int(bbox.y1)))
+        return bboxes
+
+    @staticmethod
+    def _sample_background_color(image: Image.Image, bbox: Tuple[int, int, int, int]) -> Tuple[int, int, int]:
+        width, height = image.size
+        x0, y0, x1, y1 = bbox
+        pad = max(4, min(width, height) // 80)
+        samples = []
+
+        def add_sample(x: int, y: int):
+            if 0 <= x < width and 0 <= y < height:
+                samples.append(image.getpixel((x, y))[:3])
+
+        step_x = max(1, (x1 - x0) // 12)
+        step_y = max(1, (y1 - y0) // 12)
+        for x in range(max(0, x0), min(width, x1) + 1, step_x):
+            add_sample(x, y0 - pad)
+            add_sample(x, y1 + pad)
+        for y in range(max(0, y0), min(height, y1) + 1, step_y):
+            add_sample(x0 - pad, y)
+            add_sample(x1 + pad, y)
+
+        if not samples:
+            add_sample(min(max(x0, 0), width - 1), min(max(y0, 0), height - 1))
+        return tuple(sorted(channel)[len(channel) // 2] for channel in zip(*samples))
+
+    @staticmethod
+    def _create_local_clean_background(
+        image_path: str,
+        elements: List,
+        output_path: Optional[str] = None,
+    ) -> Optional[str]:
+        bboxes = ExportService._collect_foreground_bboxes_for_background_mask(elements)
+        if not bboxes:
+            return None
+
+        image = Image.open(image_path).convert('RGB')
+        draw = ImageDraw.Draw(image)
+        width, height = image.size
+        for bbox in bboxes:
+            x0, y0, x1, y1 = bbox
+            pad = max(2, min(width, height) // 180)
+            box = (
+                max(0, x0 - pad),
+                max(0, y0 - pad),
+                min(width, x1 + pad),
+                min(height, y1 + pad),
+            )
+            draw.rectangle(box, fill=ExportService._sample_background_color(image, bbox))
+
+        if output_path:
+            target = Path(output_path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            image.save(target)
+            return str(target)
+
+        tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+        tmp.close()
+        image.save(tmp.name)
+        return tmp.name
+
+    @staticmethod
+    def _editable_rebuild_artifacts_dir(output_file: Optional[str]) -> Path:
+        if output_file:
+            return Path(output_file).with_suffix('.editable')
+        return Path(tempfile.mkdtemp(prefix='editable_pptx_'))
+
+    @staticmethod
+    def _manifest_box_px(elem, depth: int) -> List[int]:
+        bbox = elem.bbox if depth == 0 else getattr(elem, 'bbox_global', None) or elem.bbox
+        return [
+            int(bbox.x0),
+            int(bbox.y0),
+            int(bbox.x1 - bbox.x0),
+            int(bbox.y1 - bbox.y0),
+        ]
+
+    @staticmethod
+    def _text_hint_from_element(elem) -> Dict[str, Any]:
+        metadata = getattr(elem, 'metadata', None) or {}
+        hint = metadata.get('text_hint') if isinstance(metadata.get('text_hint'), dict) else {}
+        source = {**metadata, **hint}
+        bbox = getattr(elem, 'bbox', None)
+        glyph_height = source.get('glyph_height_px') or source.get('glyph_height')
+        font_size = source.get('font_size_pt') or source.get('font_pt') or source.get('font_size')
+        if font_size is not None:
+            try:
+                font_size = float(font_size)
+                if not math.isfinite(font_size) or font_size <= 0:
+                    font_size = None
+            except (TypeError, ValueError, OverflowError):
+                font_size = None
+        if font_size is None and glyph_height:
+            try:
+                font_size = round(float(glyph_height) * 0.72)
+            except (TypeError, ValueError, OverflowError):
+                font_size = None
+        if font_size is None and bbox:
+            height = getattr(bbox, 'height', None)
+            if height is None:
+                height = float(bbox.y1) - float(bbox.y0)
+            font_size = round(float(height) * 0.45)
+        if font_size is None:
+            return {}
+        font_size = max(6, min(200, round(font_size)))
+        return {
+            'font_size': int(font_size),
+            'glyph_height_px': glyph_height,
+            'size_group': source.get('size_group') or getattr(elem, 'element_type', 'default'),
+            'source': source.get('source') or metadata.get('source') or 'bbox',
+        }
+
+    @staticmethod
+    def _apply_text_hint_size_groups(text_boxes: List[Dict[str, Any]]):
+        grouped = {}
+        for item in text_boxes:
+            hint = item.get('text_hint') or {}
+            group = hint.get('size_group')
+            if group and hint.get('font_size'):
+                grouped.setdefault(group, []).append(int(hint['font_size']))
+
+        group_sizes = {
+            group: int(round(sum(values) / len(values)))
+            for group, values in grouped.items()
+        }
+        for item in text_boxes:
+            hint = item.get('text_hint') or {}
+            group = hint.get('size_group')
+            if group in group_sizes:
+                item['font_size'] = group_sizes[group]
+                item['font_size_source'] = 'text_hint_size_group'
+            elif hint.get('font_size'):
+                item['font_size'] = int(hint['font_size'])
+                item['font_size_source'] = hint.get('source') or 'text_hint'
+
+    @staticmethod
+    def _text_hint_font_sizes(elements: List) -> Dict[str, int]:
+        text_boxes, _, _ = ExportService._collect_rebuild_manifest_elements(elements)
+        return {
+            item['id']: item['font_size']
+            for item in text_boxes
+            if item.get('font_size')
+        }
+
+    @staticmethod
+    def _collect_rebuild_manifest_elements(elements: List, depth: int = 0) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+        text_types = {
+            'text', 'title', 'list', 'paragraph', 'header', 'footer', 'heading',
+            'table_caption', 'image_caption', 'equation', 'interline_equation',
+            'inline_equation', 'table_cell',
+        }
+        image_types = {'image', 'figure', 'chart', 'table'}
+        text_boxes = []
+        images = []
+        visual_inventory = []
+
+        for elem in elements:
+            box_px = ExportService._manifest_box_px(elem, depth)
+            if elem.element_type in text_types and elem.content and elem.content.strip():
+                item = {
+                    'id': elem.element_id,
+                    'type': elem.element_type,
+                    'text': elem.content.strip(),
+                    'box_px': box_px,
+                    'source': 'editable-element',
+                }
+                text_hint = ExportService._text_hint_from_element(elem)
+                if text_hint:
+                    item['text_hint'] = text_hint
+                text_boxes.append(item)
+            elif elem.element_type in image_types:
+                visual_inventory.append({
+                    'id': elem.element_id,
+                    'type': elem.element_type,
+                    'box_px': box_px,
+                    'source': elem.image_path,
+                })
+                if elem.image_path:
+                    images.append({
+                        'id': elem.element_id,
+                        'path': elem.image_path,
+                        'box_px': box_px,
+                    })
+
+            if getattr(elem, 'children', None):
+                child_text, child_images, child_visuals = ExportService._collect_rebuild_manifest_elements(
+                    elem.children,
+                    depth + 1,
+                )
+                text_boxes.extend(child_text)
+                images.extend(child_images)
+                visual_inventory.extend(child_visuals)
+
+        ExportService._apply_text_hint_size_groups(text_boxes)
+        return text_boxes, images, visual_inventory
+
+    @staticmethod
+    def _build_page_rebuild_manifest(
+        editable_img,
+        page_idx: int,
+        background_source: str,
+        background_path: str,
+        high_fidelity_editable: bool = False
+    ) -> Dict[str, Any]:
+        text_boxes, images, visual_inventory = ExportService._collect_rebuild_manifest_elements(editable_img.elements)
+        formula_inventory = [
+            {
+                'id': item['id'],
+                'text': item['text'],
+                'decision': 'existing-formula-fallback',
+                'editable': False,
+            }
+            for item in text_boxes
+            if item.get('type') in {'equation', 'interline_equation', 'inline_equation'}
+        ]
+        if background_path == editable_img.image_path and text_boxes:
+            background_mode = 'source-full-slide-raster'
+        elif background_path != background_source:
+            background_mode = 'source-preserving-local-cleanup'
+        elif background_source != editable_img.image_path:
+            background_mode = 'external-clean-background'
+        else:
+            background_mode = 'source-reused-no-editable-text'
+
+        return {
+            'schema_version': 1,
+            'page': page_idx + 1,
+            'slide': {'width_px': editable_img.width, 'height_px': editable_img.height},
+            'source': {
+                'image_path': editable_img.image_path,
+                'width_px': editable_img.width,
+                'height_px': editable_img.height,
+            },
+            'background_strategy': {
+                'mode': background_mode,
+                'source': background_source,
+                'rendered_path': background_path,
+                'removed_foreground': [
+                    item['id'] for item in [*text_boxes, *visual_inventory]
+                ],
+                'comparison_note': 'local cleanup masks every foreground region rebuilt as an editable element',
+            },
+            'page_strategy': {
+                'high_fidelity_editable': bool(high_fidelity_editable),
+                'asset_sheet_separation': 'requested' if high_fidelity_editable else 'disabled',
+            },
+            'text_inventory': [item['text'] for item in text_boxes],
+            'visual_inventory': visual_inventory,
+            'quality_checks': {
+                'font_size_calibrated': bool(text_boxes),
+                'visual_inventory_matched': None,
+                'background_strategy_checked': None,
+                'shape_corner_geometry_checked': None,
+            },
+            'text_boxes': text_boxes,
+            'shapes': [],
+            'images': images,
+            'formula_inventory': formula_inventory,
+            'asset_provenance': [
+                {
+                    'path': item['path'],
+                    'source': item['path'],
+                    'source_type': 'user-provided',
+                    'provenance_note': 'existing extracted page asset reused by current exporter',
+                }
+                for item in images
+            ],
+        }
+
+    @staticmethod
+    def _validate_page_rebuild_manifest(manifest: Dict[str, Any]) -> Dict[str, Any]:
+        errors = []
+        if manifest.get('background_strategy', {}).get('mode') == 'source-full-slide-raster' and manifest.get('text_boxes'):
+            errors.append('禁止使用原始整页截图作为背景再叠加可编辑文字')
+        for item in manifest.get('text_boxes', []):
+            if not item.get('box_px'):
+                errors.append(f"文本元素缺少坐标: {item.get('id')}")
+        for item in manifest.get('images', []):
+            if not item.get('box_px'):
+                errors.append(f"图片元素缺少坐标: {item.get('id')}")
+                continue
+            slide = manifest.get('slide') or {}
+            slide_area = (slide.get('width_px') or 0) * (slide.get('height_px') or 0)
+            box = item['box_px']
+            if slide_area and len(box) == 4 and (box[2] * box[3]) / slide_area >= 0.9:
+                errors.append(f"禁止将整页栅格图作为可编辑前景元素: {item.get('id')}")
+        render_result = manifest.get('render_result') or {}
+        if render_result and not render_result.get('background_added'):
+            errors.append('背景图写入PPTX失败')
+        expected_foreground = len(manifest.get('text_boxes', [])) + len(manifest.get('images', []))
+        if render_result and expected_foreground and render_result.get('foreground_shape_count', 0) == 0:
+            errors.append('未向PPTX写入任何可编辑前景元素')
+        return {'passed': not errors, 'errors': errors}
+
+    @staticmethod
+    def _write_page_rebuild_artifacts(artifacts_dir: Path, page_idx: int, manifest: Dict[str, Any], validation: Dict[str, Any]):
+        page_dir = artifacts_dir / f"page_{page_idx + 1:03d}"
+        page_dir.mkdir(parents=True, exist_ok=True)
+        (page_dir / 'manifest.json').write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2),
+            encoding='utf-8',
+        )
+        (page_dir / 'validation.json').write_text(
+            json.dumps(validation, ensure_ascii=False, indent=2),
+            encoding='utf-8',
+        )
+
+    @staticmethod
+    def _validate_pptx_package(source) -> None:
+        stream = None
+        if isinstance(source, (bytes, bytearray)):
+            stream = io.BytesIO(source)
+            package = stream
+        else:
+            package_path = Path(source)
+            if not package_path.is_file() or package_path.stat().st_size == 0:
+                raise ExportError('PPTX 输出文件不存在或为空', error_type='pptx_validation')
+            package = str(package_path)
+
+        try:
+            if not is_zipfile(package):
+                raise ExportError('PPTX 输出不是有效的 Office 文件', error_type='pptx_validation')
+            if stream:
+                stream.seek(0)
+            with ZipFile(package if not stream else stream) as archive:
+                names = set(archive.namelist())
+                required = {'[Content_Types].xml', 'ppt/presentation.xml'}
+                if not required.issubset(names) or not any(
+                    name.startswith('ppt/slides/slide') and name.endswith('.xml')
+                    for name in names
+                ):
+                    raise ExportError('PPTX 输出缺少必要的演示文稿内容', error_type='pptx_validation')
+        except ExportError:
+            raise
+        except (BadZipFile, OSError) as e:
+            raise ExportError(
+                f'PPTX 输出校验失败: {e}',
+                error_type='pptx_validation',
+            ) from e
     
     @staticmethod
+
+
+    # ------------------------------------------------------------------
+    # High-fidelity editable export: foreground asset-sheet separation
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _create_foreground_asset_contact_sheet(
+        elements, output_dir, padding=8, columns=3,
+    ):
+        import os
+        from PIL import Image
+        items = [e for e in elements if e.get("image_path") and os.path.exists(e["image_path"])]
+        if not items:
+            return None, []
+        images = []
+        for item in items:
+            try:
+                img = Image.open(item["image_path"]).convert("RGBA")
+            except Exception:
+                continue
+            images.append((item, img))
+        if not images:
+            return None, []
+        max_w = max(img.size[0] for _, img in images)
+        max_h = max(img.size[1] for _, img in images)
+        cols = min(columns, len(images))
+        rows = (len(images) + cols - 1) // cols
+        sheet_w = cols * (max_w + padding) + padding
+        sheet_h = rows * (max_h + padding) + padding
+        sheet = Image.new("RGBA", (sheet_w, sheet_h), (0, 0, 0, 0))
+        grid = []
+        for idx, (item, img) in enumerate(images):
+            col = idx % cols
+            row = idx // cols
+            x = padding + col * (max_w + padding)
+            y = padding + row * (max_h + padding)
+            sheet.paste(img, (x, y), img)
+            grid.append({
+                "id": item.get("id", str(idx)),
+                "x": x, "y": y,
+                "w": img.size[0], "h": img.size[1],
+            })
+        output_path = os.path.join(str(output_dir), "foreground_asset_sheet.png")
+        sheet.save(output_path)
+        return output_path, grid
+
+    @staticmethod
+    def _split_processed_asset_sheet(sheet_path, grid, output_dir):
+        import os
+        from PIL import Image
+        from pathlib import Path
+        sheet = Image.open(sheet_path).convert("RGBA")
+        assets = []
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        for cell in grid:
+            box = (cell["x"], cell["y"], cell["x"] + cell["w"], cell["y"] + cell["h"])
+            cropped = sheet.crop(box)
+            out_path = output_dir / f"asset_{cell['id']}.png"
+            cropped.save(str(out_path))
+            assets.append({
+                "id": cell["id"],
+                "image_path": str(out_path),
+                "box_px": [],
+            })
+        return assets
+
+    @staticmethod
+    def _collect_foreground_image_elements(elements, depth=0):
+        result = []
+        for elem in elements:
+            if (
+                elem.element_type in ("image", "figure")
+                and elem.image_path
+                and getattr(elem, "is_icon", None) is True
+            ):
+                bbox = elem.bbox if depth == 0 else getattr(elem, "bbox_global", None) or elem.bbox
+                w = bbox.x1 - bbox.x0
+                h = bbox.y1 - bbox.y0
+                parent_w = getattr(elem, "_parent_width", None)
+                parent_h = getattr(elem, "_parent_height", None)
+                if parent_w and parent_h:
+                    coverage = (w * h) / (parent_w * parent_h)
+                    if coverage > 0.9:
+                        continue
+                result.append({
+                    "id": elem.element_id,
+                    "image_path": elem.image_path,
+                    "box_px": [int(bbox.x0), int(bbox.y0), int(w), int(h)],
+                })
+            if getattr(elem, "children", None):
+                result.extend(ExportService._collect_foreground_image_elements(
+                    elem.children, depth + 1,
+                ))
+        return result
+
+    @staticmethod
+    def _run_asset_sheet_separation(
+        editable_img,
+        output_dir,
+        high_fidelity_editable=False,
+        image_editing_provider=None,
+        warnings=None,
+    ):
+        if not high_fidelity_editable:
+            return {}
+        foreground = ExportService._collect_foreground_image_elements(editable_img.elements)
+        if not foreground:
+            return {}
+        logger.info("  [asset-sheet] collecting %d foreground elements for separation", len(foreground))
+        sheet_path, grid = ExportService._create_foreground_asset_contact_sheet(
+            foreground, output_dir, padding=12, columns=3,
+        )
+        if not sheet_path:
+            return {}
+        logger.info("  [asset-sheet] contact sheet created: %s", sheet_path)
+
+        if image_editing_provider is None:
+            message = "高保真前景分离未执行：当前图像模型不可用"
+            logger.warning("  [asset-sheet] %s", message)
+            if warnings:
+                warnings.add_warning(message)
+            return {}
+
+        try:
+            from PIL import Image
+            with Image.open(sheet_path) as source_sheet:
+                sheet_img = source_sheet.convert("RGBA")
+                prompt = (
+                    "Remove the background from every individual icon, badge, and decoration on this contact sheet. "
+                    "Each item must be isolated on a completely transparent background. "
+                    "Preserve the exact shape, colors, and details of every item. "
+                    "Do not change the layout or positions of the items on the sheet."
+                )
+                result = image_editing_provider.generate_image(
+                    prompt=prompt,
+                    ref_images=[sheet_img],
+                )
+            if result is None:
+                raise RuntimeError("图像模型未返回结果")
+
+            result = result.convert("RGBA")
+            if result.size != sheet_img.size:
+                logger.warning(
+                    "  [asset-sheet] model changed sheet size from %s to %s; resizing back",
+                    sheet_img.size,
+                    result.size,
+                )
+                result = result.resize(sheet_img.size, Image.Resampling.LANCZOS)
+            if result.getchannel("A").getextrema()[0] == 255:
+                raise RuntimeError("图像模型未返回透明背景")
+
+            processed_path = str(Path(output_dir) / "foreground_asset_sheet_processed.png")
+            result.save(processed_path)
+            logger.info("  [asset-sheet] model separation complete: %s", processed_path)
+        except Exception as e:
+            message = f"高保真前景分离失败，已保留原始元素: {e}"
+            logger.warning("  [asset-sheet] %s", message)
+            if warnings:
+                warnings.add_warning(message)
+            return {}
+
+        assets = ExportService._split_processed_asset_sheet(processed_path, grid, output_dir)
+        return {a["id"]: a["image_path"] for a in assets}
+
+
+    @staticmethod
+    def _apply_separated_assets(elements, asset_map):
+        for elem in elements:
+            if elem.element_id in asset_map:
+                elem.image_path = asset_map[elem.element_id]
+                elem.metadata["asset_sheet_separated"] = True
+            if getattr(elem, "children", None):
+                ExportService._apply_separated_assets(elem.children, asset_map)
+
     def create_editable_pptx_with_recursive_analysis(
         image_paths: List[str] = None,
         output_file: str = None,
@@ -1281,8 +1816,12 @@ class ExportService:
         progress_callback = None,  # 可选：进度回调函数 (step, message, percent) -> None
         export_extractor_method: str = 'hybrid',  # 组件提取方法: mineru, hybrid
         export_inpaint_method: str = 'hybrid',  # 背景修复方法: generative, baidu, hybrid
-        enable_icon_subject_extraction: bool = False,  # 是否对小尺寸图标走百度智能抠图
-        fail_fast: bool = True  # 是否在遇到错误时立即停止（False则收集警告继续）
+        export_high_fidelity_editable: bool = False,  # 高保真可编辑导出，高成本外部模型能力默认关闭
+        image_editing_provider=None,  # asset-sheet 分离用图像编辑模型
+        enable_icon_subject_extraction: bool = False,  # 已废弃，保留参数兼容旧调用方
+        fail_fast: bool = True,  # 是否在遇到错误时立即停止（False则收集警告继续）
+        analysis_status_interval_seconds: float = 15.0,
+        analysis_stall_timeout_seconds: float = 900.0
     ) -> Tuple[Optional[bytes], ExportWarnings]:
         """
         使用递归图片可编辑化服务创建可编辑PPTX
@@ -1344,43 +1883,92 @@ class ExportService:
             # 1. 创建ImageEditabilityService（配置自动从 Flask config 获取，使用项目导出设置）
             logger.info(
                 f"使用导出设置: extractor={export_extractor_method}, "
-                f"inpaint={export_inpaint_method}, "
-                f"icon_subject_extraction={enable_icon_subject_extraction}"
+                f"inpaint={export_inpaint_method}"
             )
             config = ServiceConfig.from_defaults(
                 max_depth=max_depth,
                 extractor_method=export_extractor_method,
                 inpaint_method=export_inpaint_method,
-                enable_icon_subject_extraction=enable_icon_subject_extraction,
             )
             editability_service = ImageEditabilityService(config)
-            
+
             # 2. 并发处理所有页面，生成EditableImage结构
             report_progress("版面分析", f"开始分析 {total_pages} 张图片（并发数: {max_workers}）...", 5)
-            from concurrent.futures import ThreadPoolExecutor, as_completed
-            
+            from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+
             editable_images = []
             completed_count = 0
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            executor = ThreadPoolExecutor(max_workers=max_workers)
+            try:
                 futures = {
                     executor.submit(editability_service.make_image_editable, img_path): idx
                     for idx, img_path in enumerate(image_paths)
                 }
-                
+
                 results = [None] * len(image_paths)
-                for future in as_completed(futures):
-                    idx = futures[future]
-                    try:
-                        results[idx] = future.result()
-                        completed_count += 1
-                        # 版面分析占 5% - 40% 的进度
+                pending_futures = set(futures)
+                last_completed_at = time.monotonic()
+
+                while pending_futures:
+                    done_futures, pending_futures = wait(
+                        pending_futures,
+                        timeout=analysis_status_interval_seconds,
+                        return_when=FIRST_COMPLETED
+                    )
+
+                    if not done_futures:
                         percent = 5 + int(35 * completed_count / total_pages)
-                        report_progress("版面分析", f"已完成第 {completed_count}/{total_pages} 页的版面分析", percent)
-                    except Exception as e:
-                        logger.error(f"处理图片 {image_paths[idx]} 失败: {e}")
-                        raise
-                
-                editable_images = results
+                        pending_pages = sorted(futures[future] + 1 for future in pending_futures)
+                        preview = ", ".join(str(page) for page in pending_pages[:8])
+                        if len(pending_pages) > 8:
+                            preview += f" 等 {len(pending_pages)} 页"
+                        report_progress(
+                            "版面分析",
+                            f"仍在分析，已完成 {completed_count}/{total_pages} 页；等待第 {preview} 页",
+                            percent
+                        )
+
+                        idle_seconds = time.monotonic() - last_completed_at
+                        if analysis_stall_timeout_seconds and idle_seconds >= analysis_stall_timeout_seconds:
+                            for future in pending_futures:
+                                future.cancel()
+                            raise ExportError(
+                                message=(
+                                    f"版面分析超过 {int(analysis_stall_timeout_seconds)} 秒没有任何页面完成，"
+                                    f"可能卡在外部解析或背景修复服务。未完成页: {preview}"
+                                ),
+                                error_type='layout_analysis',
+                                details={
+                                    'completed_pages': completed_count,
+                                    'total_pages': total_pages,
+                                    'pending_pages': pending_pages,
+                                    'timeout_seconds': analysis_stall_timeout_seconds,
+                                }
+                            )
+                        continue
+
+                    for future in done_futures:
+                        idx = futures[future]
+                        try:
+                            results[idx] = future.result()
+                            completed_count += 1
+                            last_completed_at = time.monotonic()
+                            # 版面分析占 5% - 40% 的进度
+                            percent = 5 + int(35 * completed_count / total_pages)
+                            report_progress("版面分析", f"已完成第 {completed_count}/{total_pages} 页的版面分析", percent)
+                        except ExportError:
+                            raise
+                        except Exception as e:
+                            logger.error(f"处理第 {idx + 1} 页图片 {image_paths[idx]} 失败: {e}")
+                            raise ExportError(
+                                message=f"第 {idx + 1} 页版面分析失败: {e}",
+                                error_type='layout_analysis',
+                                details={'page': idx + 1, 'image_path': image_paths[idx]}
+                            ) from e
+            finally:
+                executor.shutdown(wait=False, cancel_futures=True)
+
+            editable_images = results
         
         # 2.5. 使用混合策略提取所有文本元素的样式（如果提供了提取器）
         # 混合策略：全局识别（粗体/斜体/下划线/对齐）+ 单个裁剪识别（颜色）
@@ -1393,16 +1981,24 @@ class ExportService:
                 len(ExportService._collect_text_elements_for_extraction(img.elements))
                 for img in editable_images
             )
-            
+
             if total_text_count > 0:
                 report_progress("样式提取", f"混合策略分析 {total_text_count} 个文本元素...", 50)
-                text_styles_cache, failed_extractions = ExportService._batch_extract_text_styles_hybrid(
-                    editable_images=editable_images,
-                    text_attribute_extractor=text_attribute_extractor,
-                    max_workers=max_workers * 2,
-                    fail_fast=fail_fast
-                )
-                
+                try:
+                    text_styles_cache, failed_extractions = ExportService._batch_extract_text_styles_hybrid(
+                        editable_images=editable_images,
+                        text_attribute_extractor=text_attribute_extractor,
+                        max_workers=max_workers * 2,
+                        fail_fast=fail_fast
+                    )
+                except ExportError as e:
+                    if e.error_type != 'style_extraction':
+                        raise
+                    logger.warning(f"样式提取失败，继续导出无样式PPTX: {e.message}")
+                    text_styles_cache = {}
+                    failed_extractions = [("all", e.message)]
+                    report_progress("样式提取", "样式提取失败，已降级为默认文本样式继续导出", 70)
+
                 # 记录样式提取失败的元素（详细）
                 for element_id, reason in failed_extractions:
                     warnings.add_style_extraction_failed(element_id, reason)
@@ -1421,6 +2017,10 @@ class ExportService:
         builder = PPTXBuilder()
         builder.create_presentation()
         builder.setup_presentation_size(slide_width_pixels, slide_height_pixels)
+
+        artifacts_dir = ExportService._editable_rebuild_artifacts_dir(output_file)
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+        warnings.rebuild_artifacts_dir = str(artifacts_dir)
         
         # 5. 为每个页面构建幻灯片
         total_pages = len(editable_images)
@@ -1432,33 +2032,40 @@ class ExportService:
             
             # 创建空白幻灯片
             slide = builder.add_blank_slide()
-            
-            # 添加背景图（参考原实现，使用slide.shapes.add_picture）
-            if editable_img.clean_background and os.path.exists(editable_img.clean_background):
-                logger.info(f"    添加clean background: {editable_img.clean_background}")
-                try:
-                    slide.shapes.add_picture(
-                        editable_img.clean_background,
-                        left=0,
-                        top=0,
-                        width=builder.prs.slide_width,
-                        height=builder.prs.slide_height
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to add background: {e}")
-            else:
-                # 回退到原图
-                logger.info(f"    使用原图作为背景: {editable_img.image_path}")
-                try:
-                    slide.shapes.add_picture(
-                        editable_img.image_path,
-                        left=0,
-                        top=0,
-                        width=builder.prs.slide_width,
-                        height=builder.prs.slide_height
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to add background: {e}")
+            page_artifacts_dir = artifacts_dir / f"page_{page_idx + 1:03d}"
+
+            has_external_background = bool(
+                editable_img.clean_background
+                and os.path.exists(editable_img.clean_background)
+            )
+            background_source = editable_img.clean_background if has_external_background else editable_img.image_path
+            background_path = background_source
+            if not has_external_background:
+                background_path = ExportService._create_local_clean_background(
+                    background_source,
+                    editable_img.elements,
+                    output_path=str(page_artifacts_dir / "clean_background.png"),
+                ) or background_source
+            page_manifest = ExportService._build_page_rebuild_manifest(
+                editable_img=editable_img,
+                page_idx=page_idx,
+                background_source=background_source,
+                background_path=background_path,
+                high_fidelity_editable=export_high_fidelity_editable,
+            )
+            logger.info(f"    使用背景: {background_path}")
+            background_added = False
+            try:
+                slide.shapes.add_picture(
+                    background_path,
+                    left=0,
+                    top=0,
+                    width=builder.prs.slide_width,
+                    height=builder.prs.slide_height
+                )
+                background_added = True
+            except Exception as e:
+                logger.error(f"Failed to add background: {e}")
             
             # 添加所有元素（递归地）
             # 计算缩放比例：将原始图片坐标映射到统一的幻灯片坐标
@@ -1468,6 +2075,36 @@ class ExportService:
             logger.info(f"    元素数量: {len(editable_img.elements)}, 图片尺寸: {editable_img.width}x{editable_img.height}, "
                        f"幻灯片尺寸: {slide_width_pixels}x{slide_height_pixels}, 缩放比例: {scale_x:.3f}x{scale_y:.3f}")
             
+            # 高保真模式：前景资产分离（asset-sheet）
+            separated_assets = ExportService._run_asset_sheet_separation(
+                editable_img=editable_img,
+                output_dir=artifacts_dir / f"page_{page_idx + 1:03d}",
+                high_fidelity_editable=export_high_fidelity_editable,
+                image_editing_provider=image_editing_provider,
+                warnings=warnings,
+            )
+            if separated_assets:
+                ExportService._apply_separated_assets(editable_img.elements, separated_assets)
+                page_manifest['page_strategy']['asset_sheet_separation'] = 'completed'
+                for item in page_manifest['asset_provenance']:
+                    source_id = next(
+                        (image['id'] for image in page_manifest['images'] if image['path'] == item['path']),
+                        None,
+                    )
+                    if source_id in separated_assets:
+                        item['path'] = separated_assets[source_id]
+                        item['source'] = separated_assets[source_id]
+                        item['source_type'] = 'asset-sheet-separated'
+                for item in page_manifest['images']:
+                    if item['id'] in separated_assets:
+                        item['path'] = separated_assets[item['id']]
+                for item in page_manifest['visual_inventory']:
+                    if item['id'] in separated_assets:
+                        item['source'] = separated_assets[item['id']]
+            elif export_high_fidelity_editable:
+                page_manifest['page_strategy']['asset_sheet_separation'] = 'not_completed'
+
+            foreground_shape_start = len(slide.shapes)
             ExportService._add_editable_elements_to_slide(
                 builder=builder,
                 slide=slide,
@@ -1475,17 +2112,47 @@ class ExportService:
                 scale_x=scale_x,
                 scale_y=scale_y,
                 depth=0,
-                text_styles_cache=text_styles_cache,  # 使用预提取的样式缓存
-                warnings=warnings,  # 收集警告
-                fail_fast=fail_fast  # 传递 fail_fast 参数
+                text_styles_cache=text_styles_cache,
+                text_hint_font_sizes=ExportService._text_hint_font_sizes(editable_img.elements),
+                warnings=warnings,
+                fail_fast=fail_fast
             )
-            
+            foreground_shape_count = len(slide.shapes) - foreground_shape_start
+            page_manifest['render_result'] = {
+                'background_added': background_added,
+                'foreground_shape_count': foreground_shape_count,
+                'total_shape_count': len(slide.shapes),
+            }
+            page_manifest['quality_checks']['background_strategy_checked'] = background_added
+            page_manifest['quality_checks']['visual_inventory_matched'] = (
+                foreground_shape_count > 0
+                if page_manifest['text_boxes'] or page_manifest['images']
+                else True
+            )
+            page_validation = ExportService._validate_page_rebuild_manifest(page_manifest)
+            ExportService._write_page_rebuild_artifacts(
+                artifacts_dir,
+                page_idx,
+                page_manifest,
+                page_validation,
+            )
+            if not page_validation['passed']:
+                message = f"第 {page_idx + 1} 页可编辑重建校验失败: {'; '.join(page_validation['errors'])}"
+                if fail_fast:
+                    raise ExportError(
+                        message=message,
+                        error_type='rebuild_validation',
+                        details={'page': page_idx + 1, 'validation': page_validation}
+                    )
+                warnings.add_warning(message)
+
             logger.info(f"    ✓ 第 {page_idx + 1} 页完成，添加了 {len(editable_img.elements)} 个元素")
         
         # 5. 保存或返回字节流
         report_progress("保存文件", "正在保存PPTX文件...", 95)
         if output_file:
             builder.save(output_file)
+            ExportService._validate_pptx_package(output_file)
             report_progress("完成", f"✓ 可编辑PPTX已保存", 100)
             logger.info(f"✓ 可编辑PPTX已保存: {output_file}")
             
@@ -1496,6 +2163,7 @@ class ExportService:
             return None, warnings
         else:
             pptx_bytes = builder.to_bytes()
+            ExportService._validate_pptx_package(pptx_bytes)
             report_progress("完成", f"✓ 可编辑PPTX已生成", 100)
             logger.info(f"✓ 可编辑PPTX已生成（{len(pptx_bytes)} 字节）")
             
@@ -1514,6 +2182,7 @@ class ExportService:
         scale_y: float = 1.0,
         depth: int = 0,
         text_styles_cache: Dict[str, Any] = None,  # 预提取的文本样式缓存，key为element_id
+        text_hint_font_sizes: Dict[str, int] = None,
         warnings: 'ExportWarnings' = None,  # 警告收集器
         fail_fast: bool = False  # 是否在遇到错误时立即停止
     ):
@@ -1534,6 +2203,8 @@ class ExportService:
         """
         if text_styles_cache is None:
             text_styles_cache = {}
+        if text_hint_font_sizes is None:
+            text_hint_font_sizes = {}
 
         def choose_formula_text(text: str, text_style: Any = None) -> Optional[str]:
             candidates = [text]
@@ -1561,6 +2232,7 @@ class ExportService:
 
         def add_text_or_formula(elem, text, bbox_list, text_level='default', align='left'):
             text_style = text_styles_cache.get(elem.element_id)
+            font_size_override = text_hint_font_sizes.get(elem.element_id)
             if text_style:
                 logger.debug(f"{'  ' * depth}  使用缓存的文字样式: color={text_style.font_color_rgb}, bold={text_style.is_bold}")
 
@@ -1582,7 +2254,8 @@ class ExportService:
                     text_level=text_level,
                     align=align,
                     text_style=text_style,
-                    allow_math_conversion=False
+                    allow_math_conversion=False,
+                    font_size_override=font_size_override
                 )
                 if warnings:
                     warnings.add_text_render_failed(
@@ -1597,7 +2270,8 @@ class ExportService:
                 bbox=bbox_list,
                 text_level=text_level,
                 align=align,
-                text_style=text_style
+                text_style=text_style,
+                font_size_override=font_size_override
             )
         
         for elem in elements:
@@ -1695,6 +2369,7 @@ class ExportService:
                         scale_y=scale_y,
                         depth=depth + 1,
                         text_styles_cache=text_styles_cache,
+                        text_hint_font_sizes=text_hint_font_sizes,
                         warnings=warnings,
                         fail_fast=fail_fast
                     )
@@ -1760,6 +2435,7 @@ class ExportService:
                         scale_y=scale_y,
                         depth=depth + 1,
                         text_styles_cache=text_styles_cache,
+                        text_hint_font_sizes=text_hint_font_sizes,
                         warnings=warnings,
                         fail_fast=fail_fast
                     )
