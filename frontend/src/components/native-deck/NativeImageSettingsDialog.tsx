@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { X } from 'lucide-react'
 import type { NativeImageSettings } from '@/types'
+import { ExportDirectorySetting } from '@/components/shared/ExportDirectorySetting'
 
 type PageOption = { pageId: string; title: string; maxImages: number }
 
@@ -37,6 +38,8 @@ export function NativeImageSettingsDialog({ open, settings, pages, saving = fals
               <option value="custom">自定义：逐页指定数量</option>
             </select>
           </label>
+
+          <ExportDirectorySetting />
 
           <label className="block space-y-2 text-sm">
             <span className="font-medium text-foreground-primary">图片风格</span>

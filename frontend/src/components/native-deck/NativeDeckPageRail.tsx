@@ -20,9 +20,9 @@ function slideTitle(slide: NativeSlideSpec, index: number) {
 
 export function NativeDeckPageRail({ slides, selectedPageId, onSelect, onAdd, onDuplicate, onDelete, onMove, imageAction }: NativeDeckPageRailProps) {
   return (
-    <nav className="space-y-2 p-3" aria-label="原生页面">
+    <nav className="space-y-3 p-3" aria-label="原生页面">
       {imageAction && (
-        <button type="button" aria-label={imageAction.label} title={imageAction.label} disabled={imageAction.disabled} onClick={imageAction.onClick} className="mb-3 flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-sky-500 to-emerald-400 text-sm font-semibold text-white shadow-lg shadow-sky-200/70 transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60">
+          <button type="button" aria-label={imageAction.label} title={imageAction.label} disabled={imageAction.disabled} onClick={imageAction.onClick} className="mb-1 flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-sky-500 to-emerald-400 text-sm font-semibold text-white shadow-md shadow-sky-200/60 transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60">
           <Sparkles size={18} aria-hidden="true" />{imageAction.label}
         </button>
       )}
@@ -33,7 +33,7 @@ export function NativeDeckPageRail({ slides, selectedPageId, onSelect, onAdd, on
         const title = slideTitle(slide, index)
         const selected = slide.pageId === selectedPageId
         return (
-          <div key={slide.pageId} className={`rounded-md border p-2 ${selected ? 'border-info bg-info/10' : 'border-border-primary bg-background-elevated'}`}>
+          <div key={slide.pageId} className={`rounded-xl border p-2 transition-shadow ${selected ? 'border-emerald-500 bg-emerald-50/40 shadow-sm ring-2 ring-emerald-500/20' : 'border-border-primary bg-background-elevated hover:shadow-sm'}`}>
             <button
               type="button"
               aria-label={`第 ${index + 1} 页：${title}`}

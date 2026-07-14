@@ -6,6 +6,7 @@ import { Settings } from '@/pages/Settings';
 import { useProjectStore } from '@/store/useProjectStore';
 import type { ExportExtractorMethod, ExportInpaintMethod, RenderMode } from '@/types';
 import { ASPECT_RATIO_OPTIONS } from '@/config/aspectRatio';
+import { ExportDirectorySetting } from './ExportDirectorySetting';
 
 // ProjectSettings 组件自包含翻译
 const projectSettingsI18n = {
@@ -337,6 +338,8 @@ export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
                 >
                   {t('projectSettings.editablePptxExport')}
                 </h3>
+
+                <ExportDirectorySetting />
 
                 {effectiveRenderMode === 'image' && <div className="pb-6 border-b border-gray-200 dark:border-border-primary space-y-4">
                   <div>

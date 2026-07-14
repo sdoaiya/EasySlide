@@ -63,9 +63,9 @@ export function NativeDeckPropertyPanel({ slide, contract, contracts, errors, on
   const setValue = (key: string, value: unknown) => onChange({ ...slide.props, [key]: value })
 
   return (
-    <div className="space-y-5 p-4">
-      <div className="space-y-3">
-        <h2 className="text-sm font-semibold text-foreground-primary">页面属性</h2>
+    <div className="space-y-6 p-4">
+      <div className="space-y-3 border-b border-border-primary pb-5">
+        <h2 className="text-base font-semibold text-foreground-primary">页面属性</h2>
         <SelectField
           label="页面主题"
           value={contract.theme}
@@ -105,21 +105,27 @@ export function NativeDeckPropertyPanel({ slide, contract, contracts, errors, on
         </section>
       )}
 
-      {Object.entries(contract.propShapes).filter(([key]) => !mediaKeys.has(key)).map(([key, shape]) => (
-        <ShapeEditor
-          key={key}
-          label={key}
-          shape={shape}
-          value={values[key]}
-          error={errors[key]}
-          limits={limitsFor(contract, key)}
-          onChange={(value) => setValue(key, value)}
-        />
-      ))}
+      <details open className="group border-b border-border-primary pb-5">
+        <summary className="cursor-pointer list-none text-xs font-semibold text-foreground-secondary marker:hidden">文字与数据<span className="float-right text-base leading-none text-foreground-tertiary transition-transform group-open:rotate-45">+</span></summary>
+        <div className="mt-4 space-y-4">
+          {Object.entries(contract.propShapes).filter(([key]) => !mediaKeys.has(key)).map(([key, shape]) => (
+            <ShapeEditor
+              key={key}
+              label={key}
+              shape={shape}
+              value={values[key]}
+              error={errors[key]}
+              limits={limitsFor(contract, key)}
+              onChange={(value) => setValue(key, value)}
+            />
+          ))}
+        </div>
+      </details>
 
       {Boolean(contract.controls?.length) && (
-        <section className="space-y-3 border-t border-border-primary pt-4">
-          <h3 className="text-xs font-semibold text-foreground-secondary">视觉控制</h3>
+        <details open className="space-y-3">
+          <summary className="cursor-pointer list-none text-xs font-semibold text-foreground-secondary marker:hidden">视觉控制<span className="float-right text-base leading-none text-foreground-tertiary">−</span></summary>
+          <section className="space-y-3 pt-2">
           {contract.controls!.map((control) => (
             <ControlEditor
               key={control.publicKey || control.key}
@@ -128,7 +134,8 @@ export function NativeDeckPropertyPanel({ slide, contract, contracts, errors, on
               onChange={(value) => setValue(control.publicKey || control.key, value)}
             />
           ))}
-        </section>
+          </section>
+        </details>
       )}
     </div>
   )

@@ -93,6 +93,7 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
   }, [])
 
   const selectedSlide = slides.find((slide) => slide.pageId === selectedPageId)
+  const selectedIndex = Math.max(0, slides.findIndex((slide) => slide.pageId === selectedPageId))
   const contract = layoutContracts.find((item) => item.layout === selectedSlide?.layout)
   const errors = useMemo(() => selectedSlide ? validate(selectedSlide, contract) : {}, [contract, selectedSlide])
 
@@ -363,7 +364,14 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
       inspector={<NativeDeckPropertyPanel slide={selectedSlide} contract={contract} contracts={layoutContracts} errors={errors} onChange={updateProps} onLayoutChange={changeLayout} mediaActions={media.mediaActions} />}
       statusBar={<WorkspaceStatusBar><span className={exportError || saveError ? 'text-error' : ''} role={exportError || saveError ? 'alert' : undefined}>{status}</span><div className="ml-auto flex items-center gap-1"><button type="button" aria-label="缩小画布" title="缩小画布" disabled={zoom <= 0.5} onClick={() => setZoom((value) => Math.max(0.5, value - 0.1))} className="flex h-8 w-8 items-center justify-center rounded hover:bg-background-hover disabled:opacity-35"><ZoomOut size={15} /></button><span className="w-12 text-center text-xs">{Math.round(zoom * 100)}%</span><button type="button" aria-label="放大画布" title="放大画布" disabled={zoom >= 2} onClick={() => setZoom((value) => Math.min(2, value + 0.1))} className="flex h-8 w-8 items-center justify-center rounded hover:bg-background-hover disabled:opacity-35"><ZoomIn size={15} /></button><button type="button" aria-label="适应窗口" title="适应窗口" onClick={() => setZoom(1)} className="flex h-8 w-8 items-center justify-center rounded hover:bg-background-hover"><Maximize2 size={15} /></button></div></WorkspaceStatusBar>}
     >
-      <NativeDeckCanvas slide={selectedSlide} zoom={zoom} />
+      <NativeDeckCanvas
+        slide={selectedSlide}
+        zoom={zoom}
+        pageIndex={selectedIndex}
+        pageCount={slides.length}
+        onPrevious={() => slides[selectedIndex - 1] && selectPage(slides[selectedIndex - 1].pageId)}
+        onNext={() => slides[selectedIndex + 1] && selectPage(slides[selectedIndex + 1].pageId)}
+      />
       {exportSurfaceVisible && <NativeDeckExportSurface slides={slides} />}
       {showTasks && <div className="fixed right-4 top-24 z-50 w-[min(380px,calc(100vw-2rem))]"><ExportTasksPanel projectId={projectId} onRetry={(task) => void retryExport(task)} /></div>}
       <NativeImageSettingsDialog open={media.settingsOpen} settings={media.settings} pages={media.pages} saving={media.savingSettings} onClose={() => media.setSettingsOpen(false)} onSave={(settings) => void media.saveSettings(settings)} />
