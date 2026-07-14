@@ -129,7 +129,7 @@ export const TextStyleSelector: React.FC<TextStyleSelectorProps> = ({ value, onC
           value={value}
           onChange={(e) => onChange(e.target.value)}
           rows={3}
-          className="text-sm border-2 border-gray-200 dark:border-border-primary dark:bg-background-tertiary dark:text-white dark:placeholder-foreground-tertiary focus:border-banana-400 dark:focus:border-banana transition-colors duration-200 pr-24"
+          className="text-sm border-2 border-gray-200 dark:border-border-primary dark:bg-background-tertiary dark:text-white dark:placeholder-foreground-tertiary focus:border-cyan-500 dark:focus:border-cyan-400 transition-colors duration-200 pr-24"
         />
         <button
           type="button"
@@ -155,7 +155,7 @@ export const TextStyleSelector: React.FC<TextStyleSelectorProps> = ({ value, onC
             value={saveName}
             onChange={(e) => setSaveName(e.target.value)}
             placeholder={t('styleNamePlaceholder')}
-            className="flex-1 px-2 py-1 text-sm border border-gray-200 dark:border-border-primary rounded-md bg-white dark:bg-background-secondary dark:text-white focus:outline-none focus:border-banana-400 dark:focus:border-banana"
+            className="flex-1 px-2 py-1 text-sm border border-gray-200 dark:border-border-primary rounded-md bg-white dark:bg-background-secondary dark:text-white focus:outline-none focus:border-cyan-500 dark:focus:border-cyan-400"
             onKeyDown={(e) => { if (e.key === 'Enter') handleSave(); }}
             autoFocus
           />

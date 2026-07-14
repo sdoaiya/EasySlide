@@ -6,7 +6,10 @@ from zipfile import ZipFile
 from PIL import Image
 
 from services.export_service import ExportError, ExportService
-from services.image_editability.text_attribute_extractors import TextStyleResult
+from services.image_editability.text_attribute_extractors import (
+    CaptionModelTextAttributeExtractor,
+    TextStyleResult,
+)
 
 
 class FailingExtractor:
@@ -129,6 +132,125 @@ def test_hybrid_style_extraction_uses_global_result_without_slow_local_fallback(
     assert failures == []
 
 
+def test_batch_style_parser_preserves_exact_font_family_and_effects():
+    extractor = CaptionModelTextAttributeExtractor(ai_service=None)
+
+    results = extractor._parse_batch_result(
+        [
+            {
+                "element_id": "text_0",
+                "font_family": " 方正书宋_GBK ",
+                "font_effects": {
+                    "gradient": {
+                        "start_color": "#F9E7A5",
+                        "end_color": "#B8892F",
+                        "angle": 90,
+                    },
+                    "outline": {"color": "#4A2F00", "width_pt": 1.25, "opacity": 0.8},
+                    "shadow": {
+                        "color": "#000000",
+                        "opacity": 0.45,
+                        "blur_pt": 3,
+                        "distance_pt": 2,
+                        "angle": 45,
+                    },
+                    "glow": {"color": "#FFD76A", "opacity": 0.55, "radius_pt": 4},
+                    "transparency": 0.1,
+                },
+                "character_spacing_pt": 1.2,
+            },
+            {
+                "element_id": "text_1",
+                "font_family": 123,
+                "font_effects": "invalid",
+                "character_spacing_pt": "invalid",
+            },
+        ],
+        [{"element_id": "text_0"}, {"element_id": "text_1"}],
+    )
+
+    assert results["text_0"].font_family == "方正书宋_GBK"
+    assert results["text_0"].font_effects["gradient"]["end_color"] == "#B8892F"
+    assert results["text_0"].character_spacing_pt == 1.2
+    assert results["text_1"].font_family is None
+    assert results["text_1"].font_effects == {}
+    assert results["text_1"].character_spacing_pt is None
+
+
+def test_font_style_prompts_request_exact_name_and_supported_effects():
+    from services.prompts import (
+        get_batch_text_attribute_extraction_prompt,
+        get_text_attribute_extraction_prompt,
+    )
+
+    prompts = (
+        get_text_attribute_extraction_prompt(),
+        get_batch_text_attribute_extraction_prompt("[]"),
+    )
+
+    for prompt in prompts:
+        assert "精确字体名称" in prompt
+        assert "font_effects" in prompt
+        assert "character_spacing_pt" in prompt
+        assert "只能从" not in prompt
+
+
+def test_editable_export_applies_recognized_font_family_and_effects(tmp_path):
+    class FontExtractor:
+        def extract_batch_with_full_image(self, full_image, text_elements, **kwargs):
+            return {
+                elem["element_id"]: TextStyleResult(
+                    font_family="方正书宋_GBK",
+                    font_effects={
+                        "gradient": {
+                            "start_color": "#F9E7A5",
+                            "end_color": "#B8892F",
+                            "angle": 90,
+                        },
+                        "outline": {"color": "#4A2F00", "width_pt": 1.25, "opacity": 0.8},
+                        "shadow": {
+                            "color": "#000000",
+                            "opacity": 0.45,
+                            "blur_pt": 3,
+                            "distance_pt": 2,
+                            "angle": 45,
+                        },
+                        "glow": {"color": "#FFD76A", "opacity": 0.55, "radius_pt": 4},
+                        "transparency": 0.1,
+                    },
+                    character_spacing_pt=1.2,
+                    confidence=0.9,
+                )
+                for elem in text_elements
+            }
+
+    background = tmp_path / "font-slide.png"
+    output = tmp_path / "font-restored.pptx"
+    Image.new("RGB", (300, 120), "white").save(background)
+
+    ExportService.create_editable_pptx_with_recursive_analysis(
+        editable_images=[EditableImageStub(str(background))],
+        output_file=str(output),
+        slide_width_pixels=300,
+        slide_height_pixels=120,
+        text_attribute_extractor=FontExtractor(),
+        fail_fast=True,
+    )
+
+    with ZipFile(output) as archive:
+        slide_xml = archive.read("ppt/slides/slide1.xml").decode("utf-8")
+
+    assert '<a:latin typeface="方正书宋_GBK"/>' in slide_xml
+    assert '<a:ea typeface="方正书宋_GBK"/>' in slide_xml
+    assert 'spc="120"' in slide_xml
+    assert '<a:gradFill' in slide_xml
+    assert '<a:srgbClr val="F9E7A5"><a:alpha val="90000"/></a:srgbClr>' in slide_xml
+    assert '<a:srgbClr val="B8892F"><a:alpha val="90000"/></a:srgbClr>' in slide_xml
+    assert '<a:ln w="15875">' in slide_xml
+    assert '<a:glow rad="50800">' in slide_xml
+    assert '<a:outerShdw blurRad="38100" dist="25400" dir="2700000"' in slide_xml
+
+
 def test_local_clean_background_masks_text_bbox(tmp_path):
     image_path = tmp_path / "text-bg.png"
     img = Image.new("RGB", (300, 120), (240, 240, 230))
@@ -217,6 +339,17 @@ def test_editable_export_writes_rebuild_manifest_and_validation(tmp_path):
 
     assert manifest["background_strategy"]["mode"] == "source-preserving-local-cleanup"
     assert manifest["text_boxes"][0]["text"] == "hello"
+    assert manifest["text_boxes"][0] == {
+        **manifest["text_boxes"][0],
+        "z_order": 1,
+        "editable": True,
+        "confidence": None,
+        "render_decision": "editable_text_over_clean_region",
+        "fallback_reason": None,
+        "editable_text_added": True,
+    }
+    assert manifest["elements"][0]["id"] == "text_0"
+    assert all(isinstance(value, bool) for value in manifest["quality_checks"].values())
     assert validation == {"passed": True, "errors": []}
 
 
@@ -241,6 +374,81 @@ def test_rebuild_validation_rejects_full_slide_raster_element():
 
     assert validation["passed"] is False
     assert any("整页栅格" in error for error in validation["errors"])
+
+
+def test_rebuild_validation_rejects_raster_text_region_with_editable_text():
+    validation = ExportService._validate_page_rebuild_manifest({
+        "background_strategy": {"mode": "source-preserving-local-cleanup"},
+        "quality_checks": {
+            "font_size_calibrated": True,
+            "visual_inventory_matched": True,
+            "background_strategy_checked": True,
+            "shape_corner_geometry_checked": True,
+        },
+        "elements": [{
+            "id": "complex_0",
+            "z_order": 1,
+            "editable": False,
+            "confidence": 0.8,
+            "render_decision": "raster_region_with_text",
+            "fallback_reason": "missing_inpainted_background",
+            "editable_text_added": True,
+        }],
+        "text_boxes": [],
+        "images": [],
+    })
+
+    assert validation["passed"] is False
+    assert any("重复文字" in error for error in validation["errors"])
+
+
+def test_complex_raster_fallback_suppresses_descendant_editable_text(tmp_path):
+    background = tmp_path / "slide.png"
+    region = tmp_path / "complex-region.png"
+    output = tmp_path / "complex-fallback.pptx"
+    Image.new("RGB", (300, 120), "white").save(background)
+    Image.new("RGB", (130, 80), "gray").save(region)
+    editable = EditableImageStub(str(background))
+    child = EditableImageStub.Element(
+        str(region),
+        element_id="nested_text",
+        content="must not be duplicated",
+        bbox=EditableImageStub.BBox(20, 20, 120, 45),
+    )
+    parent = EditableImageStub.Element(
+        str(region),
+        element_id="complex_0",
+        content=None,
+        bbox=EditableImageStub.BBox(10, 10, 140, 90),
+        element_type="image",
+    )
+    parent.children = [child]
+    parent.inpainted_background_path = None
+    editable.elements = [parent]
+
+    _, warnings = ExportService.create_editable_pptx_with_recursive_analysis(
+        editable_images=[editable],
+        output_file=str(output),
+        slide_width_pixels=300,
+        slide_height_pixels=120,
+        fail_fast=True,
+    )
+
+    manifest_dir = Path(warnings.rebuild_artifacts_dir) / "page_001"
+    manifest = json.loads((manifest_dir / "manifest.json").read_text(encoding="utf-8"))
+    validation = json.loads((manifest_dir / "validation.json").read_text(encoding="utf-8"))
+    decisions = {item["id"]: item for item in manifest["elements"]}
+
+    assert decisions["complex_0"]["render_decision"] == "raster_region_with_text"
+    assert decisions["complex_0"]["fallback_reason"] == "missing_inpainted_background"
+    assert decisions["complex_0"]["editable_text_added"] is False
+    assert decisions["nested_text"]["render_decision"] == "skipped_due_parent_raster_fallback"
+    assert decisions["nested_text"]["editable_text_added"] is False
+    assert validation == {"passed": True, "errors": []}
+
+    with ZipFile(output) as archive:
+        slide_xml = archive.read("ppt/slides/slide1.xml").decode("utf-8")
+    assert "must not be duplicated" not in slide_xml
 
 
 def test_text_hints_unify_same_level_font_size_in_manifest(tmp_path):
@@ -317,6 +525,41 @@ def test_formula_inventory_records_formula_fallback_items(tmp_path):
             "editable": False,
         }
     ]
+
+
+def test_formula_inventory_matches_actual_readable_text_fallback(tmp_path):
+    background = tmp_path / "slide.png"
+    output = tmp_path / "formula-fallback.pptx"
+    Image.new("RGB", (300, 120), "white").save(background)
+    editable = EditableImageStub(str(background))
+    editable.elements = [
+        EditableImageStub.Element(
+            str(background),
+            element_id="formula_unsupported",
+            content=r"\unsupported{x}",
+            element_type="equation",
+        )
+    ]
+
+    _, warnings = ExportService.create_editable_pptx_with_recursive_analysis(
+        editable_images=[editable],
+        output_file=str(output),
+        slide_width_pixels=300,
+        slide_height_pixels=120,
+        fail_fast=True,
+    )
+
+    manifest = json.loads(
+        (Path(warnings.rebuild_artifacts_dir) / "page_001" / "manifest.json").read_text(encoding="utf-8")
+    )
+    formula = manifest["formula_inventory"][0]
+    decision = next(item for item in manifest["elements"] if item["id"] == "formula_unsupported")
+
+    assert formula["decision"] == "existing-formula-fallback"
+    assert formula["editable"] is False
+    assert decision["render_decision"] == "editable_text_over_clean_region"
+    assert decision["fallback_reason"] == "unsupported_native_formula"
+    assert decision["editable_text_added"] is True
 
 
 
@@ -481,6 +724,51 @@ def test_asset_sheet_failure_returns_no_replacement_and_warning(tmp_path):
     assert any("前景分离失败" in warning for warning in warnings.other_warnings)
 
 
+def test_asset_sheet_opaque_matte_is_converted_to_transparency(tmp_path):
+    icon_path = tmp_path / "icon.png"
+    Image.new("RGB", (30, 30), "red").save(icon_path)
+    editable = EditableImageStub(str(icon_path))
+    editable.elements = [
+        EditableImageStub.Element(
+            str(icon_path), element_id="icon", content=None,
+            element_type="image", is_icon=True,
+        )
+    ]
+
+    class OpaqueMatteProvider:
+        def generate_image(self, ref_images=None, **kwargs):
+            from PIL import ImageDraw
+
+            result = Image.new("RGB", ref_images[0].size, "white")
+            ImageDraw.Draw(result).ellipse([16, 16, 38, 38], fill=(0, 128, 0))
+            return result
+
+    from services.export_service import ExportWarnings
+    warnings = ExportWarnings()
+    assets = ExportService._run_asset_sheet_separation(
+        editable_img=editable,
+        output_dir=tmp_path,
+        high_fidelity_editable=True,
+        image_editing_provider=OpaqueMatteProvider(),
+        warnings=warnings,
+    )
+
+    asset = Image.open(assets["icon"]).convert("RGBA")
+    assert asset.getchannel("A").getextrema()[0] == 0
+    assert asset.getpixel((15, 15))[3] == 255
+    assert warnings.other_warnings == []
+
+
+def test_export_warnings_deduplicate_identical_messages():
+    from services.export_service import ExportWarnings
+
+    warnings = ExportWarnings()
+    warnings.add_warning("same warning")
+    warnings.add_warning("same warning")
+
+    assert warnings.other_warnings == ["same warning"]
+
+
 def test_high_fidelity_manifest_records_processed_asset(tmp_path):
     background = tmp_path / "slide.png"
     icon_path = tmp_path / "icon.png"
@@ -515,3 +803,40 @@ def test_high_fidelity_manifest_records_processed_asset(tmp_path):
     assert manifest["page_strategy"]["asset_sheet_separation"] == "completed"
     assert manifest["images"][0]["path"].endswith("asset_icon.png")
     assert manifest["asset_provenance"][0]["source_type"] == "asset-sheet-separated"
+
+
+def test_high_fidelity_asset_sheet_creates_page_dir_with_external_background(tmp_path):
+    background = tmp_path / "slide.png"
+    clean_background = tmp_path / "clean.png"
+    icon_path = tmp_path / "icon.png"
+    output = tmp_path / "external-bg.pptx"
+    Image.new("RGB", (300, 120), "white").save(background)
+    Image.new("RGB", (300, 120), "white").save(clean_background)
+    Image.new("RGBA", (30, 30), (255, 0, 0, 255)).save(icon_path)
+
+    editable = EditableImageStub(str(background))
+    editable.clean_background = str(clean_background)
+    editable.elements = [
+        EditableImageStub.Element(
+            str(icon_path),
+            element_id="icon",
+            content=None,
+            bbox=EditableImageStub.BBox(10, 10, 40, 40),
+            element_type="image",
+            is_icon=True,
+        )
+    ]
+
+    _, warnings = ExportService.create_editable_pptx_with_recursive_analysis(
+        editable_images=[editable],
+        output_file=str(output),
+        slide_width_pixels=300,
+        slide_height_pixels=120,
+        export_high_fidelity_editable=True,
+        image_editing_provider=None,
+        fail_fast=True,
+    )
+
+    page_dir = Path(warnings.rebuild_artifacts_dir) / "page_001"
+    assert (page_dir / "foreground_asset_sheet.png").exists()
+    assert (page_dir / "manifest.json").exists()

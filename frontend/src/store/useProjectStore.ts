@@ -1,5 +1,5 @@
 ﻿import { create } from 'zustand';
-import type { Project } from '@/types';
+import type { Project, RenderMode } from '@/types';
 import * as api from '@/api/endpoints';
 import {
   debounce,
@@ -100,8 +100,8 @@ interface ProjectState {
   setError: (error: string | null) => void;
   
   // 项目操作
-  initializeProject: (type: 'idea' | 'outline' | 'description', content: string, templateImage?: File, templateStyle?: string, referenceFileIds?: string[], aspectRatio?: string) => Promise<void>;
-  syncProject: (projectId?: string) => Promise<void>;
+  initializeProject: (type: 'idea' | 'outline' | 'description', content: string, templateImage?: File, templateStyle?: string, referenceFileIds?: string[], aspectRatio?: string, renderMode?: RenderMode, nativeTheme?: string) => Promise<void>;
+  syncProject: (projectId?: string) => Promise<Project | undefined>;
   
   // 页面操作
   updatePageLocal: (pageId: string, data: any) => void;
@@ -203,7 +203,7 @@ const debouncedUpdatePage = debounce(
   setError: (error) => set({ error }),
 
   // 初始化项目
-  initializeProject: async (type, content, templateImage, templateStyle, referenceFileIds, aspectRatio) => {
+  initializeProject: async (type, content, templateImage, templateStyle, referenceFileIds, aspectRatio, renderMode = 'image', nativeTheme = 'theme01') => {
     set({ isGlobalLoading: true, error: null });
     try {
       const request: any = {};
@@ -224,6 +224,11 @@ const debouncedUpdatePage = debounce(
       // 添加画面比例（如果有）
       if (aspectRatio) {
         request.image_aspect_ratio = aspectRatio;
+      }
+
+      request.render_mode = renderMode;
+      if (renderMode === 'native') {
+        request.native_theme = nativeTheme;
       }
 
       // 1. 创建项目
@@ -304,6 +309,7 @@ const debouncedUpdatePage = debounce(
         set({ currentProject: project });
         // 确保 localStorage 中保存了项目ID
         localStorage.setItem('currentProjectId', project.id!);
+        return project;
       }
     } catch (error: any) {
       // 提取更详细的错误信息

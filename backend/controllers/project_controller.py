@@ -34,6 +34,10 @@ from utils import (
 logger = logging.getLogger(__name__)
 
 project_bp = Blueprint('projects', __name__, url_prefix='/api/projects')
+ASYNC_EXPORT_TASK_TYPES = {
+    'EXPORT_EDITABLE_PPTX', 'EXPORT_NATIVE_PPTX', 'EXPORT_NATIVE_PDF',
+    'EXPORT_NATIVE_HTML', 'EXPORT_VIDEO',
+}
 
 
 def _get_project_reference_files_content(project_id: str) -> list:
@@ -234,6 +238,11 @@ def create_project():
         
         if creation_type not in ['idea', 'outline', 'descriptions']:
             return bad_request("Invalid creation_type")
+
+        render_mode = data.get('render_mode', 'image')
+        if render_mode not in ('image', 'native'):
+            return bad_request("Invalid render_mode")
+        native_theme = data.get('native_theme') or ('theme01' if render_mode == 'native' else None)
         
         # Validate and set aspect ratio if provided
         image_aspect_ratio = '16:9'
@@ -251,6 +260,8 @@ def create_project():
             description_text=data.get('description_text'),
             template_style=data.get('template_style'),
             image_aspect_ratio=image_aspect_ratio,
+            render_mode=render_mode,
+            native_theme=native_theme,
             status='DRAFT'
         )
         
@@ -260,6 +271,8 @@ def create_project():
         return success_response({
             'project_id': project.id,
             'status': project.status,
+            'render_mode': project.render_mode,
+            'native_theme': project.native_theme,
             'pages': []
         }, status_code=201)
     
@@ -321,6 +334,9 @@ def update_project(project_id):
         
         data = request.get_json()
 
+        if 'render_mode' in data and data['render_mode'] != (project.render_mode or 'image'):
+            return bad_request("render_mode cannot be changed after project creation")
+
         # Update project_title if provided
         if 'project_title' in data:
             project.project_title = data['project_title']
@@ -350,6 +366,12 @@ def update_project(project_id):
         # Update template_style if provided
         if 'template_style' in data:
             project.template_style = data['template_style']
+
+        if 'native_image_settings' in data:
+            try:
+                project.set_native_image_settings(data['native_image_settings'])
+            except ValueError as exc:
+                return bad_request(str(exc))
         
         # Update aspect ratio if provided
         if 'image_aspect_ratio' in data:
@@ -1137,7 +1159,7 @@ def pause_export_task(project_id, task_id):
     task = Task.query.get(task_id)
     if not task or task.project_id != project_id:
         return not_found('Task')
-    if task.task_type not in {'EXPORT_EDITABLE_PPTX', 'EXPORT_VIDEO'}:
+    if task.task_type not in ASYNC_EXPORT_TASK_TYPES:
         return bad_request('Only asynchronous export tasks can be paused')
     if task.status in {'PENDING', 'PROCESSING', 'RUNNING'}:
         task.status = 'PAUSED'
@@ -1150,9 +1172,25 @@ def resume_export_task(project_id, task_id):
     task = Task.query.get(task_id)
     if not task or task.project_id != project_id:
         return not_found('Task')
-    if task.task_type not in {'EXPORT_EDITABLE_PPTX', 'EXPORT_VIDEO'}:
+    if task.task_type not in ASYNC_EXPORT_TASK_TYPES:
         return bad_request('Only asynchronous export tasks can be resumed')
     if task.status != 'PAUSED':
+        return success_response(task.to_dict())
+
+    if task.task_type in {'EXPORT_NATIVE_PPTX', 'EXPORT_NATIVE_PDF', 'EXPORT_NATIVE_HTML'}:
+        progress = task.get_progress()
+        task.set_progress({
+            'total': progress.get('total', 0),
+            'completed': 0,
+            'failed': 0,
+            'percent': 0,
+            'current_step': '等待重新开始导出',
+            '_resume': progress.get('_resume', {'kind': 'native-pptx', 'kwargs': {}}),
+        })
+        task.status = 'PENDING'
+        task.error_message = None
+        task.completed_at = None
+        db.session.commit()
         return success_response(task.to_dict())
 
     if task_manager.is_task_active(task.id):
@@ -1180,20 +1218,26 @@ def resume_export_task(project_id, task_id):
     task.error_message = None
     task.completed_at = None
     db.session.commit()
-    task_manager.submit_task(
-        task.id,
-        task_func,
-        file_service=FileService(current_app.config['UPLOAD_FOLDER']),
-        app=current_app._get_current_object(),
-        **resume['kwargs'],
-    )
+    try:
+        task_manager.submit_task(
+            task.id,
+            task_func,
+            file_service=FileService(current_app.config['UPLOAD_FOLDER']),
+            app=current_app._get_current_object(),
+            **resume['kwargs'],
+        )
+    except Exception as exc:
+        task.status = 'PAUSED'
+        task.error_message = str(exc)
+        db.session.commit()
+        return error_response('SERVER_ERROR', str(exc), 500)
     return success_response(task.to_dict())
 
 
 @project_bp.route('/tasks/pause-active-exports', methods=['POST'])
 def pause_active_export_tasks():
     tasks = Task.query.filter(
-        Task.task_type.in_(['EXPORT_EDITABLE_PPTX', 'EXPORT_VIDEO']),
+        Task.task_type.in_(ASYNC_EXPORT_TASK_TYPES),
         Task.status.in_(['PENDING', 'PROCESSING', 'RUNNING']),
     ).all()
     for task in tasks:

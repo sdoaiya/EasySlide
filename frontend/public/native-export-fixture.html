@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EasySlide native export fixture</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { margin: 0; font-family: Arial, "Microsoft YaHei", sans-serif; }
+      #deck { width: 1920px; height: 1080px; }
+      .slide { display: none; position: relative; width: 1920px; height: 1080px; overflow: hidden; background: #fff; }
+      .slide.active { display: block; }
+      .title { position: absolute; left: 120px; top: 120px; margin: 0; color: #172033; font-size: 72px; line-height: 1.2; }
+      .body { position: absolute; left: 120px; top: 260px; width: 1200px; margin: 0; color: #334155; font-size: 36px; line-height: 1.5; }
+      .accent { position: absolute; left: 120px; top: 390px; width: 420px; height: 28px; background: #00a7c4; }
+    </style>
+  </head>
+  <body>
+    <main id="deck">
+      <section class="slide active" data-deck-active id="native-slide-1">
+        <h1 class="title">原生可编辑导出</h1>
+        <p class="body">页面文字由真实 DOM 逐元素写入 PPTX。</p>
+        <div class="accent"></div>
+      </section>
+      <section class="slide" id="native-slide-2">
+        <h1 class="title">第二页仍可编辑</h1>
+        <p class="body">测试不允许整页图片回退。</p>
+        <div class="accent"></div>
+      </section>
+    </main>
+    <script type="module">
+      import { exportEditablePptxInBrowser } from '/src/vendor/html-deck-to-pptx/editable-browser.mjs'
+
+      const slides = [...document.querySelectorAll('#deck > .slide')]
+      window.__getVisibleSlides = () => slides
+      window.__layoutDeck = () => {}
+      window.go = index => {
+        slides.forEach((slide, slideIndex) => {
+          const active = slideIndex === index
+          slide.classList.toggle('active', active)
+          slide.toggleAttribute('data-deck-active', active)
+        })
+      }
+      window.testExportNativeDeck = async () => {
+        const { blob, report } = await exportEditablePptxInBrowser({
+          title: 'EasySlide native export fixture',
+          PptxGenJS: window.PptxGenJS,
+          htmlToImage: {
+            toPng() {
+              throw new Error('Unexpected raster fallback in native export fixture')
+            },
+          },
+        })
+        const signatureBytes = new Uint8Array(await blob.slice(0, 2).arrayBuffer())
+        const fullSlideFallbacks = report.warnings.filter(warning =>
+          String(warning.type || '').includes('full-slide') || warning.scope === 'full-slide'
+        ).length
+        return {
+          slideCount: report.slideCount,
+          textObjects: report.textObjects,
+          fullSlideFallbacks,
+          pptxSignature: String.fromCharCode(...signatureBytes),
+          pptxBytes: blob.size,
+        }
+      }
+      window.__nativeExporterReady = true
+    </script>
+  </body>
+</html>

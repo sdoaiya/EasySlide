@@ -3,9 +3,13 @@ Page model
 """
 import uuid
 import json
+import logging
 from pathlib import Path
 from datetime import datetime
 from . import db
+
+
+logger = logging.getLogger(__name__)
 
 
 class Page(db.Model):
@@ -23,6 +27,8 @@ class Page(db.Model):
     generated_image_path = db.Column(db.String(500), nullable=True)  # Original PNG image path
     cached_image_path = db.Column(db.String(500), nullable=True)  # Compressed JPG thumbnail path
     narration_text = db.Column(db.Text, nullable=True)  # Plain text narration for TTS video export
+    native_layout = db.Column(db.String(100), nullable=True)
+    native_props = db.Column(db.Text, nullable=True)
     status = db.Column(db.String(50), nullable=False, default='DRAFT')
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -73,6 +79,21 @@ class Page(db.Model):
         """Set narration text for TTS"""
         self.narration_text = text if text else None
 
+    def get_native_props(self):
+        """Parse native slide properties without breaking legacy projects."""
+        if not self.native_props:
+            return {}
+        try:
+            data = json.loads(self.native_props)
+            return data if isinstance(data, dict) else {}
+        except (TypeError, json.JSONDecodeError):
+            logger.warning('Invalid native_props on page %s', self.id)
+            return {}
+
+    def set_native_props(self, data):
+        """Store native slide properties as JSON."""
+        self.native_props = json.dumps(data, ensure_ascii=False) if data else None
+
     def to_dict(self, include_versions=False):
         """Convert to dictionary"""
         # Use cached image for frontend display, fallback to original if no cache
@@ -89,6 +110,8 @@ class Page(db.Model):
             'outline_content': self.get_outline_content(),
             'description_content': self.get_description_content(),
             'narration_text': self.narration_text,
+            'native_layout': self.native_layout,
+            'native_props': self.get_native_props(),
             'generated_image_url': display_image_url,
             'status': self.status,
             'created_at': self.created_at.isoformat() if self.created_at else None,

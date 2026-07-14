@@ -7,9 +7,12 @@ try {
     Remove-Item -Recurse -Force $desktopOutput
   }
   $env:ELECTRON_BUILDER_OUT_DIR = $desktopOutput
+  $python = Join-Path (Get-Location) '.venv\Scripts\python.exe'
+  $pyinstaller = Join-Path (Get-Location) '.venv\Scripts\pyinstaller.exe'
 
   npm --prefix frontend run build
-  uv run pyinstaller backend\desktop.spec --noconfirm --distpath backend\dist --workpath backend\build
+  node scripts\validate-native-layout-manifest.mjs
+  & $pyinstaller backend\desktop.spec --noconfirm --distpath backend\dist --workpath backend\build
 
   $desktopRoot = Join-Path $PSScriptRoot '..\desktop'
   $stagingRoot = Join-Path $desktopRoot 'resources'
@@ -44,7 +47,7 @@ ImageDraw.Draw(mask).rounded_rectangle((0, 0, 256, 256), radius=48, fill=255)
 canvas.putalpha(mask)
 canvas.save(png_target)
 canvas.save(ico_target, sizes=[(256, 256), (128, 128), (64, 64), (48, 48), (32, 32), (16, 16)])
-"@ | uv run python -
+"@ | & $python -
 
   npm --prefix desktop install
   npm --prefix desktop pkg delete dependencies.easyslide

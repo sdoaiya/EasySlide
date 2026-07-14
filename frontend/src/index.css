@@ -98,6 +98,25 @@ body {
   min-height: 100vh;
 }
 
+/* Dashi-style editor shell: toolbar, three-pane workspace, status bar. */
+:root {
+  --workspace-toolbar-height: 56px;
+  --workspace-statusbar-height: 36px;
+  --workspace-sidebar-width: 220px;
+  --workspace-sidebar-collapsed-width: 44px;
+  --workspace-inspector-width: 320px;
+}
+
+.workspace-shell {
+  display: grid;
+  grid-template-rows: var(--workspace-toolbar-height) minmax(0, 1fr) var(--workspace-statusbar-height);
+  grid-template-areas: "toolbar toolbar toolbar" "sidebar canvas inspector" "status status status";
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-primary);
+}
+
 /* 自定义滚动条 */
 ::-webkit-scrollbar {
   width: 8px;

@@ -15,7 +15,7 @@ import time
 from sqlalchemy import func
 from sqlalchemy.exc import OperationalError
 from PIL import Image, ImageDraw, ImageFilter
-from models import db, Task, Page, Material, PageImageVersion, Settings
+from models import db, Task, Page, Project, Material, PageImageVersion, Settings
 from utils import get_filtered_pages
 from utils.image_utils import check_image_resolution
 
@@ -382,6 +382,82 @@ def _build_region_edit_instruction(prompt: str, operation: str) -> str:
         "未标记区域尽量保持原样，不要无关改动整体构图。\n"
         f"用户编辑要求：{cleaned_prompt}"
     )
+
+
+def generate_native_deck_task(task_id: str, project_id: str, ai_service, app=None):
+    """Generate validated native slide specs from existing page outlines."""
+    if app is None:
+        raise ValueError('Flask app instance must be provided')
+
+    from services.native_deck_service import NativeDeckService
+    from services.prompts import get_native_slide_prompt
+
+    with app.app_context():
+        try:
+            task = db.session.get(Task, task_id)
+            project = db.session.get(Project, project_id)
+            if not task or not project:
+                return
+            if project.render_mode != 'native':
+                raise ValueError('只有原生可编辑项目可以生成原生页面')
+
+            pages = Page.query.filter_by(project_id=project_id).order_by(Page.order_index).all()
+            service = NativeDeckService()
+            task.status = 'PROCESSING'
+            task.set_progress({'total': len(pages), 'completed': 0, 'failed': 0, 'warnings': []})
+            db.session.commit()
+
+            completed = 0
+            failed = 0
+            warnings = []
+            used_layouts = set()
+            for index, page in enumerate(pages):
+                role = 'cover' if index == 0 else 'end' if index == len(pages) - 1 else 'content'
+                theme = project.native_theme or 'theme01'
+                themed = service.list_layouts(role=role, theme=theme) or service.list_layouts(theme=theme)
+                candidates = [item for item in themed if item['layout'] not in used_layouts] or themed
+                candidates = candidates[:8]
+                try:
+                    prompt = get_native_slide_prompt(page.get_outline_content(), candidates, project.template_style)
+                    with text_resource_limiter.slot(f'native-deck project={project_id} page={page.id}'):
+                        result = ai_service.generate_json(prompt)
+                    if not isinstance(result, dict) or set(result) != {'layout', 'props'}:
+                        raise ValueError('模型必须返回 layout 和 props')
+                    if result['layout'] not in {item['layout'] for item in candidates}:
+                        raise ValueError('模型返回了候选范围外的布局')
+                    fitted_props = service.fit_copy_budgets(result['layout'], result['props'])
+                    slide = service.normalize_slide(result['layout'], fitted_props)
+                    page.native_layout = slide['layout']
+                    page.set_native_props(slide['props'])
+                    page.status = 'NATIVE_GENERATED'
+                    used_layouts.add(slide['layout'])
+                    completed += 1
+                except Exception as exc:
+                    failed += 1
+                    warnings.append(f'第 {index + 1} 页: {exc}')
+                    if not project.export_allow_partial:
+                        raise
+
+                task.set_progress({
+                    'total': len(pages),
+                    'completed': completed,
+                    'failed': failed,
+                    'warnings': warnings,
+                })
+                db.session.commit()
+
+            task.status = 'COMPLETED'
+            task.completed_at = datetime.utcnow()
+            project.status = 'NATIVE_DECK_GENERATED'
+            db.session.commit()
+        except Exception as exc:
+            db.session.rollback()
+            task = db.session.get(Task, task_id)
+            if task:
+                task.status = 'FAILED'
+                task.error_message = str(exc)
+                task.completed_at = datetime.utcnow()
+                db.session.commit()
 
 
 def generate_descriptions_task(task_id: str, project_id: str, ai_service,
@@ -1918,6 +1994,7 @@ def export_video_task(
     page_ids: list = None,
     language: str = 'zh',
     narration_config: dict | None = None,
+    frame_paths: list[str] | None = None,
     app=None,
 ):
     """
@@ -1948,7 +2025,7 @@ def export_video_task(
         if _settings.elevenlabs_enabled and _settings.elevenlabs_api_key:
             elevenlabs_config = {
                 'api_key': _settings.elevenlabs_api_key,
-                'voice_id': voice,
+                'voice_id': _settings.elevenlabs_voice_id or None,
             }
         logger.info(f"[export_video] voice={voice!r} elevenlabs_enabled={_settings.elevenlabs_enabled} elevenlabs_config={'set' if elevenlabs_config else 'None'}")
 
@@ -1983,6 +2060,7 @@ def export_video_task(
             except Exception as e:
                 logger.warning(f"更新进度失败: {e}")
 
+        placeholder_dir = None
         try:
             _wait_if_export_task_paused(task_id)
             task = Task.query.get(task_id)
@@ -2027,35 +2105,43 @@ def export_video_task(
 
             # 构建页面列表：有图片的用实际图片，无图片的根据选项处理
             valid_pages = []
-            placeholder_dir = None
 
-            if include_no_image_pages:
+            if frame_paths is not None:
+                if len(frame_paths) != len(pages):
+                    raise ValueError('浏览器视频帧数量与页面数量不一致')
+                missing_frames = [path for path in frame_paths if not os.path.isfile(path)]
+                if missing_frames:
+                    raise ValueError('浏览器视频帧已丢失，请重新发起导出')
+                valid_pages = list(zip(pages, frame_paths))
+
+            if frame_paths is None and include_no_image_pages:
                 video_width = app.config.get('VIDEO_OUTPUT_WIDTH', 1920)
                 video_height = app.config.get('VIDEO_OUTPUT_HEIGHT', 1080)
                 placeholder_dir = os.path.join(app.config['UPLOAD_FOLDER'], project_id, 'exports', f'_placeholder_{task_id}')
                 os.makedirs(placeholder_dir, exist_ok=True)
 
-            for page in pages:
-                if page.generated_image_path:
-                    img_path = file_service.get_absolute_path(page.generated_image_path)
-                    if os.path.exists(img_path):
-                        valid_pages.append((page, img_path))
-                        continue
+            if frame_paths is None:
+                for page in pages:
+                    if page.generated_image_path:
+                        img_path = file_service.get_absolute_path(page.generated_image_path)
+                        if os.path.exists(img_path):
+                            valid_pages.append((page, img_path))
+                            continue
 
-                if include_no_image_pages:
-                    # 为无图页面生成占位帧
-                    outline_content = page.get_outline_content() or {}
-                    title = outline_content.get('title', f'Page {page.order_index + 1}')
-                    placeholder_path = os.path.join(placeholder_dir, f'placeholder_{page.order_index:03d}.png')
-                    try:
-                        create_placeholder_frame(
-                            placeholder_path, title=title,
-                            width=video_width, height=video_height,
-                            ffmpeg_path=ffmpeg_path,
-                        )
-                        valid_pages.append((page, placeholder_path))
-                    except Exception as e:
-                        logger.warning(f"生成占位帧失败 (page {page.id}): {e}")
+                    if include_no_image_pages:
+                        # 为无图页面生成占位帧
+                        outline_content = page.get_outline_content() or {}
+                        title = outline_content.get('title', f'Page {page.order_index + 1}')
+                        placeholder_path = os.path.join(placeholder_dir, f'placeholder_{page.order_index:03d}.png')
+                        try:
+                            create_placeholder_frame(
+                                placeholder_path, title=title,
+                                width=video_width, height=video_height,
+                                ffmpeg_path=ffmpeg_path,
+                            )
+                            valid_pages.append((page, placeholder_path))
+                        except Exception as e:
+                            logger.warning(f"生成占位帧失败 (page {page.id}): {e}")
 
             if not valid_pages:
                 raise ValueError("没有找到可导出的页面（无图片且未启用占位帧）")
@@ -2254,3 +2340,10 @@ def export_video_task(
             if placeholder_dir and os.path.exists(placeholder_dir):
                 import shutil
                 shutil.rmtree(placeholder_dir, ignore_errors=True)
+            if frame_paths:
+                task = Task.query.get(task_id)
+                if not task or task.status in {'COMPLETED', 'FAILED'}:
+                    import shutil
+                    for directory in {os.path.dirname(path) for path in frame_paths}:
+                        if os.path.basename(directory) == f'_native_video_{task_id}':
+                            shutil.rmtree(directory, ignore_errors=True)

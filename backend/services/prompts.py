@@ -988,6 +988,9 @@ def get_text_attribute_extraction_prompt(content_hint: str = "") -> str:
 2. **颜色** - 每个字/词的实际颜色
 3. **空格** - 精确识别文本中空格的位置和数量
 4. **公式** - 如果是数学公式，输出 LaTeX 格式
+5. **字体** - 识别最可能的精确字体名称，保留字体家族的官方中英文拼写，不要改写为通用字体或别名
+6. **字体特效** - 识别渐变填充、描边、阴影、发光和整体透明度
+7. **字符间距** - 估算字符间距，单位为磅（pt）；常规间距为 0
 
 ## 注意事项
 - **空格识别**：必须精确还原空格数量，多个连续空格要完整保留，不要合并或省略
@@ -996,6 +999,14 @@ def get_text_attribute_extraction_prompt(content_hint: str = "") -> str:
 - **相邻合并**：相同颜色的相邻普通文字应合并为一个片段
 
 ## 输出格式
+- font_family: 精确字体名称；无法判断时返回最可能的具体字体名称，完全无法判断才返回 null
+- font_effects: 字体特效对象；未出现的特效返回 null
+  - gradient: {{"start_color":"#RRGGBB","end_color":"#RRGGBB","angle":角度}} 或 null
+  - outline: {{"color":"#RRGGBB","width_pt":磅数,"opacity":0到1}} 或 null
+  - shadow: {{"color":"#RRGGBB","opacity":0到1,"blur_pt":磅数,"distance_pt":磅数,"angle":角度}} 或 null
+  - glow: {{"color":"#RRGGBB","opacity":0到1,"radius_pt":磅数}} 或 null
+  - transparency: 0到1，0 表示不透明
+- character_spacing_pt: 字符间距，单位 pt
 - colored_segments: 文字片段数组，每个片段包含：
   - text: 文字内容（公式时为 LaTeX 格式，如 "x^2"、"\\sum_{{i=1}}^n"）
   - color: 颜色，十六进制格式 "#RRGGBB"
@@ -1005,6 +1016,15 @@ def get_text_attribute_extraction_prompt(content_hint: str = "") -> str:
 示例输出：
 ```json
 {{
+    "font_family": "方正书宋_GBK",
+    "font_effects": {{
+        "gradient": {{"start_color": "#F9E7A5", "end_color": "#B8892F", "angle": 90}},
+        "outline": {{"color": "#4A2F00", "width_pt": 1.0, "opacity": 0.8}},
+        "shadow": null,
+        "glow": null,
+        "transparency": 0
+    }},
+    "character_spacing_pt": 0,
     "colored_segments": [
         {{"text": "·  创新合成", "color": "#000000"}},
         {{"text": "1827个任务环境", "color": "#26397A"}},
@@ -1036,14 +1056,27 @@ def get_batch_text_attribute_extraction_prompt(text_elements_json: str) -> str:
    - 请仔细观察文字的实际颜色，不要只返回黑色
    - 常见颜色如：白色 "#FFFFFF"、蓝色 "#0066CC"、红色 "#FF0000" 等
 
-2. **is_bold**: 是否为粗体 (true/false)
+2. **font_family**: 识别最可能的精确字体名称
+   - 保留字体家族的官方中英文拼写，不要改写成通用字体或别名
+   - 无法确定时返回最可能的具体字体名称，完全无法判断才返回 null
+
+3. **font_effects**: 识别字体特效
+   - gradient: 渐变填充，包含 start_color、end_color、angle；没有则为 null
+   - outline: 描边，包含 color、width_pt、opacity；没有则为 null
+   - shadow: 阴影，包含 color、opacity、blur_pt、distance_pt、angle；没有则为 null
+   - glow: 发光，包含 color、opacity、radius_pt；没有则为 null
+   - transparency: 整体透明度，范围 0 到 1，0 表示不透明
+
+4. **character_spacing_pt**: 字符间距，单位 pt；常规间距为 0
+
+5. **is_bold**: 是否为粗体 (true/false)
    - 观察笔画粗细，标题通常是粗体
 
-3. **is_italic**: 是否为斜体 (true/false)
+6. **is_italic**: 是否为斜体 (true/false)
 
-4. **is_underline**: 是否有下划线 (true/false)
+7. **is_underline**: 是否有下划线 (true/false)
 
-5. **text_alignment**: 文字对齐方式
+8. **text_alignment**: 文字对齐方式
    - "left": 左对齐
    - "center": 居中对齐
    - "right": 右对齐
@@ -1054,6 +1087,9 @@ def get_batch_text_attribute_extraction_prompt(text_elements_json: str) -> str:
 - element_id: 与输入相同的元素ID
 - text_content: 文字内容
 - font_color: 颜色十六进制值
+- font_family: 精确字体名称或 null
+- font_effects: 字体特效对象
+- character_spacing_pt: 字符间距（pt）
 - is_bold: 布尔值
 - is_italic: 布尔值
 - is_underline: 布尔值
@@ -1066,6 +1102,15 @@ def get_batch_text_attribute_extraction_prompt(text_elements_json: str) -> str:
         "element_id": "xxx",
         "text_content": "文字内容",
         "font_color": "#RRGGBB",
+        "font_family": "方正书宋_GBK",
+        "font_effects": {{
+            "gradient": null,
+            "outline": null,
+            "shadow": {{"color": "#000000", "opacity": 0.4, "blur_pt": 3, "distance_pt": 2, "angle": 45}},
+            "glow": null,
+            "transparency": 0
+        }},
+        "character_spacing_pt": 0,
         "is_bold": true/false,
         "is_italic": true/false,
         "is_underline": true/false,
@@ -1243,3 +1288,18 @@ Output format — use exactly this delimiter before each narration:
         normalized_config,
     )
     return prompt
+def get_native_slide_prompt(outline, layout_candidates, style_hint=None):
+    """Build a constrained prompt for one native slide."""
+    style_section = f"\n文字描述风格：\n{style_hint}\n" if style_hint else ""
+    return f"""你正在生成一页结构化、可编辑的演示文稿页面。
+只能从候选布局中选择一个 layout，并且 props 只能包含该布局 propShapes 声明的字段。
+严格遵守 copyBudgets 和 arrayLimits。不要返回 HTML、CSS、className 或解释文字。
+{style_section}
+
+页面大纲：
+{json.dumps(outline or {}, ensure_ascii=False)}
+
+候选布局：
+{json.dumps(layout_candidates, ensure_ascii=False)}
+
+只返回 JSON：{{"layout":"布局ID","props":{{...}}}}"""

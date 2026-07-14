@@ -628,7 +628,7 @@ export const MarkdownTextarea = forwardRef<MarkdownTextareaRef, MarkdownTextarea
       {/* Outer container — owns the border, focus ring, and toolbar */}
       <div className={cn(
         'relative rounded-lg border border-gray-200 dark:border-border-primary bg-white dark:bg-background-secondary',
-        'focus-within:ring-2 focus-within:ring-banana-500 focus-within:border-transparent',
+        'focus-within:border-cyan-500',
         'transition-all',
         isDragging && 'ring-2 ring-banana-400 border-transparent',
         error && 'border-red-500 focus-within:ring-red-500',
@@ -641,6 +641,7 @@ export const MarkdownTextarea = forwardRef<MarkdownTextareaRef, MarkdownTextarea
             contentEditable
             role="textbox"
             aria-multiline="true"
+            aria-label={label || placeholder}
             onKeyDown={handleKeyDown}
             onInput={handleInput}
             onPaste={handlePaste}

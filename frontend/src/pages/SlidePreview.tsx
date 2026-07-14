@@ -282,6 +282,9 @@ import { getImageUrl } from '@/api/client';
 import { getPageImageVersions, setCurrentImageVersion, updateProject, uploadTemplate, exportPPTX as apiExportPPTX, exportPDF as apiExportPDF, exportImages as apiExportImages, exportEditablePPTX as apiExportEditablePPTX, exportVideo as apiExportVideo, getSettings, getElevenLabsVoices } from '@/api/endpoints';
 import type { ImageVersion, DescriptionContent, ExportExtractorMethod, ExportInpaintMethod, Page, NarrationConfig } from '@/types';
 import { normalizeErrorMessage } from '@/utils';
+import { NativeDeckWorkspaceLoader } from '@/components/native-deck/NativeDeckWorkspaceLoader';
+import type { NativeSlideSpec } from '@/native-deck/types';
+import { getNativeDeckTaskStorageKey } from '@/utils/projectUtils';
 
 const VIDEO_VOICE_OPTIONS = [
   { group: '中文', voices: [
@@ -1355,6 +1358,7 @@ export const SlidePreview: React.FC = () => {
   };
 
   const handleRetryExport = (task: ExportTask) => {
+    if (task.type === 'native-pptx' || task.type === 'native-pdf' || task.type === 'native-html') return;
     handleExport(task.type, { pageIds: task.pageIds });
   };
 
@@ -1511,6 +1515,32 @@ export const SlidePreview: React.FC = () => {
 
   if (!currentProject) {
     return <Loading fullscreen message={t('preview.messages.loadingProject')} />;
+  }
+
+  if ((currentProject as typeof currentProject & { render_mode?: string }).render_mode === 'native') {
+    const nativeSlides = currentProject.pages.flatMap((page): NativeSlideSpec[] => {
+      const nativePage = page as Page & { native_layout?: string; native_props?: Record<string, unknown> };
+      if (!nativePage.native_layout) return [];
+      return [{
+        pageId: nativePage.id || nativePage.page_id,
+        layout: nativePage.native_layout,
+        props: nativePage.native_props || {},
+      }];
+    });
+    const nativeProjectId = projectId || currentProject.id || currentProject.project_id;
+    const generationTaskId = (location.state as { taskId?: string } | null)?.taskId
+      || localStorage.getItem(getNativeDeckTaskStorageKey(nativeProjectId));
+
+    return (
+      <NativeDeckWorkspaceLoader
+        projectId={nativeProjectId}
+        slides={nativeSlides}
+        totalPages={currentProject.pages.length}
+        generationTaskId={generationTaskId || undefined}
+        onHome={() => navigate('/app')}
+        onBack={() => fromHistory ? navigate('/history') : navigate(`/project/${nativeProjectId}/detail`)}
+      />
+    );
   }
 
   if (isGlobalLoading) {

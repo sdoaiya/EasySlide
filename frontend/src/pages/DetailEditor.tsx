@@ -21,7 +21,7 @@ const detailI18n = {
   zh: {
     home: { title: 'EasySlide' },
     detail: {
-      title: "编辑页面描述", workflowStage: "Step 2 · 页面叙事", workflowHint: "补全每页描述和视觉线索", pageCount: "共 {{count}} 页", generateImages: "生成图片",
+      title: "编辑页面描述", workflowStage: "Step 2 · 页面叙事", workflowHint: "补全每页描述和视觉线索", pageCount: "共 {{count}} 页", generateImages: "生成图片", generateNative: "生成页面", generatingNative: "生成页面中...",
       generating: "生成中...", page: "第 {{num}} 页", titleLabel: "标题",
       description: "描述", batchGenerate: "批量生成描述", export: "导出描述", exportFull: "导出大纲和描述", import: "导入", importExport: "导入/导出",
       pagesCompleted: "页已完成", noPages: "还没有页面",
@@ -65,14 +65,14 @@ const detailI18n = {
         exportSuccess: "导出成功", importSuccess: "导入成功", importFailed: "导入失败，请检查文件格式", importEmpty: "文件中未找到有效页面",
         importContentEmpty: "请先粘贴内容或上传文件",
         importReadFailed: "读取文件失败，请重试",
-        loadingProject: "加载项目中..."
+        loadingProject: "加载项目中...", generateNativeFailed: "原生页面生成失败"
       }
     }
   },
   en: {
     home: { title: 'EasySlide' },
     detail: {
-      title: "Edit Descriptions", workflowStage: "Step 2 · Page Narrative", workflowHint: "Complete descriptions and visual cues for each page", pageCount: "{{count}} pages", generateImages: "Generate Images",
+      title: "Edit Descriptions", workflowStage: "Step 2 · Page Narrative", workflowHint: "Complete descriptions and visual cues for each page", pageCount: "{{count}} pages", generateImages: "Generate Images", generateNative: "Generate Pages", generatingNative: "Generating Pages...",
       generating: "Generating...", page: "Page {{num}}", titleLabel: "Title",
       description: "Description", batchGenerate: "Batch Generate Descriptions", export: "Export Descriptions", exportFull: "Export Outline & Descriptions", import: "Import", importExport: "Import/Export",
       pagesCompleted: "pages completed", noPages: "No pages yet",
@@ -117,7 +117,7 @@ const detailI18n = {
         exportSuccess: "Export successful", importSuccess: "Import successful", importFailed: "Import failed, please check file format", importEmpty: "No valid pages found in file",
         importContentEmpty: "Paste some content or upload a file first",
         importReadFailed: "Failed to read file, please try again",
-        loadingProject: "Loading project..."
+        loadingProject: "Loading project...", generateNativeFailed: "Native page generation failed"
       }
     }
   }
@@ -461,6 +461,11 @@ export const DetailEditor: React.FC = () => {
     }
   };
 
+  const handleNext = () => {
+    if (!projectId) return;
+    navigate(`/project/${projectId}/preview`);
+  };
+
   const handleRegeneratePage = async (pageId: string) => {
     if (!currentProject) return;
 
@@ -584,7 +589,7 @@ export const DetailEditor: React.FC = () => {
   const missingDescCount = currentProject.pages.filter(p => !p.description_content).length;
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-background-primary flex flex-col">
+    <div data-testid="detail-editor-workspace" className="h-full min-h-0 overflow-hidden bg-gray-50 dark:bg-background-primary flex flex-col">
       {/* 顶栏 */}
       <header className="bg-white dark:bg-background-secondary shadow-sm dark:shadow-background-primary/30 border-b border-gray-200 dark:border-border-primary px-3 md:px-6 py-2 md:py-3 flex-shrink-0">
         <div className="flex items-center justify-between gap-2 md:gap-4">
@@ -634,30 +639,6 @@ export const DetailEditor: React.FC = () => {
             />
           </div>
 
-          {/* 右侧：操作按钮 */}
-          <div className="flex items-center gap-1.5 md:gap-2 flex-shrink-0">
-            <Button
-              variant="secondary"
-              size="sm"
-              icon={<ArrowLeft size={16} className="md:w-[18px] md:h-[18px]" />}
-              onClick={() => navigate(`/project/${projectId}/outline`)}
-              disabled={isRenovationProcessing}
-              className="hidden md:inline-flex"
-            >
-              <span className="hidden lg:inline">{t('common.previous')}</span>
-            </Button>
-            <Button
-              variant="primary"
-              size="sm"
-              icon={<ArrowRight size={16} className="md:w-[18px] md:h-[18px]" />}
-              onClick={() => navigate(`/project/${projectId}/preview`)}
-              disabled={!hasAllDescriptions || isRenovationProcessing}
-              title={!hasAllDescriptions && !isRenovationProcessing ? t('detail.disabledNextTip', { count: missingDescCount }) : undefined}
-              className="text-xs md:text-sm"
-            >
-              <span className="hidden sm:inline">{t('detail.generateImages')}</span>
-            </Button>
-          </div>
         </div>
         
         {/* 移动端：AI 输入框 */}
@@ -674,7 +655,7 @@ export const DetailEditor: React.FC = () => {
       </header>
 
       {/* 操作栏 */}
-      <div className="bg-white dark:bg-background-secondary border-b border-gray-200 dark:border-border-primary px-3 md:px-6 py-3 md:py-4 flex-shrink-0">
+      <div className="bg-white dark:bg-background-secondary border-b border-gray-200 dark:border-border-primary px-3 md:px-6 py-2 flex-shrink-0">
         {isRenovationProcessing ? (
           <div className="max-w-xl mx-auto">
             <div className="flex items-center justify-between mb-1.5">
@@ -935,7 +916,7 @@ export const DetailEditor: React.FC = () => {
       </div>
 
       {/* 主内容区 */}
-      <main className="flex-1 p-3 md:p-6 overflow-y-auto min-h-0">
+      <main data-testid="detail-editor-scroll-region" className="flex-1 min-h-0 overflow-y-auto p-3 md:p-4">
         <div className="max-w-7xl mx-auto">
           <ReferenceFileList
             projectId={projectId}
@@ -1007,6 +988,29 @@ export const DetailEditor: React.FC = () => {
           )}
         </div>
       </main>
+      <footer data-testid="detail-editor-footer" className="flex flex-shrink-0 items-center justify-between border-t border-gray-200 bg-white px-4 py-2 dark:border-border-primary dark:bg-background-secondary">
+        <Button
+          variant="secondary"
+          size="sm"
+          icon={<ArrowLeft size={16} />}
+          onClick={() => navigate(`/project/${projectId}/outline`)}
+          disabled={isRenovationProcessing}
+        >
+          {t('common.previous')}
+        </Button>
+        <Button
+          variant="primary"
+          size="sm"
+          icon={<ArrowRight size={16} />}
+          onClick={() => void handleNext()}
+          disabled={!hasAllDescriptions || isRenovationProcessing}
+          title={!hasAllDescriptions && !isRenovationProcessing ? t('detail.disabledNextTip', { count: missingDescCount }) : undefined}
+        >
+          {currentProject.render_mode === 'native'
+            ? t('detail.generateNative')
+            : t('detail.generateImages')}
+        </Button>
+      </footer>
       <ToastContainer />
       {ConfirmDialog}
       <FilePreviewModal fileId={previewFileId} onClose={() => setPreviewFileId(null)} />

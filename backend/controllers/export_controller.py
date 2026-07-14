@@ -4,13 +4,17 @@ Export Controller - handles file export endpoints
 import logging
 import os
 import io
+import json
+import re
 import shutil
 import time
 import zipfile
+from datetime import datetime
 from pathlib import Path
 
 from flask import Blueprint, request, current_app
 from werkzeug.utils import secure_filename
+from PIL import Image
 from models import db, Project, Page, Task
 from utils import (
     error_response, not_found, bad_request, success_response,
@@ -49,6 +53,188 @@ def _resolve_exports_root(project_id):
     except ValueError:
         return None
     return exports_root
+
+
+def _get_native_export_task(project_id, task_id):
+    return Task.query.filter(
+        Task.id == task_id,
+        Task.project_id == project_id,
+        Task.task_type.in_(['EXPORT_NATIVE_PPTX', 'EXPORT_NATIVE_PDF', 'EXPORT_NATIVE_HTML']),
+    ).first()
+
+
+def _native_export_format(task):
+    return {
+        'EXPORT_NATIVE_PPTX': 'pptx',
+        'EXPORT_NATIVE_PDF': 'pdf',
+        'EXPORT_NATIVE_HTML': 'html',
+    }.get(task.task_type)
+
+
+def _safe_export_filename(raw_filename, fallback_filename, extension):
+    ext = f'.{extension.lstrip(".").lower()}'
+    source = raw_filename or fallback_filename
+    stem = Path(str(source)).stem.strip()
+    if not stem:
+        stem = Path(str(fallback_filename)).stem.strip() or 'export'
+    chars = []
+    for char in stem:
+        if char.isalnum() or char in '-_.()（）[]【】':
+            chars.append(char)
+        elif char.isspace():
+            chars.append('_')
+        else:
+            chars.append('_')
+    safe_stem = re.sub(r'_+', '_', ''.join(chars)).strip('._- ')[:80] or 'export'
+    return f'{safe_stem}{ext}'
+
+
+def _project_title_filename(project, extension, fallback_filename):
+    title = (project.project_title or '').strip()
+    if title:
+        return _safe_export_filename(None, f'{title}.{extension}', extension)
+    return _safe_export_filename(fallback_filename, fallback_filename, extension)
+
+
+@export_bp.post('/<project_id>/export/native-pptx')
+def create_native_pptx_export(project_id):
+    project = db.session.get(Project, project_id)
+    if not project:
+        return not_found('Project')
+    if project.render_mode != 'native':
+        return bad_request('只有原生可编辑项目可以使用原生导出')
+    if not Page.query.filter_by(project_id=project_id).count():
+        return bad_request('项目没有可导出的页面')
+
+    data = request.get_json(silent=True) or {}
+    export_format = data.get('format', 'pptx')
+    if export_format not in {'pptx', 'pdf', 'html'}:
+        return bad_request('format must be pptx, pdf, or html')
+    task = Task(project_id=project_id, task_type=f'EXPORT_NATIVE_{export_format.upper()}', status='PENDING')
+    task.set_progress({
+        'total': Page.query.filter_by(project_id=project_id).count(),
+        'completed': 0,
+        'percent': 0,
+        '_resume': {
+            'kind': 'native-pptx' if export_format == 'pptx' else 'native-export',
+            'format': export_format,
+            'kwargs': {},
+        },
+    })
+    db.session.add(task)
+    db.session.commit()
+    return success_response(task.to_dict(), status_code=202)
+
+
+@export_bp.put('/<project_id>/export/native-pptx/<task_id>/progress')
+def update_native_pptx_progress(project_id, task_id):
+    task = _get_native_export_task(project_id, task_id)
+    if not task:
+        return not_found('Task')
+    if task.status in {'COMPLETED', 'FAILED', 'PAUSED'}:
+        return bad_request('当前任务状态不能更新进度')
+
+    data = request.get_json(silent=True)
+    allowed = {'total', 'completed', 'percent', 'current_step', 'messages', 'warnings'}
+    if not isinstance(data, dict) or set(data) - allowed:
+        return bad_request('进度数据包含无效字段')
+    for key in ('total', 'completed', 'percent'):
+        if key in data and (not isinstance(data[key], int) or data[key] < 0):
+            return bad_request(f'{key} 必须是非负整数')
+    for key in ('messages', 'warnings'):
+        if key in data and (not isinstance(data[key], list) or any(not isinstance(item, str) for item in data[key])):
+            return bad_request(f'{key} 必须是文本数组')
+
+    resume = task.get_progress().get('_resume')
+    progress = {**task.get_progress(), **data}
+    if resume:
+        progress['_resume'] = resume
+    task.status = 'PROCESSING'
+    task.set_progress(progress)
+    db.session.commit()
+    return success_response(task.to_dict())
+
+
+@export_bp.post('/<project_id>/export/native-pptx/<task_id>/complete')
+def complete_native_pptx_export(project_id, task_id):
+    task = _get_native_export_task(project_id, task_id)
+    if not task:
+        return not_found('Task')
+    if task.status == 'PAUSED':
+        return bad_request('任务已暂停')
+
+    upload = request.files.get('file')
+    if not upload or not upload.filename:
+        return bad_request('缺少导出文件')
+    export_format = _native_export_format(task)
+    project = task.project
+    filename = _safe_export_filename(
+        request.form.get('filename'),
+        _project_title_filename(project, export_format, upload.filename),
+        export_format,
+    )
+    if not filename or Path(filename).suffix.lower() != f'.{export_format}':
+        return bad_request(f'文件必须是 {export_format.upper()}')
+
+    try:
+        report = json.loads(request.form.get('report', ''))
+    except json.JSONDecodeError:
+        return bad_request('质量报告不是有效 JSON')
+    if not isinstance(report, dict):
+        return bad_request('质量报告必须是对象')
+
+    max_bytes = int(current_app.config.get('MAX_NATIVE_EXPORT_UPLOAD_BYTES', 100 * 1024 * 1024))
+    payload = upload.read(max_bytes + 1)
+    if not payload or len(payload) > max_bytes:
+        return bad_request('导出文件为空或超过大小限制')
+    if export_format == 'pptx':
+        try:
+            with zipfile.ZipFile(io.BytesIO(payload)) as package:
+                names = set(package.namelist())
+        except (zipfile.BadZipFile, OSError):
+            return bad_request('PPTX 文件不是有效 ZIP 包')
+        if not {'[Content_Types].xml', 'ppt/presentation.xml'}.issubset(names):
+            return bad_request('PPTX 文件缺少必要结构')
+    elif export_format == 'pdf':
+        if not payload.startswith(b'%PDF-'):
+            return bad_request('PDF 文件签名无效')
+    else:
+        try:
+            html = payload.decode('utf-8')
+        except UnicodeDecodeError:
+            return bad_request('HTML 文件必须使用 UTF-8')
+        lowered = html.lower()
+        if '<html' not in lowered or 'class="slide' not in lowered:
+            return bad_request('HTML 文件缺少页面结构')
+        if any(value in lowered for value in ('/files/', 'http://', 'https://', 'file://')):
+            return bad_request('HTML 文件包含外部资源，不能离线使用')
+
+    exports_root = _resolve_exports_root(project_id)
+    if exports_root is None:
+        return bad_request('Invalid project ID')
+    exports_root.mkdir(parents=True, exist_ok=True)
+    output_path = exports_root / filename
+    temp_path = exports_root / f'.{task.id}.tmp'
+    try:
+        temp_path.write_bytes(payload)
+        temp_path.replace(output_path)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+    progress = task.get_progress()
+    progress.update({
+        'completed': progress.get('total', report.get('slideCount', 0)),
+        'percent': 100,
+        'current_step': '导出完成',
+        'filename': filename,
+        'download_url': f'/files/{project_id}/exports/{filename}',
+        'quality_report': report,
+    })
+    task.status = 'COMPLETED'
+    task.completed_at = datetime.utcnow()
+    task.set_progress(progress)
+    db.session.commit()
+    return success_response(task.to_dict())
 
 
 @export_bp.route('/<project_id>/exports', methods=['GET'])
@@ -425,9 +611,11 @@ def export_editable_pptx(project_id):
         
         # Get parameters from request body
         data = request.get_json() or {}
-        filename = data.get('filename', f'presentation_editable_{project_id}.pptx')
-        if not filename.endswith('.pptx'):
-            filename += '.pptx'
+        filename = _safe_export_filename(
+            data.get('filename'),
+            _project_title_filename(project, 'pptx', f'presentation_editable_{project_id}.pptx'),
+            'pptx',
+        )
         
         # 递归分析参数
         # max_depth 语义：1=只处理表层不递归，2=递归一层（处理图片/图表中的子元素）
@@ -516,6 +704,103 @@ def export_editable_pptx(project_id):
     except Exception as e:
         logger.exception("Error creating export task")
         return error_response('SERVER_ERROR', str(e), 500)
+
+
+@export_bp.post('/<project_id>/export/native-video')
+def export_native_video(project_id):
+    """Create a narration-video task from browser-rendered native slide frames."""
+    project = db.session.get(Project, project_id)
+    if not project:
+        return not_found('Project')
+    if project.render_mode != 'native':
+        return bad_request('只有原生可编辑项目可以使用原生视频导出')
+
+    try:
+        page_ids = json.loads(request.form.get('page_ids', '[]'))
+    except json.JSONDecodeError:
+        return bad_request('page_ids 必须是 JSON 数组')
+    if not isinstance(page_ids, list) or not page_ids or any(not isinstance(item, str) for item in page_ids):
+        return bad_request('page_ids 必须是非空文本数组')
+
+    pages = get_filtered_pages(project_id, page_ids)
+    if [page.id for page in pages] != page_ids:
+        return bad_request('页面顺序与项目不一致，请刷新后重试')
+    frames = request.files.getlist('frames')
+    if len(frames) != len(pages):
+        return bad_request('每一页必须上传一张视频帧')
+    try:
+        for frame in frames:
+            Image.open(frame.stream).verify()
+            frame.stream.seek(0)
+    except Exception:
+        return bad_request('视频帧必须是有效图片')
+
+    filename = _safe_export_filename(
+        request.form.get('filename'),
+        _project_title_filename(project, 'mp4', f'native_{project_id}.mp4'),
+        'mp4',
+    )
+
+    task = Task(project_id=project_id, task_type='EXPORT_VIDEO', status='PENDING')
+    db.session.add(task)
+    db.session.flush()
+    frames_dir = Path(current_app.config['UPLOAD_FOLDER']) / project_id / 'exports' / f'_native_video_{task.id}'
+    try:
+        frames_dir.mkdir(parents=True, exist_ok=True)
+        frame_paths = []
+        for index, frame in enumerate(frames):
+            frame_path = frames_dir / f'frame_{index:04d}.png'
+            frame.save(frame_path)
+            frame_paths.append(str(frame_path.resolve()))
+
+        from services.tts_video_service import get_default_voice
+        from services.task_manager import export_video_task, task_manager
+
+        language = current_app.config.get('OUTPUT_LANGUAGE', 'zh')
+        kwargs = {
+            'project_id': project_id,
+            'filename': filename,
+            'voice': get_default_voice(language, dict(current_app.config)),
+            'rate': current_app.config.get('TTS_DEFAULT_RATE', '+0%'),
+            'speed': 1.0,
+            'generate_narration': True,
+            'enable_ken_burns': False,
+            'include_no_image_pages': False,
+            'page_ids': page_ids,
+            'language': language,
+            'narration_config': normalize_narration_generation_config(
+                None,
+                fallback_topic=project.idea_prompt or '',
+            ),
+            'frame_paths': frame_paths,
+        }
+        task.set_progress({
+            'total': 100,
+            'completed': 0,
+            'failed': 0,
+            '_resume': {'kind': 'video', 'kwargs': kwargs},
+        })
+        db.session.commit()
+
+        task_manager.submit_task(
+            task.id,
+            export_video_task,
+            file_service=FileService(current_app.config['UPLOAD_FOLDER']),
+            app=current_app._get_current_object(),
+            **kwargs,
+        )
+        return success_response({'task_id': task.id})
+    except Exception as exc:
+        db.session.rollback()
+        persisted_task = db.session.get(Task, task.id)
+        if persisted_task:
+            persisted_task.status = 'FAILED'
+            persisted_task.error_message = str(exc)
+            persisted_task.completed_at = datetime.utcnow()
+            db.session.commit()
+        shutil.rmtree(frames_dir, ignore_errors=True)
+        logger.exception('Error creating native video export task')
+        return error_response('SERVER_ERROR', str(exc), 500)
 
 
 @export_bp.route('/<project_id>/export/video', methods=['POST'])

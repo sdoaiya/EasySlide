@@ -5,13 +5,14 @@ import { useT } from '@/hooks/useT';
 import type { Page } from '@/types';
 import { Button } from './Button';
 import { cn } from '@/utils';
+import { ExportQualityReport } from '@/components/export/ExportQualityReport';
 
 // Export 组件自包含翻译
 const exportI18n = {
   zh: {
     export: {
       tasks: "导出任务", inProgress: "{{count}} 进行中", clearHistory: "清除",
-      exportPptx: "PPTX", exportPdf: "PDF", exportEditablePptx: "可编辑 PPTX", exportImages: "图片", exportVideo: "讲解视频",
+      exportPptx: "PPTX", exportPdf: "PDF", exportEditablePptx: "可编辑 PPTX", exportNativePptx: "原生可编辑 PPTX", exportNativePdf: "原生 PDF", exportNativeHtml: "离线 HTML", exportImages: "图片", exportVideo: "讲解视频",
       allPages: "全部", pageRange: "第{{start}}-{{end}}页", singlePage: "第{{num}}页", pagesCount: "{{count}}页",
       warnings: "{{count}} 条警告", clickToView: "点击查看", warningsTitle: "导出警告",
       warningsCount: "导出警告 ({{count}} 条)", detailInfo: "详细信息",
@@ -19,6 +20,7 @@ const exportI18n = {
       moreItems: "... 还有 {{count}} 条", exportFailed: "导出失败", preparing: "准备中...",
       retry: "重试",
       pause: "暂停任务", resume: "继续任务", paused: "已暂停",
+      qualityReport: "查看质量报告",
       settingsTip: "可在「项目设置 → 导出设置」中调整配置或开启「返回半成品」选项",
       codexReconnectTip: "如果是 Codex 授权过期或连接中断，也可以前往设置重新连接 OpenAI 授权后再试",
     },
@@ -27,7 +29,7 @@ const exportI18n = {
   en: {
     export: {
       tasks: "Export Tasks", inProgress: "{{count}} in progress", clearHistory: "Clear",
-      exportPptx: "PPTX", exportPdf: "PDF", exportEditablePptx: "Editable PPTX", exportImages: "Images", exportVideo: "Narration Video",
+      exportPptx: "PPTX", exportPdf: "PDF", exportEditablePptx: "Editable PPTX", exportNativePptx: "Native editable PPTX", exportNativePdf: "Native PDF", exportNativeHtml: "Offline HTML", exportImages: "Images", exportVideo: "Narration Video",
       allPages: "All", pageRange: "Pages {{start}}-{{end}}", singlePage: "Page {{num}}", pagesCount: "{{count}} pages",
       warnings: "{{count}} warnings", clickToView: "Click to view", warningsTitle: "Export Warnings",
       warningsCount: "Export Warnings ({{count}})", detailInfo: "Details",
@@ -35,6 +37,7 @@ const exportI18n = {
       moreItems: "... {{count}} more", exportFailed: "Export Failed", preparing: "Preparing...",
       retry: "Retry",
       pause: "Pause task", resume: "Resume task", paused: "Paused",
+      qualityReport: "View quality report",
       settingsTip: "Adjust settings in \"Project Settings → Export Settings\" or enable \"Allow Partial Results\"",
       codexReconnectTip: "If Codex authorization expired or the connection was interrupted, reconnect OpenAI authorization in Settings and try again.",
     },
@@ -199,11 +202,15 @@ const TaskItem: React.FC<{
 }> = ({ task, pages, onRemove, onPause, onResume, onRetry }) => {
   const t = useT(exportI18n);
   const [showWarningsModal, setShowWarningsModal] = useState(false);
+  const [showQualityReport, setShowQualityReport] = useState(false);
   
   const taskTypeLabels: Record<ExportTaskType, string> = {
     'pptx': t('export.exportPptx'),
     'pdf': t('export.exportPdf'),
     'editable-pptx': t('export.exportEditablePptx'),
+    'native-pptx': t('export.exportNativePptx'),
+    'native-pdf': t('export.exportNativePdf'),
+    'native-html': t('export.exportNativeHtml'),
     'images': t('export.exportImages'),
     'video': t('export.exportVideo'),
   };
@@ -239,7 +246,7 @@ const TaskItem: React.FC<{
 
   const progressPercent = getProgressPercent();
   const isProcessing = task.status === 'PROCESSING' || task.status === 'RUNNING' || task.status === 'PENDING';
-  const isPausable = task.type === 'editable-pptx' || task.type === 'video';
+  const isPausable = task.type === 'editable-pptx' || task.type.startsWith('native-') || task.type === 'video';
   const showsProgress = isProcessing || task.status === 'PAUSED';
   
   const hasWarnings = task.status === 'COMPLETED' && task.progress?.warnings && task.progress.warnings.length > 0;
@@ -418,6 +425,17 @@ const TaskItem: React.FC<{
             {t('common.download')}
           </Button>
         )}
+
+        {task.status === 'COMPLETED' && task.progress?.quality_report && (
+          <button
+            type="button"
+            onClick={() => setShowQualityReport(true)}
+            className="rounded-md px-2 py-1 text-xs text-banana-dark hover:bg-banana-pale"
+            aria-label={t('export.qualityReport')}
+          >
+            {t('export.qualityReport')}
+          </button>
+        )}
         
         <button
           onClick={onRemove}
@@ -427,6 +445,9 @@ const TaskItem: React.FC<{
           <X size={14} />
         </button>
       </div>
+      {showQualityReport && task.progress?.quality_report && (
+        <ExportQualityReport report={task.progress.quality_report} onClose={() => setShowQualityReport(false)} />
+      )}
     </div>
   );
 };

@@ -1,5 +1,55 @@
-import { describe, expect, test } from 'vitest';
-import { parseMarkdownPages } from '@/utils/projectUtils';
+import { beforeEach, describe, expect, test } from 'vitest';
+import { getProjectRoute, parseMarkdownPages } from '@/utils/projectUtils';
+
+describe('getProjectRoute', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  const nativeProject = (overrides: Record<string, unknown> = {}) => ({
+    project_id: 'native-1',
+    render_mode: 'native',
+    status: 'DESCRIPTIONS_GENERATED',
+    pages: [{
+      page_id: 'page-1',
+      order_index: 0,
+      outline_content: { title: 'Title', points: [] },
+      description_content: { text: 'Description' },
+      status: 'DESCRIPTION_GENERATED',
+    }],
+    ...overrides,
+  } as any);
+
+  test('restores a native project with generated layouts to preview', () => {
+    const project = nativeProject({
+      pages: [{
+        page_id: 'page-1',
+        native_layout: 'PulseCover',
+        native_props: {},
+        status: 'NATIVE_GENERATED',
+      }],
+    });
+
+    expect(getProjectRoute(project)).toBe('/project/native-1/preview');
+  });
+
+  test('restores generated or generating native projects to preview', () => {
+    expect(getProjectRoute(nativeProject({ status: 'NATIVE_DECK_GENERATED' }))).toBe('/project/native-1/preview');
+    expect(getProjectRoute(nativeProject({
+      pages: [{ page_id: 'page-1', order_index: 0, status: 'GENERATING' }],
+    }))).toBe('/project/native-1/preview');
+  });
+
+  test('keeps a native project with descriptions in detail before generation starts', () => {
+    expect(getProjectRoute(nativeProject())).toBe('/project/native-1/detail');
+  });
+
+  test('restores a native project with a persisted generation task to preview before layouts land', () => {
+    localStorage.setItem('nativeDeckGenerationTask:native-1', 'task-1');
+
+    expect(getProjectRoute(nativeProject())).toBe('/project/native-1/preview');
+  });
+});
 
 describe('parseMarkdownPages', () => {
   test('imports sentence-style outline and required page text markers', () => {

@@ -4,6 +4,7 @@ const fs = require('fs');
 const { spawn } = require('child_process');
 const http = require('http');
 const { pathToFileURL } = require('url');
+const { downloadToFile } = require('./download');
 
 let mainWindow;
 let backendProcess;
@@ -174,17 +175,6 @@ function getAppIconPath() {
     : path.join(__dirname, 'resources', 'icon.png');
 }
 
-function getAvailablePath(dir, filename) {
-  const parsed = path.parse(filename || 'download');
-  let target = path.join(dir, filename || 'download');
-  let index = 1;
-  while (fs.existsSync(target)) {
-    target = path.join(dir, `${parsed.name} (${index})${parsed.ext}`);
-    index += 1;
-  }
-  return target;
-}
-
 function createWindow() {
   const iconPath = getAppIconPath();
 
@@ -314,20 +304,7 @@ ipcMain.handle('save-download', async (_event, url, filename) => {
   const suggestedName = filename || decodeURIComponent(path.basename(new URL(sourceUrl).pathname)) || 'download';
   const exportDir = getConfiguredExportDir();
   ensureDir(exportDir);
-  const filePath = getAvailablePath(exportDir, suggestedName);
-
-  const file = fs.createWriteStream(filePath);
-  await new Promise((resolve, reject) => {
-    http.get(sourceUrl, (response) => {
-      if (response.statusCode !== 200) {
-        reject(new Error(`Download failed: HTTP ${response.statusCode}`));
-        return;
-      }
-      response.pipe(file);
-      file.on('finish', () => file.close(resolve));
-    }).on('error', reject);
-  });
-  return filePath;
+  return downloadToFile(sourceUrl, exportDir, suggestedName);
 });
 ipcMain.handle('window-minimize', () => mainWindow?.minimize());
 ipcMain.handle('window-maximize', () => {

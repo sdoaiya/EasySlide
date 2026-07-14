@@ -55,9 +55,90 @@ class TestProjectCreate:
         
         assert response.status_code in [400, 422]
 
+    def test_create_project_defaults_to_image_mode(self, client):
+        response = client.post('/api/projects', json={
+            'creation_type': 'idea',
+            'idea_prompt': '测试默认模式'
+        })
+
+        created = assert_success_response(response, 201)['data']
+        project = assert_success_response(
+            client.get(f"/api/projects/{created['project_id']}")
+        )['data']
+        assert project['render_mode'] == 'image'
+
+    def test_create_native_project_defaults_to_dashiai_theme(self, client):
+        response = client.post('/api/projects', json={
+            'creation_type': 'idea',
+            'idea_prompt': '测试原生模式',
+            'render_mode': 'native'
+        })
+
+        created = assert_success_response(response, 201)['data']
+        project = assert_success_response(
+            client.get(f"/api/projects/{created['project_id']}")
+        )['data']
+        assert project['render_mode'] == 'native'
+        assert project['native_theme'] == 'theme01'
+
+    def test_create_project_rejects_invalid_render_mode(self, client):
+        response = client.post('/api/projects', json={
+            'creation_type': 'idea',
+            'idea_prompt': '测试非法模式',
+            'render_mode': 'editable'
+        })
+
+        data = assert_error_response(response, 400)
+        assert data['error']['message'] == 'Invalid render_mode'
+
+    def test_update_native_image_settings(self, client):
+        created = assert_success_response(client.post('/api/projects', json={
+            'creation_type': 'idea',
+            'idea_prompt': '原生配图设置',
+            'render_mode': 'native',
+        }), 201)['data']
+
+        response = client.put(f"/api/projects/{created['project_id']}", json={
+            'native_image_settings': {
+                'density': 'custom',
+                'style': 'custom',
+                'custom_prompt': '水彩质感，留出标题空间',
+                'custom_counts': {'page-1': 2},
+            },
+        })
+
+        settings = assert_success_response(response)['data']['native_image_settings']
+        assert settings == {
+            'density': 'custom',
+            'style': 'custom',
+            'custom_prompt': '水彩质感，留出标题空间',
+            'custom_counts': {'page-1': 2},
+        }
+
+    def test_rejects_invalid_native_image_settings(self, client):
+        created = assert_success_response(client.post('/api/projects', json={
+            'creation_type': 'idea',
+            'idea_prompt': '原生配图设置',
+            'render_mode': 'native',
+        }), 201)['data']
+
+        response = client.put(f"/api/projects/{created['project_id']}", json={
+            'native_image_settings': {'density': 'everywhere', 'style': 'theme', 'custom_prompt': ''},
+        })
+
+        assert response.status_code == 400
+
 
 class TestProjectGet:
     """项目获取测试"""
+
+    def test_legacy_project_without_render_mode_defaults_to_image(self):
+        from models import Project
+
+        project = Project(idea_prompt='旧项目')
+        project.render_mode = None
+
+        assert project.to_dict()['render_mode'] == 'image'
     
     def test_get_project_success(self, client, sample_project):
         """测试获取项目成功"""
@@ -408,6 +489,16 @@ class TestProjectUpdate:
 
         data = assert_error_response(response, 400)
         assert data['error']['message'] == f'{field} must be a boolean'
+
+    def test_update_project_rejects_render_mode_switch(self, client, sample_project):
+        project_id = sample_project['project_id']
+
+        response = client.put(f'/api/projects/{project_id}', json={
+            'render_mode': 'native'
+        })
+
+        data = assert_error_response(response, 400)
+        assert data['error']['message'] == 'render_mode cannot be changed after project creation'
 
 
 class TestProjectDelete:

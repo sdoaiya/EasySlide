@@ -186,10 +186,10 @@ export const History: React.FC = () => {
       localStorage.setItem('currentProjectId', projectId);
       
       // 同步项目数据
-      await syncProject(projectId);
+      const syncedProject = await syncProject(projectId);
       
       // 根据项目状态跳转到不同页面
-      const route = getProjectRoute(project);
+      const route = getProjectRoute(syncedProject || project);
       navigate(route, { state: { from: 'history' } });
     } catch (err: any) {
       console.error('打开项目失败:', err);

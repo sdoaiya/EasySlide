@@ -28,4 +28,7 @@ export { AccessCodeGuard } from './AccessCodeGuard';
 export { TextStyleSelector } from './TextStyleSelector';
 export { Pagination } from './Pagination';
 export { DesktopTitleBar } from './DesktopTitleBar';
+export { SegmentedControl } from './SegmentedControl';
+export { WorkspaceShell } from '../workspace/WorkspaceShell';
+export { WorkspaceStatusBar } from '../workspace/WorkspaceStatusBar';
 export { UpdateChecker } from './UpdateChecker';

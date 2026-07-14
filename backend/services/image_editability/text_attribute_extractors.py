@@ -8,6 +8,7 @@
 - TextAttributeExtractorRegistry: 提取器注册表
 """
 import logging
+import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, asdict
 from typing import Dict, Any, List, Optional, Tuple, Union
@@ -75,6 +76,15 @@ class TextStyleResult:
     """
     # 字体颜色 RGB (0-255) - 默认颜色，用于整体颜色或兜底
     font_color_rgb: Tuple[int, int, int] = (0, 0, 0)
+
+    # 精确字体家族名称（直接写入 PPTX，供 WPS 自动匹配/下载字体）
+    font_family: Optional[str] = None
+
+    # 字体视觉特效：渐变、描边、阴影、发光、透明度
+    font_effects: Dict[str, Any] = field(default_factory=dict)
+
+    # 字符间距（磅）
+    character_spacing_pt: Optional[float] = None
     
     # 带颜色的文字片段列表 - 支持一行文字多种颜色
     # 如果有值，渲染时优先使用这个，文字内容也以这里的为准
@@ -362,6 +372,22 @@ class CaptionModelTextAttributeExtractor(TextAttributeExtractor):
             return (r, g, b)
         except ValueError:
             return (0, 0, 0)
+
+    @staticmethod
+    def _parse_font_family(value: Any) -> Optional[str]:
+        return (value.strip() or None) if isinstance(value, str) else None
+
+    @staticmethod
+    def _parse_font_effects(value: Any) -> Dict[str, Any]:
+        return dict(value) if isinstance(value, dict) else {}
+
+    @staticmethod
+    def _parse_character_spacing(value: Any) -> Optional[float]:
+        try:
+            spacing = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return spacing if math.isfinite(spacing) else None
     
     def _parse_result(self, result_json: Dict[str, Any]) -> TextStyleResult:
         """
@@ -414,6 +440,9 @@ class CaptionModelTextAttributeExtractor(TextAttributeExtractor):
             
             return TextStyleResult(
                 font_color_rgb=font_color_rgb,
+                font_family=self._parse_font_family(result_json.get('font_family')),
+                font_effects=self._parse_font_effects(result_json.get('font_effects')),
+                character_spacing_pt=self._parse_character_spacing(result_json.get('character_spacing_pt')),
                 colored_segments=colored_segments,
                 is_bold=is_bold,
                 is_italic=is_italic,
@@ -570,6 +599,9 @@ class CaptionModelTextAttributeExtractor(TextAttributeExtractor):
                 
                 results[element_id] = TextStyleResult(
                     font_color_rgb=font_color_rgb,
+                    font_family=self._parse_font_family(item.get('font_family')),
+                    font_effects=self._parse_font_effects(item.get('font_effects')),
+                    character_spacing_pt=self._parse_character_spacing(item.get('character_spacing_pt')),
                     is_bold=is_bold,
                     is_italic=is_italic,
                     is_underline=is_underline,

@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { X, FileText, Settings as SettingsIcon, Download, Sparkles, AlertTriangle, HelpCircle } from 'lucide-react';
+import { X, FileText, Settings as SettingsIcon, Download, Sparkles, HelpCircle } from 'lucide-react';
 import { Button, Textarea } from '@/components/shared';
 import { useT } from '@/hooks/useT';
 import { Settings } from '@/pages/Settings';
-import type { ExportExtractorMethod, ExportInpaintMethod } from '@/types';
+import { useProjectStore } from '@/store/useProjectStore';
+import type { ExportExtractorMethod, ExportInpaintMethod, RenderMode } from '@/types';
 import { ASPECT_RATIO_OPTIONS } from '@/config/aspectRatio';
 
 // ProjectSettings 组件自包含翻译
@@ -80,6 +81,7 @@ const projectSettingsI18n = {
 
 interface ProjectSettingsModalProps {
   isOpen: boolean;
+  renderMode?: RenderMode;
   onClose: () => void;
   extraRequirements: string;
   templateStyle: string;
@@ -110,6 +112,7 @@ type SettingsTab = 'project' | 'global' | 'export';
 
 export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
   isOpen,
+  renderMode,
   onClose,
   extraRequirements,
   templateStyle,
@@ -136,6 +139,8 @@ export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
   hasImages = false,
 }) => {
   const t = useT(projectSettingsI18n);
+  const projectRenderMode = useProjectStore((state) => state.currentProject?.render_mode ?? 'image');
+  const effectiveRenderMode = renderMode ?? projectRenderMode;
   const [activeTab, setActiveTab] = useState<SettingsTab>('project');
 
   const EXTRACTOR_METHOD_OPTIONS: { value: ExportExtractorMethod; labelKey: string; descKey: string }[] = [
@@ -153,9 +158,14 @@ export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-      <div className="bg-white dark:bg-background-secondary rounded-xl shadow-2xl w-full max-w-5xl h-[90vh] flex flex-col overflow-hidden">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="project-settings-title"
+        className="bg-white dark:bg-background-secondary rounded-xl shadow-2xl w-full max-w-5xl h-[min(760px,calc(100vh-2rem))] flex flex-col overflow-hidden"
+      >
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-border-primary flex-shrink-0">
-          <h2 className="text-xl font-bold text-gray-900 dark:text-foreground-primary">{t('projectSettings.title')}</h2>
+          <h2 id="project-settings-title" className="text-xl font-bold text-gray-900 dark:text-foreground-primary">{t('projectSettings.title')}</h2>
           <button
             onClick={onClose}
             className="p-2 hover:bg-gray-100 dark:hover:bg-background-hover rounded-lg transition-colors"
@@ -204,7 +214,7 @@ export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
             </nav>
           </aside>
 
-          <div className="flex-1 overflow-y-auto p-6">
+          <div data-testid="project-settings-scroll" className="flex-1 overflow-y-auto p-6">
             {activeTab === 'project' ? (
               <div className="max-w-3xl space-y-6">
                 <div>
@@ -321,19 +331,16 @@ export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
               </div>
             ) : activeTab === 'export' ? (
               <div className="max-w-3xl space-y-6">
-                <div>
-                  <h3 className="text-lg font-semibold text-gray-900 dark:text-foreground-primary mb-4">{t('projectSettings.editablePptxExport')}</h3>
-                  <p className="text-sm text-gray-600 dark:text-foreground-tertiary mb-6">
-                    {t('projectSettings.editablePptxExportDesc')}
-                  </p>
-                </div>
+                <h3
+                  className="text-lg font-semibold text-gray-900 dark:text-foreground-primary"
+                  title={t('projectSettings.editablePptxExportDesc')}
+                >
+                  {t('projectSettings.editablePptxExport')}
+                </h3>
 
-                <div className="pb-6 border-b border-gray-200 dark:border-border-primary space-y-4">
+                {effectiveRenderMode === 'image' && <div className="pb-6 border-b border-gray-200 dark:border-border-primary space-y-4">
                   <div>
-                    <h4 className="text-base font-semibold text-gray-900 dark:text-foreground-primary mb-2">{t('projectSettings.extractorMethod')}</h4>
-                    <p className="text-sm text-gray-600 dark:text-foreground-tertiary">
-                      {t('projectSettings.extractorMethodDesc')}
-                    </p>
+                    <h4 className="text-base font-semibold text-gray-900 dark:text-foreground-primary" title={t('projectSettings.extractorMethodDesc')}>{t('projectSettings.extractorMethod')}</h4>
                   </div>
                   <div className="space-y-3">
                     {EXTRACTOR_METHOD_OPTIONS.map((option) => (
@@ -351,23 +358,21 @@ export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
                           value={option.value}
                           checked={exportExtractorMethod === option.value}
                           onChange={(e) => onExportExtractorMethodChange?.(e.target.value as ExportExtractorMethod)}
+                          aria-label={t(option.labelKey)}
+                          title={t(option.descKey)}
                           className="mt-1 w-4 h-4 text-cyan-600 focus:ring-cyan-500"
                         />
                         <div className="flex-1">
                           <div className="font-medium text-gray-900 dark:text-foreground-primary">{t(option.labelKey)}</div>
-                          <div className="text-sm text-gray-600 dark:text-foreground-tertiary mt-1">{t(option.descKey)}</div>
                         </div>
                       </label>
                     ))}
                   </div>
-                </div>
+                </div>}
 
-                <div className="pb-6 border-b border-gray-200 dark:border-border-primary space-y-4">
+                {effectiveRenderMode === 'image' && <div className="pb-6 border-b border-gray-200 dark:border-border-primary space-y-4">
                   <div>
-                    <h4 className="text-base font-semibold text-gray-900 dark:text-foreground-primary mb-2">{t('projectSettings.backgroundMethod')}</h4>
-                    <p className="text-sm text-gray-600 dark:text-foreground-tertiary">
-                      {t('projectSettings.backgroundMethodDesc')}
-                    </p>
+                    <h4 className="text-base font-semibold text-gray-900 dark:text-foreground-primary" title={t('projectSettings.backgroundMethodDesc')}>{t('projectSettings.backgroundMethod')}</h4>
                   </div>
                   <div className="space-y-3">
                     {INPAINT_METHOD_OPTIONS.map((option) => (
@@ -385,6 +390,8 @@ export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
                           value={option.value}
                           checked={exportInpaintMethod === option.value}
                           onChange={(e) => onExportInpaintMethodChange?.(e.target.value as ExportInpaintMethod)}
+                          aria-label={t(option.labelKey)}
+                          title={t(option.descKey)}
                           className="mt-1 w-4 h-4 text-cyan-600 focus:ring-cyan-500"
                         />
                         <div className="flex-1">
@@ -397,73 +404,41 @@ export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
                               </span>
                             )}
                           </div>
-                          <div className="text-sm text-gray-600 dark:text-foreground-tertiary mt-1">{t(option.descKey)}</div>
                         </div>
                       </label>
                     ))}
                   </div>
-                  <div className="pl-4 border-l-4 border-sky-300 dark:border-sky-600 flex items-start gap-2">
-                    <AlertTriangle size={16} className="text-sky-600 dark:text-sky-400 flex-shrink-0 mt-0.5" />
-                    <p className="text-xs text-gray-700 dark:text-foreground-secondary">
-                      <strong>{t('projectSettings.tip')}：</strong>{t('projectSettings.costTip')}
-                    </p>
-                  </div>
-                </div>
+                </div>}
 
                 <div className="space-y-4">
-                  <div>
-                    <h4 className="text-base font-semibold text-gray-900 dark:text-foreground-primary mb-2">{t('projectSettings.errorHandling')}</h4>
-                    <p className="text-sm text-gray-600 dark:text-foreground-tertiary">
-                      {t('projectSettings.errorHandlingDesc')}
-                    </p>
-                  </div>
-                  <label className="flex items-start gap-3 cursor-pointer">
+                  <h4 className="text-base font-semibold text-gray-900 dark:text-foreground-primary" title={t('projectSettings.errorHandlingDesc')}>{t('projectSettings.errorHandling')}</h4>
+                  {effectiveRenderMode === 'image' && <label className="flex items-start gap-3 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={exportHighFidelityEditable}
                       onChange={(e) => onExportHighFidelityEditableChange?.(e.target.checked)}
+                      aria-label={t('projectSettings.highFidelityEditable')}
+                      title={t('projectSettings.highFidelityEditableDesc')}
                       className="mt-1 w-4 h-4 text-cyan-600 focus:ring-cyan-500 rounded"
                     />
                     <div className="flex-1">
                       <div className="font-medium text-gray-900 dark:text-foreground-primary">{t('projectSettings.highFidelityEditable')}</div>
-                      <div className="text-sm text-gray-600 dark:text-foreground-tertiary mt-1">
-                        {t('projectSettings.highFidelityEditableDesc')}
-                      </div>
                     </div>
-                  </label>
+                  </label>}
                   <label className="flex items-start gap-3 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={exportAllowPartial}
                       onChange={(e) => onExportAllowPartialChange?.(e.target.checked)}
+                      aria-label={t('projectSettings.allowPartialResult')}
+                      title={`${t('projectSettings.allowPartialResultDesc')} ${t('projectSettings.allowPartialResultWarning')}`}
                       className="mt-1 w-4 h-4 text-red-500 focus:ring-red-500 rounded"
                     />
                     <div className="flex-1">
                       <div className="font-medium text-gray-900 dark:text-foreground-primary">{t('projectSettings.allowPartialResult')}</div>
-                      <div className="text-sm text-gray-600 dark:text-foreground-tertiary mt-1">
-                        {t('projectSettings.allowPartialResultDesc')}
-                      </div>
                     </div>
                   </label>
-                  <div className="pl-4 border-l-4 border-red-300 dark:border-red-600 flex items-start gap-2">
-                    <AlertTriangle size={16} className="text-red-700 dark:text-red-400 flex-shrink-0 mt-0.5" />
-                    <p className="text-xs text-gray-700 dark:text-foreground-secondary">
-                      <strong>{t('common.warning')}：</strong>{t('projectSettings.allowPartialResultWarning')}
-                    </p>
-                  </div>
                 </div>
-
-                {onSaveExportSettings && (
-                  <div className="flex justify-end pt-4">
-                    <Button
-                      variant="primary"
-                      onClick={onSaveExportSettings}
-                      disabled={isSavingExportSettings}
-                    >
-                      {isSavingExportSettings ? t('shared.saving') : t('projectSettings.saveExportSettings')}
-                    </Button>
-                  </div>
-                )}
               </div>
             ) : (
               <div className="max-w-4xl">
@@ -478,6 +453,13 @@ export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
             )}
           </div>
         </div>
+        {activeTab === 'export' && onSaveExportSettings && (
+          <div className="flex flex-shrink-0 justify-end border-t border-gray-200 px-6 py-3 dark:border-border-primary">
+            <Button variant="primary" onClick={onSaveExportSettings} disabled={isSavingExportSettings}>
+              {isSavingExportSettings ? t('shared.saving') : t('projectSettings.saveExportSettings')}
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -1,17 +1,18 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Sparkles, FileText, FileEdit, ImagePlus, Paperclip, Palette, Lightbulb, Search, Settings, FolderOpen, HelpCircle, Sun, Moon, Globe, Monitor, ChevronDown, Upload, RefreshCw, Home as HomeIcon, LayoutDashboard, Loader2 } from 'lucide-react';
+import { Sparkles, FileText, FileEdit, ImagePlus, Paperclip, Palette, Lightbulb, Search, Settings, FolderOpen, HelpCircle, Sun, Moon, Globe, Monitor, ChevronDown, Upload, RefreshCw, Home as HomeIcon, LayoutDashboard, Loader2, Check } from 'lucide-react';
 import { Button, Card, useToast, MaterialGeneratorModal, MaterialCenterModal, MaterialSelector, ReferenceFileList, ReferenceFileSelector, FilePreviewModal, TextStyleSelector } from '@/components/shared';
 import { MarkdownTextarea, type MarkdownTextareaRef } from '@/components/shared/MarkdownTextarea';
 import { TemplateSelector, getTemplateFile } from '@/components/shared/TemplateSelector';
 import { listUserTemplates, type UserTemplate, uploadReferenceFile, type ReferenceFile, associateFileToProject, triggerFileParse, associateMaterialsToProject, createPptRenovationProject, extractStyleFromImage } from '@/api/endpoints';
 import { getStaticAssetUrl } from '@/api/client';
+import { NativeThemePicker } from '@/components/native-deck/NativeThemePicker';
 import { useProjectStore } from '@/store/useProjectStore';
 import { devLog } from '@/utils/logger';
 import { useTheme } from '@/hooks/useTheme';
 import { useImagePaste, buildMaterialsMarkdown } from '@/hooks/useImagePaste';
-import type { Material } from '@/types';
+import type { Material, RenderMode } from '@/types';
 import { useT } from '@/hooks/useT';
 import { ASPECT_RATIO_OPTIONS } from '@/config/aspectRatio';
 
@@ -47,6 +48,13 @@ const homeI18n = {
         outline: '大纲生成',
         description: '描述生成',
         ppt_renovation: 'PPT 翻新',
+      },
+      renderMode: {
+        label: '生成模式',
+        image: '图片生成',
+        native: '原生可编辑',
+        imageDescription: '生成高质量图片页面，可导出 PDF / PPTX。',
+        nativeDescription: '生成可编辑页面，导出不依赖版面解析服务。',
       },
       tabDescriptions: {
         idea: '输入你的想法，AI 将为你生成完整的 PPT',
@@ -144,6 +152,13 @@ const homeI18n = {
         description: 'Description',
         ppt_renovation: 'PPT Renovation',
       },
+      renderMode: {
+        label: 'Generation mode',
+        image: 'Image generation',
+        native: 'Native editable',
+        imageDescription: 'Generate image-based slides for PDF / PPTX export.',
+        nativeDescription: 'Generate editable slides without layout parsing services.',
+      },
       tabDescriptions: {
         idea: 'Enter your idea, AI will generate a complete PPT for you',
         outline: 'Have an outline? Paste it directly, AI will split it into a structured outline',
@@ -227,6 +242,8 @@ export const Home: React.FC = () => {
   const { show, ToastContainer } = useToast();
   
   const [activeTab, setActiveTab] = useState<CreationType>('idea');
+  const [renderMode, setRenderMode] = useState<RenderMode>('image');
+  const [nativeTheme, setNativeTheme] = useState('theme01');
   const [content, setContent] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState<File | null>(null);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
@@ -676,7 +693,7 @@ export const Home: React.FC = () => {
         .filter(f => f.parse_status === 'completed')
         .map(f => f.id);
 
-      await initializeProject(activeTab as 'idea' | 'outline' | 'description', content, templateFile || undefined, styleDesc, refFileIds.length > 0 ? refFileIds : undefined, aspectRatio);
+      await initializeProject(activeTab as 'idea' | 'outline' | 'description', content, templateFile || undefined, styleDesc, refFileIds.length > 0 ? refFileIds : undefined, aspectRatio, renderMode, nativeTheme);
       
       // 根据类型跳转到不同页面
       const projectId = localStorage.getItem('currentProjectId');
@@ -970,9 +987,42 @@ export const Home: React.FC = () => {
                 </button>
               );
             })}
-          </div>
+            </div>
 
-          {/* 描述 */}
+            {activeTab !== 'ppt_renovation' && (
+              <div className="mb-4 space-y-4">
+                <div role="radiogroup" aria-label={t('home.renderMode.label')} className="grid gap-3 sm:grid-cols-2">
+                  {([
+                    { value: 'image', label: t('home.renderMode.image'), description: t('home.renderMode.imageDescription'), icon: ImagePlus },
+                    { value: 'native', label: t('home.renderMode.native'), description: t('home.renderMode.nativeDescription'), icon: FileEdit },
+                  ] as const).map((option) => {
+                    const selected = renderMode === option.value;
+                    const Icon = option.icon;
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        role="radio"
+                        aria-checked={selected}
+                        aria-label={option.label}
+                        disabled={isSubmitting || isGlobalLoading}
+                        onClick={() => setRenderMode(option.value)}
+                        className={`flex min-h-24 items-start gap-3 rounded-md border-2 p-4 text-left transition-colors focus:outline-none focus:ring-2 focus:ring-cyan-500 disabled:cursor-not-allowed disabled:opacity-50 ${selected ? 'border-cyan-500 bg-cyan-50/70 dark:border-cyan-400 dark:bg-cyan-950/20' : 'border-slate-200 bg-white hover:border-cyan-300 dark:border-border-primary dark:bg-background-elevated'}`}
+                      >
+                        <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-md ${selected ? 'bg-cyan-600 text-white' : 'bg-slate-100 text-slate-600 dark:bg-background-tertiary dark:text-foreground-secondary'}`}><Icon size={20} aria-hidden="true" /></span>
+                        <span className="min-w-0 flex-1">
+                          <span className="flex items-center justify-between gap-2 text-sm font-semibold text-slate-900 dark:text-foreground-primary">{option.label}{selected && <Check size={18} aria-hidden="true" className="shrink-0 text-cyan-600 dark:text-cyan-300" />}</span>
+                          <span className="mt-1 block text-xs leading-5 text-slate-600 dark:text-foreground-secondary">{option.description}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {renderMode === 'native' && <NativeThemePicker value={nativeTheme} onChange={setNativeTheme} disabled={isSubmitting || isGlobalLoading} />}
+              </div>
+            )}
+
+            {/* 描述 */}
           <div className="mb-4 rounded-full border border-slate-200 bg-white/90 px-4 py-3 text-sm text-slate-600 shadow-sm dark:border-border-primary dark:bg-background-tertiary dark:text-foreground-secondary md:mb-5">
             <div className="flex flex-wrap items-center gap-2">
               <Lightbulb size={16} className="shrink-0 text-cyan-600 dark:text-cyan-300" />
@@ -1093,7 +1143,7 @@ export const Home: React.FC = () => {
               onDocumentFiles={handleDocumentFiles}
               onSelectFromLibrary={() => setIsMaterialSelectorOpen(true)}
               rows={activeTab === 'idea' ? 4 : 8}
-              className="rounded-[20px] border-2 border-slate-200 bg-white text-sm shadow-sm transition-colors duration-200 focus-within:border-cyan-400 dark:border-border-primary dark:bg-background-tertiary dark:text-white dark:focus-within:border-cyan-300 md:text-base"
+              className="rounded-[20px] border border-slate-200 bg-white text-sm shadow-sm transition-colors duration-200 focus-within:!border-cyan-500 focus-within:!ring-0 [&_[contenteditable]:focus-visible]:!outline-none dark:border-border-primary dark:bg-background-tertiary dark:text-white md:text-base"
               toolbarLeft={
                 <div className="flex items-center gap-1">
                   <button
@@ -1175,7 +1225,7 @@ export const Home: React.FC = () => {
             showToast={show}
           />
 
-          <div className="mb-6 md:mb-8 pt-4 border-t border-gray-100 dark:border-border-primary">
+          {renderMode === 'image' ? <div className="mb-6 md:mb-8 pt-4 border-t border-gray-100 dark:border-border-primary">
             <div className="flex flex-wrap items-center justify-between gap-3 mb-3 md:mb-4">
               <div className="flex items-center gap-2">
                 <Palette size={18} className="text-cyan-600 dark:text-cyan-300 flex-shrink-0" />
@@ -1240,7 +1290,15 @@ export const Home: React.FC = () => {
                 projectId={currentProjectId}
               />
             )}
-          </div>
+          </div> : (
+            <div className="mb-6 md:mb-8 pt-4 border-t border-gray-100 dark:border-border-primary">
+              <div className="mb-3 flex items-center gap-2">
+                <Palette size={18} className="text-cyan-600 dark:text-cyan-300 flex-shrink-0" />
+                <h3 className="text-base md:text-lg font-semibold text-gray-900 dark:text-white">文字描述风格</h3>
+              </div>
+              <TextStyleSelector value={templateStyle} onChange={setTemplateStyle} onToast={show} />
+            </div>
+          )}
 
         </Card>
         )}

@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
 import { useProjectStore } from '@/store/useProjectStore'
+import * as api from '@/api/endpoints'
 
 // Mock API模块
 vi.mock('@/api/endpoints', () => ({
@@ -46,6 +47,18 @@ describe('useProjectStore', () => {
   })
 
   describe('基础Setters', () => {
+    it('returns the latest normalized project when syncing', async () => {
+      vi.mocked(api.getProject).mockResolvedValue({
+        data: { project_id: 'native-1', status: 'NATIVE_DECK_GENERATED', pages: [] },
+      } as any)
+      const { result } = renderHook(() => useProjectStore())
+
+      const project = await act(() => result.current.syncProject('native-1'))
+
+      expect(project?.id).toBe('native-1')
+      expect(result.current.currentProject).toEqual(project)
+    })
+
     it('should set current project correctly', () => {
       const { result } = renderHook(() => useProjectStore())
       const mockProject = { 

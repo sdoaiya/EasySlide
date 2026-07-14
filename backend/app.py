@@ -38,7 +38,7 @@ from controllers.material_controller import material_bp, material_global_bp
 from controllers.reference_file_controller import reference_file_bp
 from controllers.settings_controller import settings_bp
 from controllers.openai_oauth_controller import openai_oauth_bp
-from controllers import project_bp, page_bp, template_bp, user_template_bp, user_style_template_bp, export_bp, file_bp, style_bp
+from controllers import project_bp, page_bp, template_bp, user_template_bp, user_style_template_bp, export_bp, file_bp, style_bp, native_deck_bp
 
 
 # Enable SQLite WAL mode for all connections
@@ -155,6 +155,7 @@ def create_app():
     app.register_blueprint(settings_bp)
     app.register_blueprint(openai_oauth_bp)
     app.register_blueprint(style_bp)
+    app.register_blueprint(native_deck_bp)
 
     with app.app_context():
         db.create_all()
@@ -242,7 +243,10 @@ def _pause_interrupted_export_tasks():
     from models import Task
 
     tasks = Task.query.filter(
-        Task.task_type.in_(['EXPORT_EDITABLE_PPTX', 'EXPORT_VIDEO']),
+        Task.task_type.in_([
+            'EXPORT_EDITABLE_PPTX', 'EXPORT_NATIVE_PPTX', 'EXPORT_NATIVE_PDF',
+            'EXPORT_NATIVE_HTML', 'EXPORT_VIDEO',
+        ]),
         Task.status.in_(['PENDING', 'PROCESSING', 'RUNNING']),
     ).all()
     for task in tasks:
@@ -262,6 +266,9 @@ def _ensure_desktop_sqlite_schema(app):
             'extra_requirements': 'TEXT',
             'outline_requirements': 'TEXT',
             'description_requirements': 'TEXT',
+            'render_mode': "VARCHAR(20) NOT NULL DEFAULT 'image'",
+            'native_theme': 'VARCHAR(100)',
+            'native_image_settings': 'TEXT',
             'export_extractor_method': "VARCHAR(50) DEFAULT 'hybrid'",
             'export_inpaint_method': "VARCHAR(50) DEFAULT 'hybrid'",
             'export_allow_partial': 'BOOLEAN DEFAULT 0',
@@ -273,6 +280,8 @@ def _ensure_desktop_sqlite_schema(app):
             'part': 'VARCHAR(200)',
             'cached_image_path': 'VARCHAR(500)',
             'narration_text': 'TEXT',
+            'native_layout': 'VARCHAR(100)',
+            'native_props': 'TEXT',
         },
         'settings': {
             'text_model': 'VARCHAR(100)',

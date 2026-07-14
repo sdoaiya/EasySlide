@@ -13,11 +13,13 @@ describe('ExportTasksPanel downloads', () => {
 
   it('saves desktop downloads to the configured export directory', () => {
     const main = source('../desktop/main.js');
+    const builder = source('../desktop/electron-builder.yml');
 
     expect(main).toContain("ipcMain.handle('get-export-dir'");
     expect(main).toContain("ipcMain.handle('choose-export-dir'");
     expect(main).toContain('getConfiguredExportDir()');
     expect(main).not.toContain('dialog.showSaveDialog');
+    expect(builder).toContain('  - download.js');
   });
 
   it('shows export directory controls in settings', () => {

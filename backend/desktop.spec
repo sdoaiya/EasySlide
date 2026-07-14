@@ -53,6 +53,7 @@ a = Analysis(
         (str(BACKEND_DIR / 'fonts'), 'fonts'),
         (str(BACKEND_DIR / 'migrations'), 'migrations'),
         (str(BACKEND_DIR.parent / 'assets'), 'assets'),
+        (str(BACKEND_DIR.parent / 'shared' / 'native-deck'), 'shared/native-deck'),
     ],
     hiddenimports=hiddenimports,
     hookspath=[],

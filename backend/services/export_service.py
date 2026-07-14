@@ -132,7 +132,8 @@ class ExportWarnings:
     
     def add_warning(self, message: str):
         """添加其他警告"""
-        self.other_warnings.append(message)
+        if message not in self.other_warnings:
+            self.other_warnings.append(message)
     
     def has_warnings(self) -> bool:
         """是否有警告"""
@@ -1257,6 +1258,13 @@ class ExportService:
                 # 混合：颜色用单个识别（包括 colored_segments），布局用全局识别
                 merged_results[element_id] = TextStyleResult(
                     font_color_rgb=local_style.font_color_rgb,  # 单个识别的颜色
+                    font_family=global_style.font_family or local_style.font_family,
+                    font_effects=global_style.font_effects or local_style.font_effects,
+                    character_spacing_pt=(
+                        global_style.character_spacing_pt
+                        if global_style.character_spacing_pt is not None
+                        else local_style.character_spacing_pt
+                    ),
                     colored_segments=local_style.colored_segments,  # 单个识别的多颜色片段
                     is_bold=global_style.is_bold,              # 全局识别的粗体
                     is_italic=global_style.is_italic,          # 全局识别的斜体
@@ -1365,6 +1373,27 @@ class ExportService:
         ]
 
     @staticmethod
+    def _manifest_confidence(elem) -> Optional[float]:
+        metadata = getattr(elem, 'metadata', None) or {}
+        value = metadata.get('confidence', metadata.get('probability'))
+        try:
+            value = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return max(0.0, min(1.0, value)) if math.isfinite(value) else None
+
+    @staticmethod
+    def _manifest_render_defaults(elem) -> Dict[str, Any]:
+        return {
+            'z_order': None,
+            'editable': False,
+            'confidence': ExportService._manifest_confidence(elem),
+            'render_decision': 'pending',
+            'fallback_reason': None,
+            'editable_text_added': False,
+        }
+
+    @staticmethod
     def _text_hint_from_element(elem) -> Dict[str, Any]:
         metadata = getattr(elem, 'metadata', None) or {}
         hint = metadata.get('text_hint') if isinstance(metadata.get('text_hint'), dict) else {}
@@ -1452,6 +1481,7 @@ class ExportService:
                     'text': elem.content.strip(),
                     'box_px': box_px,
                     'source': 'editable-element',
+                    **ExportService._manifest_render_defaults(elem),
                 }
                 text_hint = ExportService._text_hint_from_element(elem)
                 if text_hint:
@@ -1463,12 +1493,15 @@ class ExportService:
                     'type': elem.element_type,
                     'box_px': box_px,
                     'source': elem.image_path,
+                    **ExportService._manifest_render_defaults(elem),
                 })
                 if elem.image_path:
                     images.append({
                         'id': elem.element_id,
+                        'type': elem.element_type,
                         'path': elem.image_path,
                         'box_px': box_px,
+                        **ExportService._manifest_render_defaults(elem),
                     })
 
             if getattr(elem, 'children', None):
@@ -1482,6 +1515,67 @@ class ExportService:
 
         ExportService._apply_text_hint_size_groups(text_boxes)
         return text_boxes, images, visual_inventory
+
+    @staticmethod
+    def _apply_page_render_results(manifest: Dict[str, Any], render_results: List[Dict[str, Any]]) -> None:
+        current = {
+            item['id']: dict(item)
+            for item in [*manifest.get('text_boxes', []), *manifest.get('images', [])]
+        }
+        order = []
+        for result in render_results:
+            element_id = result['id']
+            if element_id not in order:
+                order.append(element_id)
+            current.setdefault(element_id, {'id': element_id}).update(result)
+        for element_id in current:
+            if element_id not in order:
+                order.append(element_id)
+        manifest['elements'] = [current[element_id] for element_id in order]
+
+        rendered_by_id = {item['id']: item for item in manifest['elements']}
+        decision_fields = (
+            'z_order', 'editable', 'confidence', 'render_decision',
+            'fallback_reason', 'editable_text_added',
+        )
+        for collection_name in ('text_boxes', 'images', 'visual_inventory'):
+            for item in manifest.get(collection_name, []):
+                result = rendered_by_id.get(item['id'], {})
+                for field in decision_fields:
+                    if field in result:
+                        item[field] = result[field]
+
+        manifest['formula_inventory'] = [
+            {
+                'id': item['id'],
+                'text': item['formula_text'],
+                'decision': item['formula_decision'],
+                'editable': item['formula_decision'] == 'native-powerpoint-formula',
+            }
+            for item in render_results
+            if item.get('formula_decision')
+        ]
+
+        text_attempts = [
+            item for item in render_results
+            if item.get('render_decision') in {
+                'editable_text_over_clean_region', 'native_powerpoint_formula', 'text_render_failed'
+            }
+        ]
+        manifest['quality_checks']['font_size_calibrated'] = all(
+            item.get('rendered') is True and item.get('font_size_calibrated') is True
+            for item in text_attempts
+        )
+        visual_ids = {item['id'] for item in manifest.get('visual_inventory', [])}
+        manifest['quality_checks']['visual_inventory_matched'] = all(
+            rendered_by_id.get(element_id, {}).get('rendered') is True
+            and rendered_by_id[element_id].get('render_decision') != 'image_placeholder'
+            for element_id in visual_ids
+        )
+        shape_results = [item for item in render_results if item.get('type') == 'shape']
+        manifest['quality_checks']['shape_corner_geometry_checked'] = all(
+            item.get('geometry_checked') is True for item in shape_results
+        )
 
     @staticmethod
     def _build_page_rebuild_manifest(
@@ -1536,11 +1630,12 @@ class ExportService:
             'text_inventory': [item['text'] for item in text_boxes],
             'visual_inventory': visual_inventory,
             'quality_checks': {
-                'font_size_calibrated': bool(text_boxes),
-                'visual_inventory_matched': None,
-                'background_strategy_checked': None,
-                'shape_corner_geometry_checked': None,
+                'font_size_calibrated': all(bool(item.get('font_size')) for item in text_boxes),
+                'visual_inventory_matched': not visual_inventory,
+                'background_strategy_checked': False,
+                'shape_corner_geometry_checked': True,
             },
+            'elements': [dict(item) for item in [*text_boxes, *images]],
             'text_boxes': text_boxes,
             'shapes': [],
             'images': images,
@@ -1573,6 +1668,17 @@ class ExportService:
             box = item['box_px']
             if slide_area and len(box) == 4 and (box[2] * box[3]) / slide_area >= 0.9:
                 errors.append(f"禁止将整页栅格图作为可编辑前景元素: {item.get('id')}")
+        elements = manifest.get('elements', [])
+        elements_by_id = {item.get('id'): item for item in elements}
+        for item in elements:
+            if item.get('render_decision') == 'raster_region_with_text' and item.get('editable_text_added'):
+                errors.append(f"含文字栅格区域禁止再次叠加可编辑文字，避免重复文字: {item.get('id')}")
+            for text_id in item.get('suppressed_text_ids', []):
+                if elements_by_id.get(text_id, {}).get('editable_text_added'):
+                    errors.append(f"含文字栅格区域的子文字被重复写入: {text_id}")
+        for name, value in manifest.get('quality_checks', {}).items():
+            if not isinstance(value, bool):
+                errors.append(f"质量检查必须为布尔值: {name}")
         render_result = manifest.get('render_result') or {}
         if render_result and not render_result.get('background_added'):
             errors.append('背景图写入PPTX失败')
@@ -1639,6 +1745,7 @@ class ExportService:
         elements, output_dir, padding=8, columns=3,
     ):
         import os
+        os.makedirs(str(output_dir), exist_ok=True)
         from PIL import Image
         items = [e for e in elements if e.get("image_path") and os.path.exists(e["image_path"])]
         if not items:
@@ -1726,6 +1833,42 @@ class ExportService:
         return result
 
     @staticmethod
+    def _recover_transparency_from_opaque_matte(image, tolerance=40):
+        import cv2
+        import numpy as np
+
+        rgba = np.asarray(image.convert("RGBA")).copy()
+        rgb = rgba[:, :, :3].astype(np.int16)
+        corners = np.array([
+            rgb[0, 0], rgb[0, -1], rgb[-1, 0], rgb[-1, -1],
+        ])
+        matte = np.median(corners, axis=0).astype(np.int16)
+        if np.max(np.abs(corners - matte)) > tolerance:
+            return None
+
+        distance = np.max(np.abs(rgb - matte), axis=2)
+        border = np.concatenate((distance[0], distance[-1], distance[:, 0], distance[:, -1]))
+        if np.mean(border <= tolerance) < 0.6:
+            return None
+
+        flood = np.where(distance <= tolerance, 0, 255).astype(np.uint8)
+        cv2.floodFill(
+            flood,
+            np.zeros((flood.shape[0] + 2, flood.shape[1] + 2), dtype=np.uint8),
+            (0, 0),
+            128,
+        )
+        background = flood == 128
+        if np.all(background):
+            return None
+        alpha = np.full(distance.shape, 255, dtype=np.uint8)
+        alpha[background] = np.clip(
+            distance[background] * (255 / tolerance), 0, 255,
+        ).astype(np.uint8)
+        rgba[:, :, 3] = alpha
+        return Image.fromarray(rgba, "RGBA")
+
+    @staticmethod
     def _run_asset_sheet_separation(
         editable_img,
         output_dir,
@@ -1760,6 +1903,7 @@ class ExportService:
                 prompt = (
                     "Remove the background from every individual icon, badge, and decoration on this contact sheet. "
                     "Each item must be isolated on a completely transparent background. "
+                    "If alpha transparency is unavailable, use one flat solid background color with no checkerboard, gradient, or shadows. "
                     "Preserve the exact shape, colors, and details of every item. "
                     "Do not change the layout or positions of the items on the sheet."
                 )
@@ -1779,7 +1923,10 @@ class ExportService:
                 )
                 result = result.resize(sheet_img.size, Image.Resampling.LANCZOS)
             if result.getchannel("A").getextrema()[0] == 255:
-                raise RuntimeError("图像模型未返回透明背景")
+                result = ExportService._recover_transparency_from_opaque_matte(result)
+                if result is None:
+                    raise RuntimeError("图像模型未返回可分离的透明或纯色背景")
+                logger.info("  [asset-sheet] recovered transparency from opaque matte")
 
             processed_path = str(Path(output_dir) / "foreground_asset_sheet_processed.png")
             result.save(processed_path)
@@ -2105,7 +2252,7 @@ class ExportService:
                 page_manifest['page_strategy']['asset_sheet_separation'] = 'not_completed'
 
             foreground_shape_start = len(slide.shapes)
-            ExportService._add_editable_elements_to_slide(
+            render_results = ExportService._add_editable_elements_to_slide(
                 builder=builder,
                 slide=slide,
                 elements=editable_img.elements,
@@ -2117,17 +2264,20 @@ class ExportService:
                 warnings=warnings,
                 fail_fast=fail_fast
             )
+            ExportService._apply_page_render_results(page_manifest, render_results)
             foreground_shape_count = len(slide.shapes) - foreground_shape_start
             page_manifest['render_result'] = {
                 'background_added': background_added,
                 'foreground_shape_count': foreground_shape_count,
                 'total_shape_count': len(slide.shapes),
             }
-            page_manifest['quality_checks']['background_strategy_checked'] = background_added
-            page_manifest['quality_checks']['visual_inventory_matched'] = (
-                foreground_shape_count > 0
-                if page_manifest['text_boxes'] or page_manifest['images']
-                else True
+            page_manifest['quality_checks']['background_strategy_checked'] = bool(
+                background_added
+                and os.path.exists(background_path)
+                and not (
+                    page_manifest['background_strategy']['mode'] == 'source-full-slide-raster'
+                    and any(item.get('editable_text_added') for item in page_manifest['elements'])
+                )
             )
             page_validation = ExportService._validate_page_rebuild_manifest(page_manifest)
             ExportService._write_page_rebuild_artifacts(
@@ -2184,7 +2334,9 @@ class ExportService:
         text_styles_cache: Dict[str, Any] = None,  # 预提取的文本样式缓存，key为element_id
         text_hint_font_sizes: Dict[str, int] = None,
         warnings: 'ExportWarnings' = None,  # 警告收集器
-        fail_fast: bool = False  # 是否在遇到错误时立即停止
+        fail_fast: bool = False,  # 是否在遇到错误时立即停止
+        render_results: Optional[List[Dict[str, Any]]] = None,
+        parent_id: Optional[str] = None,
     ):
         """
         递归地将EditableElement添加到幻灯片
@@ -2205,6 +2357,53 @@ class ExportService:
             text_styles_cache = {}
         if text_hint_font_sizes is None:
             text_hint_font_sizes = {}
+        if render_results is None:
+            render_results = []
+
+        def add_render_result(elem, decision, *, rendered, editable=False,
+                              fallback_reason=None, editable_text_added=False,
+                              z_order=None, **extra):
+            text_style = text_styles_cache.get(elem.element_id)
+            confidence = getattr(text_style, 'confidence', None) if text_style else None
+            if confidence is None:
+                confidence = ExportService._manifest_confidence(elem)
+            render_results.append({
+                'id': elem.element_id,
+                'type': elem.element_type,
+                'parent_id': parent_id,
+                'z_order': z_order,
+                'editable': bool(editable),
+                'confidence': confidence,
+                'render_decision': decision,
+                'fallback_reason': fallback_reason,
+                'editable_text_added': bool(editable_text_added),
+                'rendered': bool(rendered),
+                **extra,
+            })
+
+        def skip_descendants(elem, reason):
+            suppressed_text_ids = []
+            for child in getattr(elem, 'children', None) or []:
+                if child.element_type in {
+                    'text', 'title', 'list', 'paragraph', 'header', 'footer', 'heading',
+                    'table_caption', 'image_caption', 'equation', 'interline_equation',
+                    'inline_equation', 'table_cell',
+                }:
+                    suppressed_text_ids.append(child.element_id)
+                render_results.append({
+                    'id': child.element_id,
+                    'type': child.element_type,
+                    'parent_id': elem.element_id,
+                    'z_order': None,
+                    'editable': False,
+                    'confidence': ExportService._manifest_confidence(child),
+                    'render_decision': 'skipped_due_parent_raster_fallback',
+                    'fallback_reason': reason,
+                    'editable_text_added': False,
+                    'rendered': False,
+                })
+                suppressed_text_ids.extend(skip_descendants(child, reason))
+            return suppressed_text_ids
 
         def choose_formula_text(text: str, text_style: Any = None) -> Optional[str]:
             candidates = [text]
@@ -2238,15 +2437,25 @@ class ExportService:
 
             formula_text = choose_formula_text(text, text_style)
             if formula_text:
+                shape_start = len(slide.shapes)
                 if builder.add_math_element(
                     slide=slide,
                     latex=formula_text,
                     bbox=bbox_list,
                     text_style=text_style
                 ):
-                    return
+                    return {
+                        'decision': 'native_powerpoint_formula',
+                        'rendered': len(slide.shapes) > shape_start,
+                        'editable': True,
+                        'z_order': shape_start,
+                        'font_size_calibrated': True,
+                        'formula_decision': 'native-powerpoint-formula',
+                        'formula_text': formula_text,
+                    }
 
                 fallback_text = latex_to_display_text(formula_text)
+                shape_start = len(slide.shapes)
                 builder.add_text_element(
                     slide=slide,
                     text=fallback_text,
@@ -2262,8 +2471,19 @@ class ExportService:
                         formula_text,
                         '公式暂不支持原生转换，已使用可读文本回退'
                     )
-                return
+                return {
+                    'decision': 'editable_text_over_clean_region',
+                    'rendered': len(slide.shapes) > shape_start,
+                    'editable': True,
+                    'editable_text_added': True,
+                    'z_order': shape_start,
+                    'fallback_reason': 'unsupported_native_formula',
+                    'font_size_calibrated': True,
+                    'formula_decision': 'existing-formula-fallback',
+                    'formula_text': formula_text,
+                }
 
+            shape_start = len(slide.shapes)
             builder.add_text_element(
                 slide=slide,
                 text=text,
@@ -2273,6 +2493,15 @@ class ExportService:
                 text_style=text_style,
                 font_size_override=font_size_override
             )
+            return {
+                'decision': 'editable_text_over_clean_region',
+                'rendered': len(slide.shapes) > shape_start,
+                'editable': True,
+                'editable_text_added': True,
+                'z_order': shape_start,
+                'fallback_reason': None,
+                'font_size_calibrated': True,
+            }
         
         for elem in elements:
             elem_type = elem.element_type
@@ -2305,7 +2534,12 @@ class ExportService:
                             # 确定文本级别
                             level = 'title' if elem_type in ['title', 'heading'] else 'default'
 
-                            add_text_or_formula(elem, text, bbox_list, text_level=level)
+                            result = add_text_or_formula(elem, text, bbox_list, text_level=level)
+                            add_render_result(
+                                elem,
+                                result.pop('decision'),
+                                **result,
+                            )
                         except Exception as e:
                             logger.warning(f"添加文本元素失败: {e}")
                             if fail_fast:
@@ -2316,6 +2550,12 @@ class ExportService:
                                 )
                             if warnings:
                                 warnings.add_text_render_failed(text, str(e))
+                            add_render_result(
+                                elem,
+                                'text_render_failed',
+                                rendered=False,
+                                fallback_reason=str(e),
+                            )
             
             elif elem_type == 'table_cell':
                 # 添加表格单元格（带边框的文本框）
@@ -2325,12 +2565,17 @@ class ExportService:
                         try:
                             # 表格单元格已经在上面统一处理了bbox_global和缩放
                             # 直接使用bbox_list即可
-                            add_text_or_formula(
+                            result = add_text_or_formula(
                                 elem,
                                 text,
                                 bbox_list,
                                 text_level=None,
                                 align='center'
+                            )
+                            add_render_result(
+                                elem,
+                                result.pop('decision'),
+                                **result,
                             )
 
                         except Exception as e:
@@ -2343,6 +2588,12 @@ class ExportService:
                                 )
                             if warnings:
                                 warnings.add_text_render_failed(text, str(e))
+                            add_render_result(
+                                elem,
+                                'text_render_failed',
+                                rendered=False,
+                                fallback_reason=str(e),
+                            )
             
             elif elem_type == 'table':
                 # 如果表格有子元素（单元格），使用inpainted背景 + 单元格
@@ -2351,14 +2602,34 @@ class ExportService:
                     
                     # 先添加inpainted背景（干净的表格框架）
                     if os.path.exists(elem.inpainted_background_path):
+                        shape_start = len(slide.shapes)
                         try:
                             builder.add_image_element(
                                 slide=slide,
                                 image_path=elem.inpainted_background_path,
                                 bbox=bbox_list
                             )
+                            add_render_result(
+                                elem,
+                                'clean_raster_region_with_editable_children',
+                                rendered=len(slide.shapes) > shape_start,
+                                z_order=shape_start,
+                            )
                         except Exception as e:
                             logger.error(f"Failed to add table background: {e}")
+                            add_render_result(
+                                elem,
+                                'editable_children_without_clean_region',
+                                rendered=False,
+                                fallback_reason='inpainted_background_render_failed',
+                            )
+                    else:
+                        add_render_result(
+                            elem,
+                            'editable_children_without_clean_region',
+                            rendered=False,
+                            fallback_reason='inpainted_background_missing',
+                        )
                     
                     # 递归添加单元格
                     ExportService._add_editable_elements_to_slide(
@@ -2371,34 +2642,62 @@ class ExportService:
                         text_styles_cache=text_styles_cache,
                         text_hint_font_sizes=text_hint_font_sizes,
                         warnings=warnings,
-                        fail_fast=fail_fast
+                        fail_fast=fail_fast,
+                        render_results=render_results,
+                        parent_id=elem.element_id,
                     )
                 else:
                     # 没有子元素，添加整体表格图片
                     # elem.image_path 现在是绝对路径
                     if elem.image_path and os.path.exists(elem.image_path):
+                        shape_start = len(slide.shapes)
                         try:
                             builder.add_image_element(
                                 slide=slide,
                                 image_path=elem.image_path,
                                 bbox=bbox_list
                             )
+                            reason = 'missing_inpainted_background' if elem.children else 'table_structure_not_available'
+                            suppressed_text_ids = skip_descendants(elem, reason)
+                            add_render_result(
+                                elem,
+                                'raster_region_with_text',
+                                rendered=len(slide.shapes) > shape_start,
+                                fallback_reason=reason,
+                                z_order=shape_start,
+                                suppressed_text_ids=suppressed_text_ids,
+                            )
                         except Exception as e:
                             logger.error(f"Failed to add table image: {e}")
+                            add_render_result(
+                                elem,
+                                'raster_region_render_failed',
+                                rendered=False,
+                                fallback_reason=str(e),
+                            )
                     else:
                         logger.warning(f"Table image not found: {elem.image_path}")
+                        shape_start = len(slide.shapes)
                         builder.add_image_placeholder(slide, bbox_list)
+                        suppressed_text_ids = skip_descendants(elem, 'source_image_missing')
+                        add_render_result(
+                            elem,
+                            'image_placeholder',
+                            rendered=len(slide.shapes) > shape_start,
+                            fallback_reason='source_image_missing',
+                            z_order=shape_start,
+                            suppressed_text_ids=suppressed_text_ids,
+                        )
             
             elif elem_type in ['image', 'figure', 'chart']:
                 # 检查是否应该使用递归渲染
                 should_use_recursive_render = False
+                has_dominant_child = False
                 
                 if elem.children and elem.inpainted_background_path:
                     # 检查是否有任意子元素占据父元素绝大部分面积
                     parent_area = (bbox.x1 - bbox.x0) * (bbox.y1 - bbox.y0)
                     max_child_coverage_ratio = 0.85  # 阈值
-                    has_dominant_child = False
-                    
                     for child in elem.children:
                         if hasattr(child, 'bbox_global') and child.bbox_global:
                             child_bbox = child.bbox_global
@@ -2421,10 +2720,30 @@ class ExportService:
                     
                     # 先添加inpainted背景
                     if os.path.exists(elem.inpainted_background_path):
+                        shape_start = len(slide.shapes)
                         try:
                             builder.add_image_element(slide, elem.inpainted_background_path, bbox_list)
+                            add_render_result(
+                                elem,
+                                'clean_raster_region_with_editable_children',
+                                rendered=len(slide.shapes) > shape_start,
+                                z_order=shape_start,
+                            )
                         except Exception as e:
                             logger.error(f"Failed to add inpainted background: {e}")
+                            add_render_result(
+                                elem,
+                                'editable_children_without_clean_region',
+                                rendered=False,
+                                fallback_reason='inpainted_background_render_failed',
+                            )
+                    else:
+                        add_render_result(
+                            elem,
+                            'editable_children_without_clean_region',
+                            rendered=False,
+                            fallback_reason='inpainted_background_missing',
+                        )
                     
                     # 递归添加子元素
                     ExportService._add_editable_elements_to_slide(
@@ -2437,25 +2756,72 @@ class ExportService:
                         text_styles_cache=text_styles_cache,
                         text_hint_font_sizes=text_hint_font_sizes,
                         warnings=warnings,
-                        fail_fast=fail_fast
+                        fail_fast=fail_fast,
+                        render_results=render_results,
+                        parent_id=elem.element_id,
                     )
                 else:
                     # 没有子元素或子元素占比过大，直接添加原图
                     # elem.image_path 现在是绝对路径
                     if elem.image_path and os.path.exists(elem.image_path):
+                        shape_start = len(slide.shapes)
                         try:
                             builder.add_image_element(
                                 slide=slide,
                                 image_path=elem.image_path,
                                 bbox=bbox_list
                             )
+                            if elem.children:
+                                reason = (
+                                    'dominant_child_requires_raster_fallback'
+                                    if has_dominant_child
+                                    else 'missing_inpainted_background'
+                                )
+                                decision = 'raster_region_with_text'
+                                suppressed_text_ids = skip_descendants(elem, reason)
+                            else:
+                                reason = None
+                                decision = 'raster_image'
+                                suppressed_text_ids = []
+                            add_render_result(
+                                elem,
+                                decision,
+                                rendered=len(slide.shapes) > shape_start,
+                                fallback_reason=reason,
+                                z_order=shape_start,
+                                suppressed_text_ids=suppressed_text_ids,
+                            )
                         except Exception as e:
                             logger.error(f"Failed to add image: {e}")
+                            add_render_result(
+                                elem,
+                                'raster_region_render_failed',
+                                rendered=False,
+                                fallback_reason=str(e),
+                            )
                     else:
                         logger.warning(f"Image file not found: {elem.image_path}")
+                        shape_start = len(slide.shapes)
                         builder.add_image_placeholder(slide, bbox_list)
+                        suppressed_text_ids = skip_descendants(elem, 'source_image_missing')
+                        add_render_result(
+                            elem,
+                            'image_placeholder',
+                            rendered=len(slide.shapes) > shape_start,
+                            fallback_reason='source_image_missing',
+                            z_order=shape_start,
+                            suppressed_text_ids=suppressed_text_ids,
+                        )
             
             else:
                 # 其他类型
                 logger.debug(f"{'  ' * depth}  跳过未知类型: {elem_type}")
+                add_render_result(
+                    elem,
+                    'unsupported_element_skipped',
+                    rendered=False,
+                    fallback_reason=f'unsupported_element_type:{elem_type}',
+                )
+
+        return render_results
     

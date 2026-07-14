@@ -130,6 +130,7 @@ function getStatusLabel(status: PageStatus, t: (key: string) => string): string 
     DRAFT: t('status.draft'),
     GENERATING_DESCRIPTION: t('status.generatingDescription'),
     DESCRIPTION_GENERATED: t('status.descriptionGenerated'),
+    NATIVE_GENERATED: t('status.completed'),
     QUEUED: t('status.queued'),
     GENERATING: t('status.generating'),
     COMPLETED: t('status.completed'),
@@ -142,6 +143,7 @@ function getStatusDescription(status: PageStatus, t: (key: string) => string): s
   if (status === 'DRAFT') return t('status.draftStage');
   if (status === 'GENERATING_DESCRIPTION') return t('status.generatingDescription');
   if (status === 'DESCRIPTION_GENERATED') return t('status.descGenerated');
+  if (status === 'NATIVE_GENERATED') return t('status.allCompleted');
   if (status === 'QUEUED') return t('status.queuedImage');
   if (status === 'GENERATING') return t('status.generating');
   if (status === 'FAILED') return t('status.failed');

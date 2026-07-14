@@ -17,7 +17,7 @@ describe('getTemplateFile', () => {
     const file = await getTemplateFile('1', []);
 
     expect(file).toBeInstanceOf(File);
-    expect(file?.name).toBe('template_y.png');
+    expect(file?.name).toBe('template_tuku_warehouseSafety.png');
     expect(file?.type).toBe('image/png');
   });
 

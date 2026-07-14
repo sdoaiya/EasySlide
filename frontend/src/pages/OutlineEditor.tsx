@@ -28,6 +28,8 @@ const outlineI18n = {
       outlineRequirementsPlaceholder: "例如：限制在10页以内、每页要点不超过3条、多使用图表...",
       pageNavigation: "页面导航",
       pageNavigationHint: "点击页面可快速定位并修改。",
+      expandContext: "展开构想与要求",
+      collapseContext: "收起构想与要求",
       importModalTitle: "导入 Markdown",
       importModalDesc: "可直接粘贴 Markdown，也可以上传 `.md` 或 `.txt` 文件。导入的页面会追加到当前项目末尾。",
       importPasteLabel: "粘贴内容",
@@ -74,6 +76,8 @@ const outlineI18n = {
       outlineRequirementsPlaceholder: "e.g., Limit to 10 pages, max 3 points per page, use more charts...",
       pageNavigation: "Page Navigation",
       pageNavigationHint: "Click a page to jump there and edit.",
+      expandContext: "Expand idea and requirements",
+      collapseContext: "Collapse idea and requirements",
       importModalTitle: "Import Markdown",
       importModalDesc: "Paste Markdown directly, or upload a `.md` / `.txt` file. Imported pages will be appended to the current project.",
       importPasteLabel: "Paste Content",
@@ -178,6 +182,7 @@ export const OutlineEditor: React.FC = () => {
   const [selectedPageId, setSelectedPageId] = useState<string | null>(null);
   const [isAiRefining, setIsAiRefining] = useState(false);
   const [previewFileId, setPreviewFileId] = useState<string | null>(null);
+  const [isContextExpanded, setIsContextExpanded] = useState(false);
 
   // Skeleton fade-out: keep it mounted briefly after streaming ends
   const [skeletonVisible, setSkeletonVisible] = useState(false);
@@ -466,8 +471,8 @@ export const OutlineEditor: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-sky-50 via-white to-slate-50 dark:from-background-primary dark:via-background-primary dark:to-background-secondary flex flex-col">
-      <header className="bg-white/90 dark:bg-background-secondary/95 backdrop-blur border-b border-sky-100 dark:border-border-primary px-4 md:px-7 py-3 flex-shrink-0">
+    <div data-testid="outline-editor-workspace" className="h-full min-h-0 overflow-hidden bg-gradient-to-b from-sky-50 via-white to-slate-50 dark:from-background-primary dark:via-background-primary dark:to-background-secondary flex flex-col">
+      <header className="bg-white/90 dark:bg-background-secondary/95 backdrop-blur border-b border-sky-100 dark:border-border-primary px-4 md:px-7 py-2 flex-shrink-0">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <Button
@@ -533,28 +538,6 @@ export const OutlineEditor: React.FC = () => {
                 </div>
               )}
             </div>
-            <Button
-              variant="primary"
-              icon={<ArrowRight size={16} />}
-              onClick={async () => {
-                if (isInputDirty && projectId && currentProject) {
-                  const field = currentProject.creation_type === 'outline'
-                    ? 'outline_text'
-                    : currentProject.creation_type === 'descriptions'
-                      ? 'description_text'
-                      : 'idea_prompt';
-                  try {
-                    await updateProject(projectId, { [field]: inputText } as any);
-                  } catch (e) {
-                    console.error('自动保存失败:', e);
-                  }
-                }
-                await saveAllPages();
-                navigate(`/project/${projectId}/detail`);
-              }}
-            >
-              {t('common.next')}
-            </Button>
           </div>
         </div>
 
@@ -570,9 +553,23 @@ export const OutlineEditor: React.FC = () => {
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto min-h-0 p-4 md:p-6">
-        <section className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-          <div className="bg-white dark:bg-background-secondary rounded-2xl shadow-lg shadow-sky-100/60 dark:shadow-none border border-sky-100 dark:border-border-primary overflow-hidden">
+      <main data-testid="outline-editor-scroll-region" className="flex-1 min-h-0 overflow-y-auto p-3 md:p-4">
+        {currentProject.pages.length > 0 && (
+          <div className="mb-3 flex justify-end">
+            <button
+              type="button"
+              aria-expanded={isContextExpanded}
+              onClick={() => setIsContextExpanded((expanded) => !expanded)}
+              className="inline-flex h-9 items-center gap-1.5 rounded-md border border-sky-100 bg-white px-3 text-sm font-medium text-slate-600 hover:bg-sky-50 dark:border-border-primary dark:bg-background-secondary dark:text-foreground-secondary dark:hover:bg-background-hover"
+            >
+              {isContextExpanded ? t('outline.collapseContext') : t('outline.expandContext')}
+              <ChevronDown size={15} className={isContextExpanded ? 'rotate-180' : ''} />
+            </button>
+          </div>
+        )}
+        {(currentProject.pages.length === 0 || isContextExpanded) && (
+        <section data-testid="outline-context-fields" className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+          <div className="bg-white dark:bg-background-secondary rounded-lg shadow-sm dark:shadow-none border border-sky-100 dark:border-border-primary overflow-hidden">
             <div className="h-12 px-5 flex items-center gap-2 border-b border-slate-100 dark:border-border-secondary">
               {currentProject.creation_type === 'idea'
                 ? <Sparkle size={18} className="text-sky-500" />
@@ -589,11 +586,11 @@ export const OutlineEditor: React.FC = () => {
               onSelectFromLibrary={() => { setActiveMaterialTarget('input'); setIsMaterialSelectorOpen(true); }}
               placeholder={inputPlaceholder}
               rows={4}
-              className="border-0 rounded-none shadow-none min-h-[128px]"
+              className="border-0 rounded-none shadow-none min-h-[96px]"
             />
           </div>
 
-          <div className="bg-white dark:bg-background-secondary rounded-2xl shadow-lg shadow-sky-100/60 dark:shadow-none border border-sky-100 dark:border-border-primary overflow-hidden">
+          <div className="bg-white dark:bg-background-secondary rounded-lg shadow-sm dark:shadow-none border border-sky-100 dark:border-border-primary overflow-hidden">
             <div className="h-12 px-5 flex items-center gap-2 border-b border-slate-100 dark:border-border-secondary">
               <SlidersHorizontal size={18} className="text-sky-500" />
               <h2 className="font-bold text-slate-800 dark:text-foreground-primary">{t('outline.outlineRequirements')}</h2>
@@ -609,7 +606,7 @@ export const OutlineEditor: React.FC = () => {
                 placeholder={t('outline.outlineRequirementsPlaceholder')}
                 rows={4}
                 showImagePreview={false}
-                className="border-0 rounded-none shadow-none min-h-[128px]"
+                className="border-0 rounded-none shadow-none min-h-[96px]"
               />
             </div>
             <div className="px-5 pb-4">
@@ -623,6 +620,7 @@ export const OutlineEditor: React.FC = () => {
             </div>
           </div>
         </section>
+        )}
 
         <ReferenceFileList
           projectId={projectId}
@@ -631,8 +629,8 @@ export const OutlineEditor: React.FC = () => {
           showToast={show}
         />
 
-        <section className="mt-4 grid grid-cols-1 lg:grid-cols-[290px_1fr] gap-5 md:gap-6">
-          <aside className="bg-white dark:bg-background-secondary rounded-2xl shadow-md border border-sky-100 dark:border-border-primary p-3 lg:sticky lg:top-4 lg:max-h-[calc(100vh-110px)] overflow-hidden flex flex-col">
+        <section className="mt-3 grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-4">
+          <aside className="bg-white dark:bg-background-secondary rounded-lg shadow-sm border border-sky-100 dark:border-border-primary p-3 lg:sticky lg:top-3 lg:max-h-[calc(100dvh-210px)] overflow-hidden flex flex-col">
             <div className="flex items-center justify-between px-2 pb-3">
               <div>
                 <h3 className="flex items-center gap-2 font-bold text-slate-700 dark:text-foreground-primary">
@@ -654,11 +652,12 @@ export const OutlineEditor: React.FC = () => {
                   <button
                     key={page.id || `nav-${index}`}
                     type="button"
+                    data-testid="outline-page-navigation-item"
                     onClick={() => {
                       setSelectedPageId(page.id || null);
                       document.getElementById(`outline-page-${page.id || index}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
                     }}
-                    className={`w-full text-left rounded-xl border px-3 py-2.5 transition-all ${
+                    className={`h-20 w-full overflow-hidden text-left rounded-lg border px-3 py-2 transition-all ${
                       selected
                         ? 'border-sky-300 bg-sky-50 shadow-sm'
                         : 'border-slate-100 bg-white hover:border-sky-200 hover:bg-sky-50/60 dark:border-border-primary dark:bg-background-secondary dark:hover:bg-background-hover'
@@ -750,6 +749,37 @@ export const OutlineEditor: React.FC = () => {
           </div>
         </section>
       </main>
+      <footer data-testid="outline-editor-footer" className="flex flex-shrink-0 items-center justify-between border-t border-sky-100 bg-white px-4 py-2 dark:border-border-primary dark:bg-background-secondary">
+        <Button
+          variant="secondary"
+          icon={<ArrowLeft size={16} />}
+          onClick={() => navigate(fromHistory ? '/history' : '/app')}
+        >
+          {t('common.previous')}
+        </Button>
+        <Button
+          variant="primary"
+          icon={<ArrowRight size={16} />}
+          onClick={async () => {
+            if (isInputDirty && projectId && currentProject) {
+              const field = currentProject.creation_type === 'outline'
+                ? 'outline_text'
+                : currentProject.creation_type === 'descriptions'
+                  ? 'description_text'
+                  : 'idea_prompt';
+              try {
+                await updateProject(projectId, { [field]: inputText } as any);
+              } catch (e) {
+                console.error('自动保存失败:', e);
+              }
+            }
+            await saveAllPages();
+            navigate(`/project/${projectId}/detail`);
+          }}
+        >
+          {t('common.next')}
+        </Button>
+      </footer>
       {ConfirmDialog}
       <ToastContainer />
       <FilePreviewModal fileId={previewFileId} onClose={() => setPreviewFileId(null)} />

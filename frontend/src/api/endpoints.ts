@@ -1,5 +1,5 @@
 import { apiClient, getApiBaseUrl } from './client';
-import type { Project, Task, ApiResponse, CreateProjectRequest, Page, Material } from '@/types';
+import type { Project, Task, ApiResponse, CreateProjectRequest, Page, Material, NativeExportQualityReport } from '@/types';
 import type { Settings } from '../types/index';
 
 export type { Material };
@@ -37,6 +37,8 @@ export const createProject = async (data: CreateProjectRequest): Promise<ApiResp
     description_text: data.description_text,
     template_style: data.template_style,
     image_aspect_ratio: data.image_aspect_ratio,
+    render_mode: data.render_mode,
+    native_theme: data.native_theme,
   });
   return response.data;
 };
@@ -832,6 +834,23 @@ export const exportVideo = async (
   return response.data;
 };
 
+export const exportNativeVideo = async (
+  projectId: string,
+  frames: Blob[],
+  pageIds: string[],
+  filename?: string,
+): Promise<ApiResponse<{ task_id: string }>> => {
+  const formData = new FormData();
+  formData.append('page_ids', JSON.stringify(pageIds));
+  if (filename) formData.append('filename', filename);
+  frames.forEach((frame, index) => formData.append('frames', frame, `frame-${index + 1}.png`));
+  const response = await apiClient.post<ApiResponse<{ task_id: string }>>(
+    `/api/projects/${projectId}/export/native-video`,
+    formData,
+  );
+  return response.data;
+};
+
 // ===== 素材生成 =====
 
 /**
@@ -1362,6 +1381,49 @@ export const getOpenAIOAuthStatus = async (): Promise<ApiResponse<{ connected: b
  */
 export const getOpenAIOAuthModels = async (): Promise<ApiResponse<{ models: string[]; text_models?: string[]; image_models?: string[] }>> => {
   const response = await apiClient.get<ApiResponse<{ models: string[]; text_models?: string[]; image_models?: string[] }>>('/api/settings/openai-oauth/models');
+  return response.data;
+};
+
+export const createNativePptxExport = async (
+  projectId: string,
+  format: 'pptx' | 'pdf' | 'html' = 'pptx',
+): Promise<ApiResponse<Task>> => {
+  const response = await apiClient.post<ApiResponse<Task>>(`/api/projects/${projectId}/export/native-pptx`, { format });
+  return response.data;
+};
+
+export const generateNativeDeck = async (projectId: string): Promise<ApiResponse<Task>> => {
+  const response = await apiClient.post<ApiResponse<Task>>(`/api/projects/${projectId}/generate/native-deck`);
+  return response.data;
+};
+
+export const updateNativePptxProgress = async (
+  projectId: string,
+  taskId: string,
+  progress: { total?: number; completed?: number; percent?: number; current_step?: string; messages?: string[]; warnings?: string[] },
+): Promise<ApiResponse<Task>> => {
+  const response = await apiClient.put<ApiResponse<Task>>(
+    `/api/projects/${projectId}/export/native-pptx/${taskId}/progress`,
+    progress,
+  );
+  return response.data;
+};
+
+export const completeNativePptxExport = async (
+  projectId: string,
+  taskId: string,
+  blob: Blob,
+  report: NativeExportQualityReport,
+  filename: string,
+): Promise<ApiResponse<Task>> => {
+  const form = new FormData();
+  form.append('file', blob, filename);
+  form.append('filename', filename);
+  form.append('report', JSON.stringify(report));
+  const response = await apiClient.post<ApiResponse<Task>>(
+    `/api/projects/${projectId}/export/native-pptx/${taskId}/complete`,
+    form,
+  );
   return response.data;
 };
 

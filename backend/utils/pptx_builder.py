@@ -350,6 +350,150 @@ class PPTXBuilder:
         
         return best_size
     
+    @staticmethod
+    def _apply_font_family(font, font_family: Optional[str]):
+        if not font_family:
+            return
+        font.name = font_family
+        r_pr = font._rPr
+        east_asian = r_pr.find(qn('a:ea'))
+        if east_asian is None:
+            east_asian = OxmlElement('a:ea')
+            r_pr.get_or_add_latin().addnext(east_asian)
+        east_asian.set('typeface', font_family)
+
+    @staticmethod
+    def _apply_font_effects(font, font_effects: Any, character_spacing_pt: Any = None):
+        effects = font_effects if isinstance(font_effects, dict) else {}
+        r_pr = font._rPr
+
+        def number(value, default, minimum, maximum):
+            try:
+                parsed = float(value)
+            except (TypeError, ValueError, OverflowError):
+                return default
+            if not math.isfinite(parsed):
+                return default
+            return max(minimum, min(maximum, parsed))
+
+        def color(value):
+            if not isinstance(value, str):
+                return None
+            value = value.strip().lstrip('#')
+            try:
+                return value.upper() if len(value) == 6 and int(value, 16) >= 0 else None
+            except ValueError:
+                return None
+
+        def add_rgb(parent, value, opacity=1.0, force_alpha=False):
+            rgb = OxmlElement('a:srgbClr')
+            rgb.set('val', value)
+            opacity = number(opacity, 1.0, 0.0, 1.0)
+            if force_alpha or opacity < 1.0:
+                alpha = OxmlElement('a:alpha')
+                alpha.set('val', str(round(opacity * 100000)))
+                rgb.append(alpha)
+            parent.append(rgb)
+
+        def insert_before_text_fonts(element):
+            successor_tags = {
+                qn('a:latin'), qn('a:ea'), qn('a:cs'), qn('a:sym'),
+                qn('a:hlinkClick'), qn('a:hlinkMouseOver'), qn('a:rtl'), qn('a:extLst'),
+            }
+            for index, child in enumerate(r_pr):
+                if child.tag in successor_tags:
+                    r_pr.insert(index, element)
+                    return
+            r_pr.append(element)
+
+        if character_spacing_pt is not None:
+            spacing = number(character_spacing_pt, None, -20.0, 100.0)
+            if spacing is not None:
+                r_pr.set('spc', str(round(spacing * 100)))
+
+        transparency = number(effects.get('transparency'), 0.0, 0.0, 1.0)
+        fill_opacity = 1.0 - transparency
+        gradient = effects.get('gradient')
+        if isinstance(gradient, dict):
+            start_color = color(gradient.get('start_color'))
+            end_color = color(gradient.get('end_color'))
+            if start_color and end_color:
+                fill_tags = {
+                    qn('a:noFill'), qn('a:solidFill'), qn('a:gradFill'),
+                    qn('a:blipFill'), qn('a:pattFill'), qn('a:grpFill'),
+                }
+                for child in list(r_pr):
+                    if child.tag in fill_tags:
+                        r_pr.remove(child)
+
+                grad_fill = OxmlElement('a:gradFill')
+                grad_fill.set('rotWithShape', '1')
+                gs_list = OxmlElement('a:gsLst')
+                for position, gradient_color in ((0, start_color), (100000, end_color)):
+                    stop = OxmlElement('a:gs')
+                    stop.set('pos', str(position))
+                    add_rgb(stop, gradient_color, fill_opacity, force_alpha=True)
+                    gs_list.append(stop)
+                grad_fill.append(gs_list)
+                linear = OxmlElement('a:lin')
+                angle = number(gradient.get('angle'), 0.0, -3600.0, 3600.0) % 360
+                linear.set('ang', str(round(angle * 60000)))
+                linear.set('scaled', '1')
+                grad_fill.append(linear)
+                insert_before_text_fonts(grad_fill)
+        elif transparency > 0:
+            for rgb in r_pr.findall('.//' + qn('a:srgbClr')):
+                for alpha in list(rgb.findall(qn('a:alpha'))):
+                    rgb.remove(alpha)
+                alpha = OxmlElement('a:alpha')
+                alpha.set('val', str(round(fill_opacity * 100000)))
+                rgb.append(alpha)
+
+        for line in list(r_pr.findall(qn('a:ln'))):
+            r_pr.remove(line)
+        outline = effects.get('outline')
+        if isinstance(outline, dict):
+            outline_color = color(outline.get('color'))
+            outline_width = number(outline.get('width_pt'), 0.0, 0.0, 20.0)
+            if outline_color and outline_width > 0:
+                line = OxmlElement('a:ln')
+                line.set('w', str(round(outline_width * 12700)))
+                solid_fill = OxmlElement('a:solidFill')
+                add_rgb(solid_fill, outline_color, outline.get('opacity', 1.0))
+                line.append(solid_fill)
+                r_pr.insert(0, line)
+
+        for effect_list in list(r_pr.findall(qn('a:effectLst'))):
+            r_pr.remove(effect_list)
+        glow = effects.get('glow')
+        shadow = effects.get('shadow')
+        effect_list = OxmlElement('a:effectLst')
+
+        if isinstance(glow, dict):
+            glow_color = color(glow.get('color'))
+            glow_radius = number(glow.get('radius_pt'), 0.0, 0.0, 50.0)
+            if glow_color and glow_radius > 0:
+                glow_element = OxmlElement('a:glow')
+                glow_element.set('rad', str(round(glow_radius * 12700)))
+                add_rgb(glow_element, glow_color, glow.get('opacity', 1.0))
+                effect_list.append(glow_element)
+
+        if isinstance(shadow, dict):
+            shadow_color = color(shadow.get('color'))
+            if shadow_color:
+                shadow_element = OxmlElement('a:outerShdw')
+                shadow_element.set('blurRad', str(round(number(shadow.get('blur_pt'), 0.0, 0.0, 100.0) * 12700)))
+                shadow_element.set('dist', str(round(number(shadow.get('distance_pt'), 0.0, 0.0, 100.0) * 12700)))
+                shadow_angle = number(shadow.get('angle'), 0.0, -3600.0, 3600.0) % 360
+                shadow_element.set('dir', str(round(shadow_angle * 60000)))
+                shadow_element.set('algn', 'ctr')
+                shadow_element.set('rotWithShape', '0')
+                add_rgb(shadow_element, shadow_color, shadow.get('opacity', 1.0))
+                effect_list.append(shadow_element)
+
+        if len(effect_list):
+            insert_before_text_fonts(effect_list)
+
     def add_text_element(
         self,
         slide,
@@ -486,10 +630,16 @@ class PPTXBuilder:
         is_bold = False
         is_italic = False
         is_underline = False
+        font_family = None
+        font_effects = {}
+        character_spacing_pt = None
         if text_style:
             is_bold = getattr(text_style, 'is_bold', False)
             is_italic = getattr(text_style, 'is_italic', False)
             is_underline = getattr(text_style, 'is_underline', False)
+            font_family = getattr(text_style, 'font_family', None)
+            font_effects = getattr(text_style, 'font_effects', {})
+            character_spacing_pt = getattr(text_style, 'character_spacing_pt', None)
         
         # Make title text bold (legacy behavior)
         if text_level == 1 or text_level == 'title':
@@ -508,9 +658,11 @@ class PPTXBuilder:
                 run.font.size = Pt(font_size)
                 run.font.bold = is_bold
                 run.font.underline = is_underline
+                self._apply_font_family(run.font, font_family)
                 # Set segment-specific color
                 r, g, b = seg.color_rgb
                 run.font.color.rgb = RGBColor(r, g, b)
+                self._apply_font_effects(run.font, font_effects, character_spacing_pt)
                 
                 # Handle LaTeX formula segments
                 if hasattr(seg, 'is_latex') and seg.is_latex:
@@ -533,11 +685,13 @@ class PPTXBuilder:
             paragraph.font.bold = is_bold
             paragraph.font.italic = is_italic
             paragraph.font.underline = is_underline
+            self._apply_font_family(paragraph.font, font_family)
             
             # Apply single font color if provided
             if text_style and hasattr(text_style, 'font_color_rgb') and text_style.font_color_rgb:
                 r, g, b = text_style.font_color_rgb
                 paragraph.font.color.rgb = RGBColor(r, g, b)
+            self._apply_font_effects(paragraph.font, font_effects, character_spacing_pt)
             
             style_info = f" | color={text_style.font_color_rgb if text_style else 'default'}"
         

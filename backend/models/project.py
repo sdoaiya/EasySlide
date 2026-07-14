@@ -1,9 +1,43 @@
 """
 Project model
 """
+import json
 import uuid
 from datetime import datetime
 from . import db
+
+
+DEFAULT_NATIVE_IMAGE_SETTINGS = {
+    'density': 'standard',
+    'style': 'theme',
+    'custom_prompt': '',
+    'custom_counts': {},
+}
+NATIVE_IMAGE_DENSITIES = {'sparse', 'standard', 'rich', 'custom'}
+NATIVE_IMAGE_STYLES = {'theme', 'photo', '3d', 'flat', 'tech', 'custom'}
+
+
+def normalize_native_image_settings(value):
+    if value is None:
+        return dict(DEFAULT_NATIVE_IMAGE_SETTINGS)
+    if not isinstance(value, dict):
+        raise ValueError('native_image_settings must be an object')
+    unknown = set(value) - set(DEFAULT_NATIVE_IMAGE_SETTINGS)
+    if unknown:
+        raise ValueError(f"native_image_settings contains unknown fields: {', '.join(sorted(unknown))}")
+    settings = {**DEFAULT_NATIVE_IMAGE_SETTINGS, **value}
+    if settings['density'] not in NATIVE_IMAGE_DENSITIES:
+        raise ValueError('Invalid native image density')
+    if settings['style'] not in NATIVE_IMAGE_STYLES:
+        raise ValueError('Invalid native image style')
+    if not isinstance(settings['custom_prompt'], str) or len(settings['custom_prompt']) > 2000:
+        raise ValueError('native image custom_prompt must be text within 2000 characters')
+    if not isinstance(settings['custom_counts'], dict) or any(
+        not isinstance(page_id, str) or isinstance(count, bool) or not isinstance(count, int) or count < 0 or count > 10
+        for page_id, count in settings['custom_counts'].items()
+    ):
+        raise ValueError('native image custom_counts must map page ids to counts from 0 to 10')
+    return settings
 
 
 class Project(db.Model):
@@ -21,6 +55,9 @@ class Project(db.Model):
     outline_requirements = db.Column(db.Text, nullable=True)  # 大纲生成要求
     description_requirements = db.Column(db.Text, nullable=True)  # 页面描述生成要求
     creation_type = db.Column(db.String(20), nullable=False, default='idea')  # idea|outline|descriptions
+    render_mode = db.Column(db.String(20), nullable=False, default='image', server_default='image')  # image|native
+    native_theme = db.Column(db.String(100), nullable=True)
+    native_image_settings = db.Column(db.Text, nullable=True)
     template_image_path = db.Column(db.String(500), nullable=True)
     template_style = db.Column(db.Text, nullable=True)  # 风格描述文本（无模板图模式）
     # 导出设置
@@ -42,6 +79,17 @@ class Project(db.Model):
                            cascade='all, delete-orphan')
     materials = db.relationship('Material', back_populates='project', lazy='select',
                            cascade='all, delete-orphan')
+
+    def get_native_image_settings(self):
+        if not self.native_image_settings:
+            return dict(DEFAULT_NATIVE_IMAGE_SETTINGS)
+        try:
+            return normalize_native_image_settings(json.loads(self.native_image_settings))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return dict(DEFAULT_NATIVE_IMAGE_SETTINGS)
+
+    def set_native_image_settings(self, value):
+        self.native_image_settings = json.dumps(normalize_native_image_settings(value), ensure_ascii=False)
     
     def to_dict(self, include_pages=False):
         """Convert to dictionary"""
@@ -64,6 +112,9 @@ class Project(db.Model):
             'outline_requirements': self.outline_requirements,
             'description_requirements': self.description_requirements,
             'creation_type': self.creation_type,
+            'render_mode': self.render_mode or 'image',
+            'native_theme': self.native_theme,
+            'native_image_settings': self.get_native_image_settings(),
             'template_image_url': f'/files/{self.id}/template/{self.template_image_path.split("/")[-1]}' if self.template_image_path else None,
             'template_style': self.template_style,
             'export_extractor_method': self.export_extractor_method or 'hybrid',

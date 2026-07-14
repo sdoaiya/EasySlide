@@ -4,6 +4,7 @@ import * as api from '@/api/endpoints';
 import { devLog } from '@/utils/logger';
 import { getT } from '@/utils/i18nHelper';
 import { normalizeErrorMessage } from '@/utils';
+import type { NativeExportQualityReport } from '@/types';
 
 const exportI18n = {
   zh: { exportStore: { exportFailed: '导出失败', pollFailed: '轮询失败' } },
@@ -13,7 +14,7 @@ const t = getT(exportI18n);
 
 // Note: Backend uses 'RUNNING' but we also accept 'PROCESSING' for compatibility
 export type ExportTaskStatus = 'PENDING' | 'PROCESSING' | 'RUNNING' | 'PAUSED' | 'COMPLETED' | 'FAILED';
-export type ExportTaskType = 'pptx' | 'pdf' | 'editable-pptx' | 'images' | 'video';
+export type ExportTaskType = 'pptx' | 'pdf' | 'editable-pptx' | 'native-pptx' | 'native-pdf' | 'native-html' | 'images' | 'video';
 
 export interface ExportTask {
   id: string;
@@ -38,6 +39,7 @@ export interface ExportTask {
       other_warnings?: string[];
       total_warnings?: number;
     };
+    quality_report?: NativeExportQualityReport;
   };
   downloadUrl?: string;
   filename?: string;
@@ -171,7 +173,7 @@ export const useExportTasksStore = create<ExportTasksState>()(
               get().updateTask(id, updates);
             } else if (task.status === 'FAILED') {
               const taskErrorMessage = task.error_message
-                || (typeof task.error === 'string' ? task.error : task.error?.message)
+                || task.error
                 || t('exportStore.exportFailed');
               updates.errorMessage = normalizeErrorMessage(taskErrorMessage);
               updates.completedAt = new Date().toISOString();
@@ -210,8 +212,10 @@ export const useExportTasksStore = create<ExportTasksState>()(
       resumeTask: async (id) => {
         const task = get().tasks.find(item => item.id === id);
         if (!task) return;
-        await api.resumeTask(task.projectId, task.taskId);
-        get().updateTask(id, { status: 'RUNNING' });
+        const response = await api.resumeTask(task.projectId, task.taskId);
+        const status = (response.data?.status || 'RUNNING') as ExportTaskStatus;
+        get().updateTask(id, { status });
+        if (task.type.startsWith('native-') && status === 'PENDING') return;
         await get().pollTask(id, task.projectId, task.taskId);
       },
 
@@ -219,7 +223,8 @@ export const useExportTasksStore = create<ExportTasksState>()(
         // 恢复所有正在进行的任务并重新开始轮询
         const state = get();
         const activeTasks = state.tasks.filter(
-          task => task.status === 'PENDING' || task.status === 'PROCESSING' || task.status === 'RUNNING'
+          task => !task.type.startsWith('native-')
+            && (task.status === 'PENDING' || task.status === 'PROCESSING' || task.status === 'RUNNING')
         );
         
         if (activeTasks.length > 0) {

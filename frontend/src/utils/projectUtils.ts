@@ -141,12 +141,35 @@ export const getStatusColor = (project: Project): string => {
   return statusColorMap[getStatusKey(project)];
 };
 
+export const getNativeDeckTaskStorageKey = (projectId: string): string =>
+  `nativeDeckGenerationTask:${projectId}`;
+
 /**
  * 获取项目路由路径
  */
 export const getProjectRoute = (project: Project): string => {
   const projectId = project.id || project.project_id;
   if (!projectId) return '/';
+
+  if (project.render_mode === 'native') {
+    const hasNativeLayout = project.pages?.some(page => page.native_layout);
+    const hasNativeTask = (() => {
+      try {
+        return !!localStorage.getItem(getNativeDeckTaskStorageKey(projectId));
+      } catch {
+        return false;
+      }
+    })();
+    const hasNativeGenerationStatus = project.status === 'NATIVE_DECK_GENERATED'
+      || project.pages?.some(page =>
+        page.status === 'NATIVE_GENERATED'
+        || page.status === 'GENERATING'
+        || page.status === 'QUEUED'
+      );
+    if (hasNativeLayout || hasNativeTask || hasNativeGenerationStatus) {
+      return `/project/${projectId}/preview`;
+    }
+  }
   
   if (project.pages && project.pages.length > 0) {
     const hasImages = project.pages.some(p => p.generated_image_path);

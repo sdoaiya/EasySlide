@@ -197,6 +197,33 @@ describe('useExportTasksStore', () => {
     expect(getTaskStatus).not.toHaveBeenCalled()
   })
 
+  it('keeps resumed native exports pending for a browser restart', async () => {
+    vi.mocked(resumeTaskApi).mockResolvedValue({ data: { status: 'PENDING' } } as any)
+    useExportTasksStore.getState().addTask({
+      id: 'native-export', taskId: 'native-task', projectId: 'project-a', type: 'native-pptx', status: 'PAUSED',
+    })
+
+    await useExportTasksStore.getState().resumeTask('native-export')
+
+    expect(useExportTasksStore.getState().tasks[0].status).toBe('PENDING')
+    expect(getTaskStatus).not.toHaveBeenCalled()
+  })
+
+  it('leaves active native browser exports for the native workspace to restore', () => {
+    useExportTasksStore.getState().addTask({
+      id: 'native-export', taskId: 'native-task', projectId: 'project-a', type: 'native-pptx', status: 'PENDING',
+    })
+    useExportTasksStore.getState().addTask({
+      id: 'video-export', taskId: 'video-task', projectId: 'project-a', type: 'video', status: 'PENDING',
+    })
+    vi.mocked(getTaskStatus).mockResolvedValue({ data: { status: 'COMPLETED' } } as any)
+
+    useExportTasksStore.getState().restoreActiveTasks()
+
+    expect(getTaskStatus).toHaveBeenCalledWith('project-a', 'video-task')
+    expect(getTaskStatus).not.toHaveBeenCalledWith('project-a', 'native-task')
+  })
+
   it('keeps polling tasks active when a status request times out', async () => {
     vi.mocked(getTaskStatus).mockRejectedValueOnce({ code: 'ECONNABORTED', message: 'timeout' })
 

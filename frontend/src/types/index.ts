@@ -1,8 +1,8 @@
 // 页面状态
-export type PageStatus = 'DRAFT' | 'GENERATING_DESCRIPTION' | 'DESCRIPTION_GENERATED' | 'QUEUED' | 'GENERATING' | 'COMPLETED' | 'FAILED';
+export type PageStatus = 'DRAFT' | 'GENERATING_DESCRIPTION' | 'DESCRIPTION_GENERATED' | 'NATIVE_GENERATED' | 'QUEUED' | 'GENERATING' | 'COMPLETED' | 'FAILED';
 
 // 项目状态
-export type ProjectStatus = 'DRAFT' | 'OUTLINE_GENERATED' | 'DESCRIPTIONS_GENERATED' | 'COMPLETED';
+export type ProjectStatus = 'DRAFT' | 'OUTLINE_GENERATED' | 'DESCRIPTIONS_GENERATED' | 'NATIVE_DECK_GENERATED' | 'COMPLETED';
 
 // 大纲内容
 export interface OutlineContent {
@@ -46,6 +46,8 @@ export interface Page {
   outline_content: OutlineContent | null;
   description_content?: DescriptionContent;
   narration_text?: string; // TTS 旁白文本
+  native_layout?: string;
+  native_props?: Record<string, unknown>;
   generated_image_url?: string; // 后端返回 generated_image_url
   generated_image_path?: string; // 前端使用的别名
   status: PageStatus;
@@ -69,6 +71,31 @@ export type ExportExtractorMethod = 'mineru' | 'hybrid';
 // 导出设置 - 背景图获取方法
 export type ExportInpaintMethod = 'generative' | 'baidu' | 'hybrid';
 
+export type RenderMode = 'image' | 'native';
+export type NativeImageDensity = 'sparse' | 'standard' | 'rich' | 'custom';
+export type NativeImageStyle = 'theme' | 'photo' | '3d' | 'flat' | 'tech' | 'custom';
+export interface NativeImageSettings {
+  density: NativeImageDensity;
+  style: NativeImageStyle;
+  custom_prompt: string;
+  custom_counts: Record<string, number>;
+}
+
+export interface NativeExportQualityReport {
+  slideCount: number;
+  textObjects: number;
+  shapeObjects: number;
+  imageObjects: number;
+  slideSummaries: Array<{
+    index: number;
+    renderedTextObjects?: number;
+    renderedShapeObjects?: number;
+    renderedImageObjects?: number;
+    [key: string]: unknown;
+  }>;
+  warnings: Array<Record<string, unknown>>;
+}
+
 // 项目
 export interface Project {
   project_id: string;  // 后端返回 project_id
@@ -81,6 +108,9 @@ export interface Project {
   outline_requirements?: string; // 大纲生成要求
   description_requirements?: string; // 页面描述生成要求
   creation_type?: string;
+  render_mode?: RenderMode;
+  native_theme?: string;
+  native_image_settings?: NativeImageSettings;
   template_image_url?: string; // 后端返回 template_image_url
   template_image_path?: string; // 前端使用的别名
   template_style?: string; // 风格描述文本（无模板图模式）
@@ -116,7 +146,7 @@ export interface Material {
 }
 
 // 任务状态
-export type TaskStatus = 'PENDING' | 'RUNNING' | 'PAUSED' | 'COMPLETED' | 'FAILED';
+export type TaskStatus = 'PENDING' | 'PROCESSING' | 'RUNNING' | 'PAUSED' | 'COMPLETED' | 'FAILED';
 
 // 任务信息
 export interface Task {
@@ -145,6 +175,8 @@ export interface CreateProjectRequest {
   template_image?: File;
   template_style?: string;
   image_aspect_ratio?: string;
+  render_mode?: RenderMode;
+  native_theme?: string;
 }
 
 // API响应
