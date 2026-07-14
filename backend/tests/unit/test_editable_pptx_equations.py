@@ -136,6 +136,35 @@ def test_mixed_latex_segments_use_display_text_for_plain_text_rendering(tmp_path
     assert "x^2" not in slide_xml
 
 
+def test_text_style_segments_cannot_replace_extracted_text(tmp_path):
+    builder = PPTXBuilder()
+    builder.create_presentation()
+    slide = builder.add_blank_slide()
+    style = TextStyleResult(
+        font_color_rgb=(240, 200, 80),
+        colored_segments=[
+            ColoredSegment(text="The quick brown fox jumps over the lazy dog.", color_rgb=(240, 200, 80)),
+            ColoredSegment(text="[No text]", color_rgb=(240, 200, 80)),
+        ],
+    )
+
+    builder.add_text_element(
+        slide=slide,
+        text="Real title",
+        bbox=[10, 10, 180, 60],
+        text_style=style,
+    )
+
+    output = tmp_path / "style-hallucination.pptx"
+    builder.save(str(output))
+    slide_xml = _slide_xml(output)
+
+    assert "Real title" in slide_xml
+    assert "The quick brown fox jumps over the lazy dog." not in slide_xml
+    assert "[No text]" not in slide_xml
+    assert '<a:srgbClr val="F0C850"/>' in slide_xml
+
+
 def test_math_element_uses_only_native_formula_shape_without_visible_fallback(tmp_path):
     builder = PPTXBuilder()
     builder.create_presentation()

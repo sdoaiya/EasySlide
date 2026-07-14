@@ -390,11 +390,19 @@ class PPTXBuilder:
             len(text_style.colored_segments) > 0
         )
         
+        latex_segments = [
+            seg for seg in (text_style.colored_segments if has_colored_segments else [])
+            if getattr(seg, 'is_latex', False)
+        ]
+
         # Determine the actual text to use
-        # If we have colored_segments, use the text from segments (model's recognized text)
+        # colored_segments are style hints; keep OCR/extractor text as source of truth
         if has_colored_segments:
             segment_text = ''.join(seg.text for seg in text_style.colored_segments)
             if not allow_math_conversion and text and text != segment_text:
+                has_colored_segments = False
+                actual_text = text
+            elif text and not latex_segments and ''.join(segment_text.split()) != ''.join(text.split()):
                 has_colored_segments = False
                 actual_text = text
             else:
@@ -402,10 +410,6 @@ class PPTXBuilder:
         else:
             actual_text = text
 
-        latex_segments = [
-            seg for seg in (text_style.colored_segments if has_colored_segments else [])
-            if getattr(seg, 'is_latex', False)
-        ]
         if has_colored_segments and latex_segments:
             actual_text = ''.join(
                 latex_to_display_text(seg.text) if getattr(seg, 'is_latex', False) else seg.text
