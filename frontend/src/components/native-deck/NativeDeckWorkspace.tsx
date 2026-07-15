@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, Download, Home, ListTodo, Maximize2, RefreshCw, Settings2, ZoomIn, ZoomOut } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
+import { ArrowLeft, Download, Home, ListTodo, Maximize2, MonitorPlay, Redo2, RefreshCw, Settings2, Sparkles, Undo2, ZoomIn, ZoomOut } from 'lucide-react'
 import type { NativeSlideSpec } from '@/native-deck/types'
 import { useNativeDeckStore } from '@/store/useNativeDeckStore'
 import { useProjectStore } from '@/store/useProjectStore'
 import { WorkspaceShell } from '@/components/workspace/WorkspaceShell'
-import { WorkspaceStatusBar } from '@/components/workspace/WorkspaceStatusBar'
 import { NativeDeckCanvas } from './NativeDeckCanvas'
 import { NativeDeckPageRail } from './NativeDeckPageRail'
 import { NativeDeckPropertyPanel, type NativeLayoutContract } from './NativeDeckPropertyPanel'
@@ -25,6 +24,9 @@ export type NativeDeckWorkspaceProps = {
   projectId: string
   slides: NativeSlideSpec[]
   layoutContracts: readonly NativeLayoutContract[]
+  pageGenerationAction?: { label: string; onClick: () => void }
+  pageGenerationStatus?: { status: string; completed: number; failed: number; total: number; error?: string; onPause?: () => void; onResume?: () => void }
+  singlePageGenerationAction?: { label: string; disabled?: boolean; onClick: (pageId: string) => void }
   autoSaveDelay?: number
   onBack?: () => void
   onHome?: () => void
@@ -51,10 +53,13 @@ function validate(slide: NativeSlideSpec, contract: NativeLayoutContract | undef
   return errors
 }
 
-export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutContracts, autoSaveDelay = 800, onBack, onHome }: NativeDeckWorkspaceProps) {
+export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutContracts, pageGenerationAction, pageGenerationStatus, singlePageGenerationAction, autoSaveDelay = 800, onBack, onHome }: NativeDeckWorkspaceProps) {
   const { slides, selectedPageId, dirtyPageIds, savePage } = useNativeDeckStore()
   const { currentProject } = useProjectStore()
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
+  const historyPast = useRef<NativeSlideSpec[][]>([])
+  const historyFuture = useRef<NativeSlideSpec[][]>([])
+  const historyGroup = useRef<{ pageId: string; at: number }>({ pageId: '', at: 0 })
   const activeExportTaskIds = useRef(new Set<string>())
   const activeProjectId = useRef<string>()
   const [saveError, setSaveError] = useState('')
@@ -64,28 +69,48 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
   const [exportFormat, setExportFormat] = useState<'PPTX' | 'PDF' | '离线 HTML' | '讲解视频'>('PPTX')
   const [exportError, setExportError] = useState('')
   const [zoom, setZoom] = useState(1)
+  const [presenting, setPresenting] = useState(false)
   const { addTask, updateTask, pollTask, tasks } = useExportTasksStore()
-  const sourceKey = JSON.stringify(initialSlides)
+  const hydratedInitialSlides = useMemo(() => initialSlides.map((slide) => {
+    const contract = layoutContracts.find((item) => item.layout === slide.layout)
+    return contract ? { ...slide, props: hydrateNativeProps(contract, slide.props) } : slide
+  }), [initialSlides, layoutContracts])
+  const sourceKey = JSON.stringify(hydratedInitialSlides)
+
+  useEffect(() => {
+    const syncFullscreen = () => setPresenting(Boolean(document.fullscreenElement))
+    document.addEventListener('fullscreenchange', syncFullscreen)
+    return () => document.removeEventListener('fullscreenchange', syncFullscreen)
+  }, [])
+
+  const togglePresentation = async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen()
+      else await document.documentElement.requestFullscreen?.()
+    } catch {
+      setPresenting(false)
+    }
+  }
 
   useEffect(() => {
     if (activeProjectId.current !== projectId) {
       activeProjectId.current = projectId
       timers.current.forEach(clearTimeout)
       timers.current.clear()
-      useNativeDeckStore.setState({ slides: initialSlides, selectedPageId: initialSlides[0]?.pageId ?? null, dirtyPageIds: new Set() })
+      useNativeDeckStore.setState({ slides: hydratedInitialSlides, selectedPageId: hydratedInitialSlides[0]?.pageId ?? null, dirtyPageIds: new Set() })
       setSaveError('')
       return
     }
     useNativeDeckStore.setState((state) => {
       const local = new Map(state.slides.map((slide) => [slide.pageId, slide]))
-      const slides = initialSlides.map((serverSlide) => state.dirtyPageIds.has(serverSlide.pageId) ? local.get(serverSlide.pageId) || serverSlide : serverSlide)
+      const slides = hydratedInitialSlides.map((serverSlide) => state.dirtyPageIds.has(serverSlide.pageId) ? local.get(serverSlide.pageId) || serverSlide : serverSlide)
       for (const slide of state.slides) {
         if (state.dirtyPageIds.has(slide.pageId) && !slides.some((item) => item.pageId === slide.pageId)) slides.push(slide)
       }
       const selectedPageId = slides.some((slide) => slide.pageId === state.selectedPageId) ? state.selectedPageId : slides[0]?.pageId ?? null
       return { slides, selectedPageId }
     })
-  }, [projectId, sourceKey])
+  }, [hydratedInitialSlides, projectId, sourceKey])
 
   useEffect(() => () => {
     timers.current.forEach(clearTimeout)
@@ -98,7 +123,17 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
   const errors = useMemo(() => selectedSlide ? validate(selectedSlide, contract) : {}, [contract, selectedSlide])
 
   const selectPage = (pageId: string) => useNativeDeckStore.setState({ selectedPageId: pageId })
-  const queueSlideUpdate = (updated: NativeSlideSpec) => {
+  const queueSlideUpdate = (updated: NativeSlideSpec, recordHistory = true) => {
+    const now = Date.now()
+    const mergeHistory = recordHistory
+      && historyGroup.current.pageId === updated.pageId
+      && now - historyGroup.current.at < 500
+    if (recordHistory && !mergeHistory) {
+      const snapshot = structuredClone(useNativeDeckStore.getState().slides)
+      historyPast.current = [...historyPast.current, snapshot].slice(-40)
+      historyFuture.current = []
+    }
+    if (recordHistory) historyGroup.current = { pageId: updated.pageId, at: now }
     const updatedContract = layoutContracts.find((item) => item.layout === updated.layout)
     const nextErrors = validate(updated, updatedContract)
     useNativeDeckStore.setState((state) => ({
@@ -117,6 +152,33 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
   }
   const updateProps = (props: Record<string, unknown>) => {
     if (selectedSlide) queueSlideUpdate({ ...selectedSlide, props })
+  }
+  const restoreHistory = (source: MutableRefObject<NativeSlideSpec[][]>, destination: MutableRefObject<NativeSlideSpec[][]>) => {
+    const target = source.current.pop()
+    if (!target) return
+    historyGroup.current = { pageId: '', at: 0 }
+    destination.current.push(structuredClone(useNativeDeckStore.getState().slides))
+    useNativeDeckStore.setState({ slides: structuredClone(target), dirtyPageIds: new Set(target.map((slide) => slide.pageId)) })
+    setSaveError('')
+    void Promise.all(target.map((slide) => savePage(projectId, slide.pageId))).catch(() => setSaveError('历史记录保存失败，请重试'))
+  }
+  const undo = () => restoreHistory(historyPast, historyFuture)
+  const redo = () => restoreHistory(historyFuture, historyPast)
+  const applyAnimationToAll = (animation: Record<string, unknown>) => {
+    const currentSlides = useNativeDeckStore.getState().slides
+    const snapshot = structuredClone(currentSlides)
+    const previous = historyPast.current[historyPast.current.length - 1]
+    if (!previous || JSON.stringify(previous) !== JSON.stringify(snapshot)) {
+      historyPast.current = [...historyPast.current, snapshot].slice(-40)
+    }
+    historyFuture.current = []
+    const updatedSlides = currentSlides.map((slide) => ({ ...slide, props: { ...slide.props, __animation: structuredClone(animation) } }))
+    useNativeDeckStore.setState({
+      slides: updatedSlides,
+      dirtyPageIds: new Set(updatedSlides.map((slide) => slide.pageId)),
+    })
+    setSaveError('')
+    void Promise.all(updatedSlides.map((slide) => savePage(projectId, slide.pageId))).catch(() => setSaveError('批量保存失败，请重试'))
   }
   const changeLayout = (layout: string) => {
     if (!selectedSlide) return
@@ -191,19 +253,29 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
         event.preventDefault()
         void Promise.all([...dirtyPageIds].map((pageId) => savePage(projectId, pageId))).catch(() => setSaveError('保存失败，请重试'))
-      } else if (!typing && (event.key === 'PageUp' || event.key === 'PageDown')) {
+      } else if (!typing && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
+        event.preventDefault()
+        undo()
+      } else if (!typing && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') {
+        event.preventDefault()
+        redo()
+      } else if (!typing && !event.altKey && !event.ctrlKey && !event.metaKey && ['PageUp', 'PageDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', ' '].includes(event.key)) {
         event.preventDefault()
         const index = slides.findIndex((slide) => slide.pageId === selectedPageId)
-        const next = Math.max(0, Math.min(slides.length - 1, index + (event.key === 'PageDown' ? 1 : -1)))
+        const next = event.key === 'Home'
+          ? 0
+          : event.key === 'End'
+            ? slides.length - 1
+            : Math.max(0, Math.min(slides.length - 1, index + (event.key === 'PageDown' || event.key === 'ArrowRight' || event.key === ' ' ? 1 : -1)))
         if (slides[next]) selectPage(slides[next].pageId)
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [dirtyPageIds, projectId, savePage, selectedPageId, slides])
+  }, [dirtyPageIds, projectId, savePage, selectedPageId, slides, undo, redo])
 
-  const status = exportError || saveError || (dirtyPageIds.size ? '未保存' : '已保存')
   const exportTitle = useMemo(() => nativeExportTitle(currentProject, slides), [currentProject, slides])
+  const saveStatus = exportError || saveError || (dirtyPageIds.size ? '未保存' : '已保存')
   const showExportSurface = async () => {
     setExportSurfaceVisible(true)
     await new Promise<void>((resolve) => {
@@ -332,6 +404,9 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
   return (
     <WorkspaceShell
       hidePanelToggles
+      hideStatusBar
+      softBorders
+      sidebarWidth="264px"
       toolbar={(
         <div className="flex min-w-0 items-center justify-between gap-3">
           <div className="flex min-w-0 flex-1 items-center gap-3">
@@ -346,11 +421,24 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            <button type="button" aria-label="撤销" title="撤销" disabled={!historyPast.current.length} onClick={undo} className="hidden h-10 w-9 items-center justify-center rounded-lg hover:bg-background-hover disabled:opacity-30 md:inline-flex"><Undo2 size={17} aria-hidden="true" /></button>
+            <button type="button" aria-label="重做" title="重做" disabled={!historyFuture.current.length} onClick={redo} className="hidden h-10 w-9 items-center justify-center rounded-lg hover:bg-background-hover disabled:opacity-30 md:inline-flex"><Redo2 size={17} aria-hidden="true" /></button>
             <button type="button" onClick={() => media.setSettingsOpen(true)} className="hidden h-10 items-center gap-2 rounded-lg px-3 text-sm font-semibold hover:bg-background-hover lg:inline-flex"><Settings2 size={17} />项目设置</button>
+            {media.pages.length > 0 && (
+              <button type="button" aria-label={media.running ? (media.paused ? '继续生成' : '暂停生成') : '批量生成'} title={media.remaining > 0 ? `批量生成 ${media.remaining} 张图片` : '没有待生成图片'} disabled={!media.running && media.remaining === 0} onClick={media.running ? (media.paused ? media.resume : media.pause) : media.start} className="hidden h-10 items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 text-sm font-semibold text-sky-700 hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-45 lg:inline-flex"><Sparkles size={17} />{media.running ? (media.paused ? '继续生成' : '暂停生成') : '批量生成'}</button>
+            )}
+            {pageGenerationAction && <button type="button" onClick={pageGenerationAction.onClick} className="hidden h-10 items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 text-sm font-semibold text-sky-700 hover:bg-sky-100 lg:inline-flex"><Sparkles size={17} />{pageGenerationAction.label}</button>}
             <button type="button" onClick={() => window.location.reload()} className="hidden h-10 items-center gap-2 rounded-lg px-3 text-sm font-semibold hover:bg-background-hover md:inline-flex"><RefreshCw size={17} />刷新</button>
+            <button type="button" aria-label={presenting ? '退出演示模式' : '演示模式'} title={presenting ? '退出演示模式' : '演示模式'} onClick={() => void togglePresentation()} className="hidden h-10 items-center gap-2 rounded-lg px-3 text-sm font-semibold hover:bg-background-hover md:inline-flex"><MonitorPlay size={17} />{presenting ? '退出演示' : '演示'}</button>
             <button type="button" aria-label="导出任务" title="导出任务" onClick={() => setShowTasks((value) => !value)} className="relative flex h-10 items-center gap-1 rounded-lg px-2 text-sm font-semibold hover:bg-background-hover">
               <ListTodo size={17} aria-hidden="true" />{tasks.filter((task) => task.projectId === projectId).length || 0}
             </button>
+            <div className="hidden items-center gap-1 rounded-lg border border-slate-200 bg-white px-1 dark:border-border-primary dark:bg-background-secondary md:flex">
+              <button type="button" aria-label="缩小画布" title="缩小画布" disabled={zoom <= 0.5} onClick={() => setZoom((value) => Math.max(0.5, value - 0.1))} className="flex h-8 w-8 items-center justify-center rounded hover:bg-background-hover disabled:opacity-35"><ZoomOut size={15} /></button>
+              <span className="w-12 text-center text-xs text-foreground-secondary">{Math.round(zoom * 100)}%</span>
+              <button type="button" aria-label="放大画布" title="放大画布" disabled={zoom >= 2} onClick={() => setZoom((value) => Math.min(2, value + 0.1))} className="flex h-8 w-8 items-center justify-center rounded hover:bg-background-hover disabled:opacity-35"><ZoomIn size={15} /></button>
+              <button type="button" aria-label="适应窗口" title="适应窗口" onClick={() => setZoom(1)} className="flex h-8 w-8 items-center justify-center rounded hover:bg-background-hover"><Maximize2 size={15} /></button>
+            </div>
             <select aria-label="导出格式" value={exportFormat} onChange={(event) => setExportFormat(event.target.value as typeof exportFormat)} className="hidden h-10 rounded-xl border border-border bg-background px-3 text-sm md:block">
               <option>PPTX</option><option>PDF</option><option>离线 HTML</option><option>讲解视频</option>
             </select>
@@ -360,18 +448,32 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
           </div>
         </div>
       )}
-      sidebar={<NativeDeckPageRail slides={slides} selectedPageId={selectedPageId} onSelect={selectPage} onAdd={() => void createSlide()} onDuplicate={(pageId) => void createSlide(slides.find((slide) => slide.pageId === pageId))} onDelete={(pageId) => void removeSlide(pageId)} onMove={(pageId, direction) => void moveSlide(pageId, direction)} imageAction={media.remaining > 0 ? { label: '批量生成', disabled: media.running, onClick: media.start } : media.running ? { label: '生成中', disabled: true, onClick: media.pause } : undefined} />}
-      inspector={<NativeDeckPropertyPanel slide={selectedSlide} contract={contract} contracts={layoutContracts} errors={errors} onChange={updateProps} onLayoutChange={changeLayout} mediaActions={media.mediaActions} />}
-      statusBar={<WorkspaceStatusBar><span className={exportError || saveError ? 'text-error' : ''} role={exportError || saveError ? 'alert' : undefined}>{status}</span><div className="ml-auto flex items-center gap-1"><button type="button" aria-label="缩小画布" title="缩小画布" disabled={zoom <= 0.5} onClick={() => setZoom((value) => Math.max(0.5, value - 0.1))} className="flex h-8 w-8 items-center justify-center rounded hover:bg-background-hover disabled:opacity-35"><ZoomOut size={15} /></button><span className="w-12 text-center text-xs">{Math.round(zoom * 100)}%</span><button type="button" aria-label="放大画布" title="放大画布" disabled={zoom >= 2} onClick={() => setZoom((value) => Math.min(2, value + 0.1))} className="flex h-8 w-8 items-center justify-center rounded hover:bg-background-hover disabled:opacity-35"><ZoomIn size={15} /></button><button type="button" aria-label="适应窗口" title="适应窗口" onClick={() => setZoom(1)} className="flex h-8 w-8 items-center justify-center rounded hover:bg-background-hover"><Maximize2 size={15} /></button></div></WorkspaceStatusBar>}
+      sidebar={<NativeDeckPageRail slides={slides} selectedPageId={selectedPageId} onSelect={selectPage} onAdd={() => void createSlide()} onDuplicate={(pageId) => void createSlide(slides.find((slide) => slide.pageId === pageId))} onDelete={(pageId) => void removeSlide(pageId)} onMove={(pageId, direction) => void moveSlide(pageId, direction)} pageAction={pageGenerationAction} pageGenerationAction={singlePageGenerationAction || (media.pages.length > 0 ? { label: '生成本页', disabled: media.running, onClick: media.runPage } : undefined)} imageAction={media.pages.length > 0 ? { label: media.running ? (media.paused ? '继续生成' : '暂停生成') : '批量生成', disabled: !media.running && media.remaining === 0, onClick: media.running ? (media.paused ? media.resume : media.pause) : media.start } : undefined} />}
+      inspector={<NativeDeckPropertyPanel slide={selectedSlide} contract={contract} contracts={layoutContracts} errors={errors} onChange={updateProps} onLayoutChange={changeLayout} onApplyAnimation={applyAnimationToAll} mediaActions={media.mediaActions} />}
+      presenting={presenting}
     >
-      <NativeDeckCanvas
-        slide={selectedSlide}
-        zoom={zoom}
-        pageIndex={selectedIndex}
-        pageCount={slides.length}
-        onPrevious={() => slides[selectedIndex - 1] && selectPage(slides[selectedIndex - 1].pageId)}
-        onNext={() => slides[selectedIndex + 1] && selectPage(slides[selectedIndex + 1].pageId)}
-      />
+      <div className="relative flex h-full min-w-0 flex-col">
+        {saveError && <div className="absolute bottom-4 left-1/2 z-20 -translate-x-1/2 rounded-lg border border-red-200 bg-red-50/95 px-3 py-2 text-xs text-red-700 shadow-sm" role="alert">{saveError}</div>}
+        <span className="sr-only" aria-live="polite">{saveStatus}</span>
+        <div className="min-h-0 flex-1">
+          <NativeDeckCanvas
+            slide={selectedSlide}
+            zoom={zoom}
+            pageIndex={selectedIndex}
+            pageCount={slides.length}
+            onPrevious={() => slides[selectedIndex - 1] && selectPage(slides[selectedIndex - 1].pageId)}
+            onNext={() => slides[selectedIndex + 1] && selectPage(slides[selectedIndex + 1].pageId)}
+            presenting={presenting}
+            emptyAction={pageGenerationAction}
+          />
+        </div>
+        {pageGenerationStatus && pageGenerationStatus.status !== 'COMPLETED' && <div className={`flex shrink-0 items-center justify-center gap-3 border-t px-4 py-2 text-sm ${pageGenerationStatus.status === 'FAILED' ? 'border-red-200 bg-red-50 text-red-700' : 'border-sky-100 bg-white/90 text-sky-700'}`} role={pageGenerationStatus.status === 'FAILED' ? 'alert' : 'status'}>
+          <span>{pageGenerationStatus.status === 'FAILED' ? `页面生成失败：${pageGenerationStatus.error || '请稍后重试'}` : pageGenerationStatus.status === 'PAUSED' ? `生成已暂停 ${pageGenerationStatus.completed}/${pageGenerationStatus.total}` : `正在生成页面 ${pageGenerationStatus.completed}/${pageGenerationStatus.total}`}{pageGenerationStatus.failed > 0 && `，失败 ${pageGenerationStatus.failed}`}</span>
+          {pageGenerationStatus.status === 'FAILED' && pageGenerationStatus.onResume && <button type="button" onClick={pageGenerationStatus.onResume} className="rounded-md bg-cyan-600 px-3 py-1 text-xs font-medium text-white">重新生成</button>}
+          {pageGenerationStatus.status === 'PAUSED' && pageGenerationStatus.onResume && <button type="button" onClick={pageGenerationStatus.onResume} className="rounded-md bg-cyan-600 px-3 py-1 text-xs font-medium text-white">继续生成</button>}
+          {(pageGenerationStatus.status === 'PENDING' || pageGenerationStatus.status === 'PROCESSING') && pageGenerationStatus.onPause && <button type="button" onClick={pageGenerationStatus.onPause} className="rounded-md border border-sky-200 bg-white px-3 py-1 text-xs font-medium text-sky-700">暂停</button>}
+        </div>}
+      </div>
       {exportSurfaceVisible && <NativeDeckExportSurface slides={slides} />}
       {showTasks && <div className="fixed right-4 top-24 z-50 w-[min(380px,calc(100vw-2rem))]"><ExportTasksPanel projectId={projectId} onRetry={(task) => void retryExport(task)} /></div>}
       <NativeImageSettingsDialog open={media.settingsOpen} settings={media.settings} pages={media.pages} saving={media.savingSettings} onClose={() => media.setSettingsOpen(false)} onSave={(settings) => void media.saveSettings(settings)} />
@@ -406,4 +508,19 @@ function defaultPropsFor(contract: NativeLayoutContract, existing: Record<string
     }
     return [key, typeof existing[key] === 'string' ? existing[key] : key === 'title' ? '新页面' : '']
   }))
+}
+
+function hydrateNativeProps(contract: NativeLayoutContract, props: Record<string, unknown>) {
+  const defaults = defaultPropsFor(contract)
+  const hydrated = { ...defaults, ...props }
+  for (const [key, value] of Object.entries(props)) {
+    if (isEmptyNativeValue(value) && defaults[key] !== undefined) hydrated[key] = structuredClone(defaults[key])
+  }
+  return hydrated
+}
+
+function isEmptyNativeValue(value: unknown) {
+  if (typeof value === 'string') return value.trim() === ''
+  if (Array.isArray(value)) return value.length === 0
+  return value === null || value === undefined
 }

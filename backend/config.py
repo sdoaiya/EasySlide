@@ -102,7 +102,7 @@ class Config:
     
     # 并发配置
     MAX_DESCRIPTION_WORKERS = int(os.getenv('MAX_DESCRIPTION_WORKERS', '20'))
-    MAX_IMAGE_WORKERS = int(os.getenv('MAX_IMAGE_WORKERS', '20'))
+    MAX_IMAGE_WORKERS = int(os.getenv('MAX_IMAGE_WORKERS', '4'))
     
     # 图片生成配置
     DEFAULT_ASPECT_RATIO = "16:9"

@@ -30,14 +30,27 @@ def _set_export_task_progress(task: Task, progress: dict):
     task.set_progress(progress)
 
 
-def _wait_if_export_task_paused(task_id: str):
-    """Pause cooperatively at export progress boundaries."""
+def _wait_if_task_paused(task_id: str):
+    """Pause cooperatively at task progress boundaries."""
     while True:
         db.session.expire_all()
         task = Task.query.get(task_id)
         if not task or task.status != 'PAUSED':
             return
         time.sleep(0.25)
+
+
+def _wait_if_export_task_paused(task_id: str):
+    _wait_if_task_paused(task_id)
+
+
+def _set_image_task_progress(task: Task, progress: dict):
+    """Keep restart metadata while updating live image-generation progress."""
+    current = task.get_progress()
+    for key in ('page_ids', 'image_options'):
+        if key in current:
+            progress[key] = current[key]
+    task.set_progress(progress)
 
 
 def get_image_prompt_field_names() -> set:
@@ -384,7 +397,7 @@ def _build_region_edit_instruction(prompt: str, operation: str) -> str:
     )
 
 
-def generate_native_deck_task(task_id: str, project_id: str, ai_service, app=None):
+def generate_native_deck_task(task_id: str, project_id: str, ai_service, page_ids=None, app=None):
     """Generate validated native slide specs from existing page outlines."""
     if app is None:
         raise ValueError('Flask app instance must be provided')
@@ -401,7 +414,11 @@ def generate_native_deck_task(task_id: str, project_id: str, ai_service, app=Non
             if project.render_mode != 'native':
                 raise ValueError('只有原生可编辑项目可以生成原生页面')
 
-            pages = Page.query.filter_by(project_id=project_id).order_by(Page.order_index).all()
+            pages_query = Page.query.filter_by(project_id=project_id)
+            total_page_count = pages_query.count()
+            if page_ids:
+                pages_query = pages_query.filter(Page.id.in_(page_ids))
+            pages = pages_query.order_by(Page.order_index).all()
             service = NativeDeckService()
             task.status = 'PROCESSING'
             task.set_progress({'total': len(pages), 'completed': 0, 'failed': 0, 'warnings': []})
@@ -412,7 +429,12 @@ def generate_native_deck_task(task_id: str, project_id: str, ai_service, app=Non
             warnings = []
             used_layouts = set()
             for index, page in enumerate(pages):
-                role = 'cover' if index == 0 else 'end' if index == len(pages) - 1 else 'content'
+                _wait_if_export_task_paused(task_id)
+                db.session.expire_all()
+                task = db.session.get(Task, task_id)
+                if not task or task.status in {'FAILED', 'CANCELLED'}:
+                    return
+                role = 'cover' if page.order_index == 0 else 'end' if page.order_index == total_page_count - 1 else 'content'
                 theme = project.native_theme or 'theme01'
                 themed = service.list_layouts(role=role, theme=theme) or service.list_layouts(theme=theme)
                 candidates = [item for item in themed if item['layout'] not in used_layouts] or themed
@@ -642,16 +664,23 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
     
     with app.app_context():
         try:
+            from services.image_template_profiles import append_image_page_role_hint, infer_image_page_role, resolve_template_reference_path
             # Update task status to PROCESSING
             task = Task.query.get(task_id)
             if not task:
                 return
-            
+
+            _wait_if_task_paused(task_id)
+            db.session.expire_all()
+            task = Task.query.get(task_id)
+            if not task:
+                return
             task.status = 'PROCESSING'
             db.session.commit()
             
             # Get pages for this project (filtered by page_ids if provided)
             pages = get_filtered_pages(project_id, page_ids)
+            total_page_count = Page.query.filter_by(project_id=project_id).count()
             all_pages_data = ai_service.flatten_outline(outline)
             image_prompt_field_names = (
                 image_prompt_field_names
@@ -667,7 +696,7 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
             # 这样可以确保即使用户在上传新模板后立即生成，也能使用最新模板
             
             # Initialize progress
-            task.set_progress({
+            _set_image_task_progress(task, {
                 "total": len(pages),
                 "completed": 0,
                 "failed": 0
@@ -687,6 +716,7 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                 # 关键修复：在子线程中也需要应用上下文
                 with app.app_context():
                     try:
+                        _wait_if_task_paused(task_id)
                         logger.debug(f"Starting image generation for page {page_id}, index {page_index}")
                         # Get page from database in this thread
                         page_obj = Page.query.get(page_id)
@@ -704,6 +734,7 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                             f"project={project_id} page={page_id}",
                             on_acquire=mark_generating,
                         ):
+                            _wait_if_task_paused(task_id)
                             # Get description content
                             desc_content = page_obj.get_description_content()
                             if not desc_content:
@@ -737,9 +768,21 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                                     has_material_images = True
                             
                             # 在子线程中动态获取模板路径，确保使用最新模板
+                            role = infer_image_page_role(
+                                page_obj.order_index + 1,
+                                total_page_count,
+                                page_data,
+                                page_obj.part,
+                            )
                             page_ref_image_path = None
                             if use_template:
                                 page_ref_image_path = file_service.get_template_path(project_id)
+                                project_obj = Project.query.get(project_id)
+                                page_ref_image_path = resolve_template_reference_path(
+                                    getattr(project_obj, 'template_pack_id', None),
+                                    role,
+                                    page_ref_image_path,
+                                )
                                 # 注意：如果有风格描述，即使没有模板图片也允许生成
                                 # 这个检查已经在 controller 层完成，这里不再检查
                             
@@ -747,7 +790,7 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                             prompt = ai_service.generate_image_prompt(
                                 outline, page_data, desc_text, page_index,
                                 has_material_images=has_material_images,
-                                extra_requirements=extra_requirements,
+                                extra_requirements=append_image_page_role_hint(extra_requirements, role),
                                 language=language,
                                 has_template=use_template,
                                 aspect_ratio=aspect_ratio
@@ -841,12 +884,11 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                 logger.info(f"Task {task_id} COMPLETED - {completed} images generated, {failed} failed")
             
             # Update project status
-            from models import Project
             project = Project.query.get(project_id)
-            if project and failed == 0:
-                project.status = 'COMPLETED'
+            if project:
+                project.status = 'COMPLETED' if failed == 0 else 'DESCRIPTIONS_GENERATED'
                 db.session.commit()
-                logger.info(f"Project {project_id} status updated to COMPLETED")
+                logger.info(f"Project {project_id} status updated to {project.status}")
         
         except Exception as e:
             # Mark task as failed
@@ -855,6 +897,15 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                 task.status = 'FAILED'
                 task.error_message = str(e)
                 task.completed_at = datetime.utcnow()
+                failed_page_ids = task.get_progress().get('page_ids')
+                if isinstance(failed_page_ids, list):
+                    Page.query.filter(
+                        Page.id.in_(failed_page_ids),
+                        Page.generated_image_path.is_(None),
+                    ).update({'status': 'FAILED'}, synchronize_session=False)
+                project = Project.query.get(project_id)
+                if project:
+                    project.status = 'DESCRIPTIONS_GENERATED'
                 db.session.commit()
 
 
@@ -875,6 +926,7 @@ def generate_single_page_image_task(task_id: str, project_id: str, page_id: str,
     
     with app.app_context():
         try:
+            from services.image_template_profiles import append_image_page_role_hint, infer_image_page_role, resolve_template_reference_path
             # Update task status to PROCESSING
             task = Task.query.get(task_id)
             if not task:
@@ -937,11 +989,20 @@ def generate_single_page_image_task(task_id: str, project_id: str, page_id: str,
             page_data = page.get_outline_content() or {}
             if page.part:
                 page_data['part'] = page.part
-            
+
+            total_pages = Page.query.filter_by(project_id=project_id).count()
+            role = infer_image_page_role(page.order_index + 1, total_pages, page_data, page.part)
+            project = Project.query.get(project_id)
+            ref_image_path = resolve_template_reference_path(
+                getattr(project, 'template_pack_id', None),
+                role,
+                ref_image_path,
+            )
+
             prompt = ai_service.generate_image_prompt(
                 outline, page_data, desc_text, page.order_index + 1,
                 has_material_images=has_material_images,
-                extra_requirements=extra_requirements,
+                extra_requirements=append_image_page_role_hint(extra_requirements, role),
                 language=language,
                 has_template=use_template,
                 aspect_ratio=aspect_ratio

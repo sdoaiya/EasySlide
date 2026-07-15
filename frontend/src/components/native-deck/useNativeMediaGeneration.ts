@@ -64,6 +64,15 @@ export function useNativeMediaGeneration({ projectId, slides, contracts, onSlide
     setRunning(false)
   }
 
+  const runPage = async (pageId: string, nextSettings = settings) => {
+    pausedRef.current = false
+    setPaused(false)
+    setRunning(true)
+    const jobs = collectNativeMediaSlots(useNativeDeckStore.getState().slides, contracts, nextSettings).filter((slot) => slot.pageId === pageId)
+    await runNativeMediaQueue(jobs, (slot) => generate(slot, '', false, nextSettings), { concurrency: 1, isPaused: () => pausedRef.current })
+    setRunning(false)
+  }
+
   const saveSettings = async (next: NativeImageSettings) => {
     setSavingSettings(true)
     try {
@@ -97,6 +106,7 @@ export function useNativeMediaGeneration({ projectId, slides, contracts, onSlide
   return {
     settings, settingsOpen, setSettingsOpen, savingSettings, pages, remaining: remaining.length,
     running, paused, busy, mediaActions, selectedSlot, closeSelector: () => setSelectedSlot(undefined),
+    runPage: (pageId: string) => void runPage(pageId),
     useSelectedMaterial: (url: string) => { if (selectedSlot) apply(selectedSlot, url); setSelectedSlot(undefined) },
     saveSettings, start: () => void run(), pause: () => { pausedRef.current = true; setPaused(true) }, resume: () => void run(),
   }

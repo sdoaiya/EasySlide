@@ -82,6 +82,19 @@ def test_normalizes_only_contract_fields():
     }
 
 
+def test_normalizes_missing_native_values_from_layout_defaults_and_accepts_animation_metadata():
+    service = NativeDeckService()
+
+    slide = service.normalize_slide(
+        'theme01_page001',
+        {'titleTop': None, '__animation': {'enter': 'fade'}},
+    )
+
+    assert slide['theme'] == 'theme01'
+    assert slide['props']['titleTop'] == '新消费趋势'
+    assert slide['props']['__animation'] == {'enter': 'fade'}
+
+
 def test_fits_generated_copy_to_layout_budgets_without_mutating_model_output():
     service = NativeDeckService()
     props = {'eyebrow': 'E' * 30, 'title': '融资企业榜单'}

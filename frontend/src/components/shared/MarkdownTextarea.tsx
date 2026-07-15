@@ -54,6 +54,8 @@ interface MarkdownTextareaProps {
   error?: string;
   className?: string;
   rows?: number;
+  /** Fixed editor viewport height in pixels. Content scrolls inside the editor. */
+  editorHeight?: number;
   /** Show the inline image upload button. Default: true when onFiles is provided */
   showUploadButton?: boolean;
   /** Extra content rendered on the left side of the toolbar (after built-in buttons) */
@@ -264,6 +266,7 @@ export const MarkdownTextarea = forwardRef<MarkdownTextareaRef, MarkdownTextarea
   error,
   className,
   rows = 4,
+  editorHeight,
   showUploadButton,
   toolbarLeft,
   toolbarRight,
@@ -655,8 +658,8 @@ export const MarkdownTextarea = forwardRef<MarkdownTextareaRef, MarkdownTextarea
             onDrop={handleDrop}
             onBlur={onBlur}
             onFocus={onFocus}
-            style={{ minHeight: `${minHeight}px` }}
-            className="w-full px-4 py-3 outline-none overflow-y-auto resize-y whitespace-pre-wrap break-words text-gray-900 dark:text-foreground-primary"
+            style={{ minHeight: `${minHeight}px`, ...(editorHeight ? { height: `${editorHeight}px` } : {}) }}
+            className="w-full px-4 py-3 outline-none overflow-y-auto whitespace-pre-wrap break-words text-gray-900 dark:text-foreground-primary"
           />
 
           {/* Placeholder */}

@@ -58,6 +58,7 @@ import { listUserTemplates, uploadUserTemplate, deleteUserTemplate, type UserTem
 import { materialUrlToFile } from '@/components/shared/MaterialSelector';
 import type { Material } from '@/api/endpoints';
 import { ImagePlus, X } from 'lucide-react';
+import { GORDEN_TEMPLATE_PACKS, findGordenTemplatePack } from '@/config/gordenTemplatePacks';
 
 const presetTemplateAssets = [
   { id: '1', key: 'warehouseSafety', file: 'template_tuku_warehouseSafety.png' },
@@ -101,6 +102,8 @@ export const TemplateSelector: React.FC<TemplateSelectorProps> = ({
     preview: getStaticAssetUrl(`/templates/${template.file}`),
     thumb: getStaticAssetUrl(`/templates/${template.file.replace('.png', '-thumb.webp')}`),
   }));
+
+  const gordenTemplates = GORDEN_TEMPLATE_PACKS;
 
   useEffect(() => {
     loadUserTemplates();
@@ -265,6 +268,38 @@ export const TemplateSelector: React.FC<TemplateSelectorProps> = ({
 
         {(mode === 'all' || mode === 'preset') && (
         <div>
+          <div className="mb-5">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-2">
+              <div>
+                <h4 className="text-sm font-semibold text-gray-700 dark:text-foreground-secondary">Gorden 模板</h4>
+                <p className="mt-0.5 text-xs text-gray-500 dark:text-foreground-tertiary">21 套中文场景模板，按视觉风格作为图片生成参考</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {gordenTemplates.map((template) => (
+                <button
+                  type="button"
+                  key={template.id}
+                  onClick={() => onSelect(null, template.id)}
+                  title={`${template.name} · ${template.style}`}
+                  className={`group relative aspect-[16/9] overflow-hidden rounded-lg border-2 text-left transition-all ${
+                    selectedTemplateId === template.id
+                      ? 'border-cyan-500 ring-2 ring-cyan-200'
+                      : 'border-gray-200 dark:border-border-primary hover:border-cyan-500'
+                  }`}
+                >
+                  <img src={template.reference} alt={template.name} className="absolute inset-0 h-full w-full object-cover" />
+                  <span className="absolute inset-x-0 bottom-0 bg-black/65 px-2 py-1.5 text-[11px] font-medium leading-tight text-white backdrop-blur-sm">
+                    {template.name}
+                  </span>
+                  {selectedTemplateId === template.id && (
+                    <span className="absolute right-1.5 top-1.5 rounded bg-cyan-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">已选择</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-2">
             <h4 className="text-sm font-medium text-gray-700 dark:text-foreground-secondary">{t('template.presetTemplates')}</h4>
             {mode === 'all' && materialSelectButton}
@@ -376,6 +411,16 @@ export const getTemplateFile = async (
     id: template.id,
     preview: getStaticAssetUrl(`/templates/${template.file}`),
   }));
+
+  const gordenTemplate = findGordenTemplatePack(templateId);
+  if (gordenTemplate) {
+    try {
+      return await fetchImageFile(gordenTemplate.reference, `${gordenTemplate.slug}-reference.webp`);
+    } catch (error) {
+      console.error('Failed to load Gorden template:', error);
+      return null;
+    }
+  }
 
   const presetTemplate = presetTemplates.find(t => t.id === templateId);
   if (presetTemplate && presetTemplate.preview) {

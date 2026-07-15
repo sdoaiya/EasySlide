@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { NativeDeckWorkspace, type NativeDeckWorkspaceProps } from './NativeDeckWorkspace'
 import type { NativeLayoutContract } from './NativeDeckPropertyPanel'
-import { generateNativeDeck, getTaskStatus } from '@/api/endpoints'
+import { generateNativeDeck, getTaskStatus, pauseTask, resumeTask } from '@/api/endpoints'
 import { useProjectStore } from '@/store/useProjectStore'
 import { getNativeDeckTaskStorageKey } from '@/utils/projectUtils'
 import layoutManifest from '../../../../shared/native-deck/layout-manifest.json'
@@ -80,11 +80,10 @@ export function NativeDeckWorkspaceLoader({ generationTaskId, totalPages = 0, ..
     }
   }, [taskId, props.projectId, syncProject])
 
-  const remainingPages = Math.max(0, totalPages - props.slides.length)
-  const startGeneration = async () => {
-    setGeneration({ status: 'PENDING', completed: 0, failed: 0, total: totalPages })
+  const startGeneration = async (pageIds?: string[]) => {
+    setGeneration({ status: 'PENDING', completed: 0, failed: 0, total: pageIds?.length || totalPages })
     try {
-      const task = (await generateNativeDeck(props.projectId)).data
+      const task = (await generateNativeDeck(props.projectId, pageIds)).data
       const nextTaskId = task?.task_id || task?.id
       if (!nextTaskId) throw new Error('创建页面生成任务失败')
       localStorage.setItem(getNativeDeckTaskStorageKey(props.projectId), nextTaskId)
@@ -94,34 +93,36 @@ export function NativeDeckWorkspaceLoader({ generationTaskId, totalPages = 0, ..
         status: 'FAILED',
         completed: 0,
         failed: 0,
-        total: totalPages,
+        total: pageIds?.length || totalPages,
         error: reason instanceof Error ? reason.message : String(reason),
       })
     }
   }
 
+  const pauseGeneration = async () => {
+    if (!taskId) return
+    const task = (await pauseTask(props.projectId, taskId)).data
+    setGeneration(current => current ? { ...current, status: task?.status || 'PAUSED' } : current)
+  }
+
+  const resumeGeneration = async () => {
+    if (!taskId) return
+    const task = (await resumeTask(props.projectId, taskId)).data
+    setGeneration(current => current ? { ...current, status: task?.status || 'PROCESSING' } : current)
+  }
+
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      {generation && generation.status !== 'COMPLETED' && (
-        <div
-          className={generation.status === 'FAILED'
-            ? 'border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700'
-            : 'border-b border-blue-200 bg-blue-50 px-4 py-2 text-sm text-blue-700'}
-          role={generation.status === 'FAILED' ? 'alert' : 'status'}
-        >
-          {generation.status === 'FAILED'
-            ? `页面生成失败：${generation.error || '请稍后重试'}`
-            : `正在生成页面 ${generation.completed}/${generation.total}`}
-          {generation.failed > 0 && `，失败 ${generation.failed}`}
-          {generation.status === 'FAILED' && remainingPages > 0 && (
-            <button type="button" onClick={() => void startGeneration()} className="ml-3 rounded-md bg-cyan-600 px-3 py-1.5 font-medium text-white hover:bg-cyan-700">
-              重新生成剩余 {remainingPages} 页
-            </button>
-          )}
-        </div>
-      )}
-      <div className="min-h-0 flex-1">
-        <NativeDeckWorkspace {...props} layoutContracts={contracts} />
+    <div className="flex h-[100dvh] min-h-0 min-w-0 flex-col overflow-hidden">
+      <div className="relative min-h-0 min-w-0 flex-1">
+        <NativeDeckWorkspace
+          {...props}
+          layoutContracts={contracts}
+          pageGenerationStatus={generation ? { ...generation, onPause: generation.status === 'PENDING' || generation.status === 'PROCESSING' ? () => void pauseGeneration() : undefined, onResume: generation.status === 'FAILED' ? () => void startGeneration() : generation.status === 'PAUSED' ? () => void resumeGeneration() : undefined } : undefined}
+          pageGenerationAction={props.slides.some(slide => slide.pending) && !generation
+            ? { label: '批量生成', onClick: () => void startGeneration(props.slides.filter(slide => slide.pending).map(slide => slide.pageId)) }
+            : undefined}
+          singlePageGenerationAction={generation ? undefined : { label: '生成本页', onClick: (pageId) => void startGeneration([pageId]) }}
+        />
       </div>
     </div>
   )

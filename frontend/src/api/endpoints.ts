@@ -36,6 +36,7 @@ export const createProject = async (data: CreateProjectRequest): Promise<ApiResp
     outline_text: data.outline_text,
     description_text: data.description_text,
     template_style: data.template_style,
+    template_pack_id: data.template_pack_id,
     image_aspect_ratio: data.image_aspect_ratio,
     render_mode: data.render_mode,
     native_theme: data.native_theme,
@@ -1392,8 +1393,8 @@ export const createNativePptxExport = async (
   return response.data;
 };
 
-export const generateNativeDeck = async (projectId: string): Promise<ApiResponse<Task>> => {
-  const response = await apiClient.post<ApiResponse<Task>>(`/api/projects/${projectId}/generate/native-deck`);
+export const generateNativeDeck = async (projectId: string, pageIds?: string[]): Promise<ApiResponse<Task>> => {
+  const response = await apiClient.post<ApiResponse<Task>>(`/api/projects/${projectId}/generate/native-deck`, pageIds?.length ? { page_ids: pageIds } : {});
   return response.data;
 };
 

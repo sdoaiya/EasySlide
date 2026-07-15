@@ -117,6 +117,40 @@ describe('native deck offline HTML export', () => {
 
     expect(() => exportNativeDeckHtml({ title: '离线演示', slides })).toThrow('https://example.com/image.png')
   })
+
+  it('preserves optional auto-advance metadata in offline HTML', async () => {
+    installDeckDom()
+    const autoSlides = slides.map((slide, index) => ({
+      ...slide,
+      props: { ...slide.props, __animation: { advanceAfter: index === 0 ? 5 : 0, elementEnter: 'fade', elementTrigger: 'click', elementEasing: 'ease-in-out' } },
+    }))
+    const html = await readBlob(exportNativeDeckHtml({ title: '自动演示', slides: autoSlides }))
+
+    expect(html).toContain('DOMContentLoaded')
+    expect(html).toContain('advanceElement')
+    expect(html).toContain('data-element-step')
+    expect(html).toContain('elementTrigger')
+    expect(html).toContain('--native-element-duration')
+    expect(html).toContain('--native-element-delay')
+    expect(html).toContain('--native-element-stagger')
+    expect(html).toContain('--native-element-easing')
+    expect(html).toContain('ease-in-out')
+    const playerScript = html.split('<script>').at(-1)?.split('</script>')[0]
+    expect(playerScript).toBeTruthy()
+    expect(() => new Function(playerScript!)).not.toThrow()
+  })
+
+  it('keeps disabled theme motion disabled in offline HTML', async () => {
+    installDeckDom()
+    const staticSlides = slides.map((slide) => ({
+      ...slide,
+      props: { ...slide.props, __animation: { internal: false } },
+    }))
+    const html = await readBlob(exportNativeDeckHtml({ title: '静态演示', slides: staticSlides }))
+
+    expect(html).toContain('data-native-internal="0"')
+    expect(html).toContain('.slide[data-native-internal="0"] *{animation:none!important}')
+  })
 })
 
 describe('native deck format entries', () => {
@@ -130,8 +164,8 @@ describe('native deck format entries', () => {
   })
 
   it.each([
-    ['PDF', 'native_project-1.pdf'],
-    ['离线 HTML', 'native_project-1.html'],
+    ['PDF', '第一页.pdf'],
+    ['离线 HTML', '第一页.html'],
   ] as const)('uploads the selected %s format to the unified export task', async (format, filename) => {
     render(
       <NativeDeckWorkspace

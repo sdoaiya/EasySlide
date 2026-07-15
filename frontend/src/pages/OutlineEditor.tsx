@@ -553,7 +553,7 @@ export const OutlineEditor: React.FC = () => {
         </div>
       </header>
 
-      <main data-testid="outline-editor-scroll-region" className="flex-1 min-h-0 overflow-y-auto p-3 md:p-4">
+      <main data-testid="outline-editor-scroll-region" className="flex-1 min-h-0 overflow-y-auto p-3 pb-24 md:p-4 md:pb-24">
         {currentProject.pages.length > 0 && (
           <div className="mb-3 flex justify-end">
             <button
@@ -586,6 +586,7 @@ export const OutlineEditor: React.FC = () => {
               onSelectFromLibrary={() => { setActiveMaterialTarget('input'); setIsMaterialSelectorOpen(true); }}
               placeholder={inputPlaceholder}
               rows={4}
+              editorHeight={190}
               className="border-0 rounded-none shadow-none min-h-[96px]"
             />
           </div>
@@ -605,6 +606,7 @@ export const OutlineEditor: React.FC = () => {
                 onSelectFromLibrary={() => { setActiveMaterialTarget('requirements'); setIsMaterialSelectorOpen(true); }}
                 placeholder={t('outline.outlineRequirementsPlaceholder')}
                 rows={4}
+                editorHeight={190}
                 showImagePreview={false}
                 className="border-0 rounded-none shadow-none min-h-[96px]"
               />
@@ -749,7 +751,7 @@ export const OutlineEditor: React.FC = () => {
           </div>
         </section>
       </main>
-      <footer data-testid="outline-editor-footer" className="flex flex-shrink-0 items-center justify-between border-t border-sky-100 bg-white px-4 py-2 dark:border-border-primary dark:bg-background-secondary">
+      <footer data-testid="outline-editor-footer" className="fixed inset-x-0 bottom-0 z-40 flex min-h-[68px] items-center justify-between border-t border-sky-100 bg-white/95 px-4 py-2 shadow-[0_-8px_24px_rgba(15,23,42,0.12)] backdrop-blur-sm dark:border-border-primary dark:bg-background-secondary/95 dark:shadow-none">
         <Button
           variant="secondary"
           icon={<ArrowLeft size={16} />}

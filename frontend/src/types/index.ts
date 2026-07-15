@@ -93,6 +93,20 @@ export interface NativeExportQualityReport {
     renderedImageObjects?: number;
     [key: string]: unknown;
   }>;
+  animationSummary?: Array<{
+    pageIndex: number;
+    enter?: string;
+    elementEnter?: string;
+    elementFallback?: 'dashi-internal-fade';
+    elementDuration?: number;
+    elementDelay?: number;
+    elementStagger?: number;
+    elementEasing?: string;
+    elementTrigger?: 'auto' | 'click';
+    transition?: string;
+    internal?: boolean;
+    advanceAfter?: number;
+  }>;
   warnings: Array<Record<string, unknown>>;
 }
 
@@ -114,6 +128,7 @@ export interface Project {
   template_image_url?: string; // 后端返回 template_image_url
   template_image_path?: string; // 前端使用的别名
   template_style?: string; // 风格描述文本（无模板图模式）
+  template_pack_id?: string | null; // 内置模板包标识
   // 导出设置
   export_extractor_method?: ExportExtractorMethod; // 组件提取方法
   export_inpaint_method?: ExportInpaintMethod; // 背景图获取方法
@@ -123,6 +138,7 @@ export interface Project {
   image_aspect_ratio?: string; // 画面比例（如 16:9, 4:3）
   status: ProjectStatus;
   pages: Page[];
+  active_image_tasks?: Task[];
   created_at: string;
   updated_at: string;
 }
@@ -174,6 +190,7 @@ export interface CreateProjectRequest {
   description_text?: string;
   template_image?: File;
   template_style?: string;
+  template_pack_id?: string | null;
   image_aspect_ratio?: string;
   render_mode?: RenderMode;
   native_theme?: string;

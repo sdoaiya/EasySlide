@@ -49,7 +49,9 @@ export default defineConfig(({ mode }) => {
   const gitShortSha = env.VITE_APP_COMMIT_SHORT_SHA || gitSha.slice(0, 7)
   
   return {
-    base: './',
+    // Dev server routes are opened directly (for example /project/:id/preview),
+    // so assets must resolve from the origin. Packaged builds keep relative paths.
+    base: mode === 'development' ? '/' : './',
     envDir,
     plugins: [react()],
     define: {

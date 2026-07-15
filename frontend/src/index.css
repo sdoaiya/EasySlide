@@ -117,6 +117,33 @@ body {
   background: #f9fafb;
 }
 
+.workspace-shell > main {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  contain: size layout;
+}
+
+/* The inspector is a fixed side panel. Its fields must never resize the canvas track. */
+.workspace-shell > aside[aria-label="属性栏"] {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  contain: inline-size;
+}
+
+.workspace-shell[data-presenting="true"] {
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) !important;
+  grid-template-areas: "canvas";
+}
+
+.workspace-shell[data-presenting="true"] > header,
+.workspace-shell[data-presenting="true"] > aside,
+.workspace-shell[data-presenting="true"] > footer {
+  display: none;
+}
+
 /* 自定义滚动条 */
 ::-webkit-scrollbar {
   width: 8px;

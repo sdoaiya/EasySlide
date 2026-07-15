@@ -21,7 +21,7 @@ const detailI18n = {
   zh: {
     home: { title: 'EasySlide' },
     detail: {
-      title: "编辑页面描述", workflowStage: "Step 2 · 页面叙事", workflowHint: "补全每页描述和视觉线索", pageCount: "共 {{count}} 页", generateImages: "生成图片", generateNative: "生成页面", generatingNative: "生成页面中...",
+      title: "编辑页面描述", workflowStage: "Step 2 · 页面叙事", workflowHint: "补全每页描述和视觉线索", pageCount: "共 {{count}} 页", generateImages: "开始生成", generateNative: "生成页面", generatingNative: "生成页面中...",
       generating: "生成中...", page: "第 {{num}} 页", titleLabel: "标题",
       description: "描述", batchGenerate: "批量生成描述", export: "导出描述", exportFull: "导出大纲和描述", import: "导入", importExport: "导入/导出",
       pagesCompleted: "页已完成", noPages: "还没有页面",
@@ -72,7 +72,7 @@ const detailI18n = {
   en: {
     home: { title: 'EasySlide' },
     detail: {
-      title: "Edit Descriptions", workflowStage: "Step 2 · Page Narrative", workflowHint: "Complete descriptions and visual cues for each page", pageCount: "{{count}} pages", generateImages: "Generate Images", generateNative: "Generate Pages", generatingNative: "Generating Pages...",
+      title: "Edit Descriptions", workflowStage: "Step 2 · Page Narrative", workflowHint: "Complete descriptions and visual cues for each page", pageCount: "{{count}} pages", generateImages: "Start Generation", generateNative: "Generate Pages", generatingNative: "Generating Pages...",
       generating: "Generating...", page: "Page {{num}}", titleLabel: "Title",
       description: "Description", batchGenerate: "Batch Generate Descriptions", export: "Export Descriptions", exportFull: "Export Outline & Descriptions", import: "Import", importExport: "Import/Export",
       pagesCompleted: "pages completed", noPages: "No pages yet",
@@ -916,7 +916,7 @@ export const DetailEditor: React.FC = () => {
       </div>
 
       {/* 主内容区 */}
-      <main data-testid="detail-editor-scroll-region" className="flex-1 min-h-0 overflow-y-auto p-3 md:p-4">
+      <main data-testid="detail-editor-scroll-region" className="flex-1 min-h-0 overflow-y-auto p-3 pb-24 md:p-4 md:pb-24">
         <div className="max-w-7xl mx-auto">
           <ReferenceFileList
             projectId={projectId}
@@ -988,7 +988,7 @@ export const DetailEditor: React.FC = () => {
           )}
         </div>
       </main>
-      <footer data-testid="detail-editor-footer" className="flex flex-shrink-0 items-center justify-between border-t border-gray-200 bg-white px-4 py-2 dark:border-border-primary dark:bg-background-secondary">
+      <footer data-testid="detail-editor-footer" className="fixed inset-x-0 bottom-0 z-40 flex min-h-[68px] items-center justify-between border-t border-sky-100 bg-white/95 px-4 py-2 shadow-[0_-8px_24px_rgba(15,23,42,0.12)] backdrop-blur-sm dark:border-border-primary dark:bg-background-secondary/95 dark:shadow-none">
         <Button
           variant="secondary"
           size="sm"

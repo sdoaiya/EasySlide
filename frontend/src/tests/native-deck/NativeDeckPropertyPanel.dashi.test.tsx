@@ -18,6 +18,11 @@ const contract: NativeLayoutContract = {
   controls: [
     { key: 'highlight', label: '重点强调', type: 'toggle', default: true },
     { key: 'highlightIndex', label: '强调第几段', type: 'range', default: 1, min: 0, max: 3 },
+    { key: 'showLead', label: '显示导语', type: 'boolean', default: true },
+    { key: 'accentMode', label: '强调模式', type: 'radio', default: 'warm', options: [{ value: 'warm', label: '暖色' }, { value: 'cool', label: '冷色' }] },
+    { key: 'density', label: '信息密度', type: 'slider', default: 2, min: 1, max: 4, step: 1 },
+    { key: 'palette', label: '分层配色', type: 'palette', default: ['#ff0000', '#00ff00'], options: [{ value: ['#ff0000', '#00ff00'], label: '暖色', color: '#ff0000' }, { value: ['#0000ff', '#00ffff'], label: '冷色', color: '#0000ff' }] },
+    { key: 'scheme', label: '方案', type: 'enum', default: 'green', options: [{ value: 'green', label: '绿色' }, { value: 'violet', label: '紫色' }] },
   ],
 }
 
@@ -37,6 +42,11 @@ describe('NativeDeckPropertyPanel DashiAI fields', () => {
             ],
             highlight: true,
             highlightIndex: 1,
+            showLead: true,
+            accentMode: 'warm',
+            density: 2,
+            palette: ['#ff0000', '#00ff00'],
+            scheme: 'green',
           },
         }}
         contract={contract}
@@ -60,6 +70,21 @@ describe('NativeDeckPropertyPanel DashiAI fields', () => {
 
     fireEvent.change(screen.getByLabelText('强调第几段'), { target: { value: '2' } })
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ highlightIndex: 2 }))
+
+    fireEvent.click(screen.getByLabelText('显示导语'))
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ showLead: false }))
+    fireEvent.change(screen.getByLabelText('强调模式'), { target: { value: 'cool' } })
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ accentMode: 'cool' }))
+    fireEvent.change(screen.getByLabelText('信息密度'), { target: { value: '3' } })
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ density: 3 }))
+    fireEvent.change(screen.getByLabelText('元素统一延迟（毫秒）'), { target: { value: '220' } })
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ __animation: expect.objectContaining({ elementDelay: 220 }) }))
+    fireEvent.click(screen.getByLabelText('冷色'))
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ palette: ['#0000ff', '#00ffff'] }))
+    fireEvent.change(screen.getByLabelText('方案'), { target: { value: 'violet' } })
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ scheme: 'violet' }))
+    fireEvent.click(screen.getByRole('button', { name: '恢复默认 显示导语' }))
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ showLead: true }))
   })
 
   it('offers prompt and replacement actions for media slots', () => {
@@ -95,5 +120,68 @@ describe('NativeDeckPropertyPanel DashiAI fields', () => {
     expect(screen.getByRole('button', { name: '上传替换 images 1' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '从素材库选择 images 1' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '清除 images 1' })).toBeInTheDocument()
+  })
+
+  it('honors Dashi control dependencies and dependency values', () => {
+    const dependentContract: NativeLayoutContract = {
+      ...contract,
+      controls: [
+        { key: 'enabled', label: '启用参数', type: 'toggle', default: false },
+        { key: 'amount', label: '参数数值', type: 'number', default: 1, dependsOn: 'enabled' },
+        { key: 'mode', label: '参数模式', type: 'select', default: 'warm', options: ['warm', 'cool'], dependsOn: 'enabled', dependsOnValue: true },
+        { key: 'count', label: '参数数量', type: 'number', default: 2, min: 1, max: 8 },
+        { key: 'index', label: '参数序号', type: 'number', default: 1, min: 1, max: 8, maxFromKey: 'count' },
+      ],
+    }
+    const { rerender } = render(
+      <NativeDeckPropertyPanel
+        slide={{ pageId: 'page-1', layout: dependentContract.layout, props: { title: '路线图', enabled: false, count: 2 } }}
+        contract={dependentContract}
+        contracts={[dependentContract]}
+        errors={{}}
+        onChange={vi.fn()}
+        onLayoutChange={vi.fn()}
+      />,
+    )
+
+    expect(screen.queryByLabelText('参数数值')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('参数模式')).not.toBeInTheDocument()
+    rerender(
+      <NativeDeckPropertyPanel
+        slide={{ pageId: 'page-1', layout: dependentContract.layout, props: { title: '路线图', enabled: true, count: 2 } }}
+        contract={dependentContract}
+        contracts={[dependentContract]}
+        errors={{}}
+        onChange={vi.fn()}
+        onLayoutChange={vi.fn()}
+      />,
+    )
+    expect(screen.getByLabelText('参数数值')).toBeInTheDocument()
+    expect(screen.getByLabelText('参数模式')).toBeInTheDocument()
+    expect(screen.getByLabelText('参数序号')).toHaveAttribute('max', '2')
+  })
+
+  it('honors showIf and maxFromKeyOffset metadata', () => {
+    const conditionalContract: NativeLayoutContract = {
+      ...contract,
+      controls: [
+        { key: 'showFunnel', label: '显示漏斗', type: 'toggle', default: false },
+        { key: 'funnelTitle', label: '漏斗标题', type: 'text', showIf: 'showFunnel' },
+        { key: 'count', label: '参数数量', type: 'number', default: 3, min: 1, max: 8 },
+        { key: 'index', label: '参数序号', type: 'number', default: 1, min: 1, max: 8, maxFromKey: 'count', maxFromKeyOffset: -1 },
+      ],
+    }
+    render(
+      <NativeDeckPropertyPanel
+        slide={{ pageId: 'page-1', layout: conditionalContract.layout, props: { title: '路线图', showFunnel: false, count: 3 } }}
+        contract={conditionalContract}
+        contracts={[conditionalContract]}
+        errors={{}}
+        onChange={vi.fn()}
+        onLayoutChange={vi.fn()}
+      />,
+    )
+    expect(screen.queryByLabelText('漏斗标题')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('参数序号')).toHaveAttribute('max', '2')
   })
 })

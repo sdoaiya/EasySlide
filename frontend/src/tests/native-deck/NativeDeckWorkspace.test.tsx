@@ -286,6 +286,7 @@ describe('NativeDeckWorkspace', () => {
   it('switches layout, zooms the canvas, and changes pages from the keyboard', () => {
     renderWorkspace()
 
+    expect(screen.getByRole('button', { name: '演示模式' })).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('页面布局'), { target: { value: 'core01_process' } })
     expect(screen.getByLabelText('页面布局')).toHaveValue('core01_process')
     expect(screen.getByLabelText('steps 1')).toBeInTheDocument()
@@ -296,6 +297,39 @@ describe('NativeDeckWorkspace', () => {
     fireEvent.keyDown(window, { key: 'PageDown' })
     expect(useNativeDeckStore.getState().selectedPageId).toBe('page-2')
     expect(screen.getByAltText('image 1')).toHaveAttribute('src', '/files/old.png')
+    fireEvent.keyDown(window, { key: 'Home' })
+    expect(useNativeDeckStore.getState().selectedPageId).toBe('page-1')
+    fireEvent.keyDown(window, { key: 'End' })
+    expect(useNativeDeckStore.getState().selectedPageId).toBe('page-2')
+    fireEvent.keyDown(window, { key: 'ArrowLeft' })
+    expect(useNativeDeckStore.getState().selectedPageId).toBe('page-1')
+    fireEvent.keyDown(window, { key: ' ' })
+    expect(useNativeDeckStore.getState().selectedPageId).toBe('page-2')
+  })
+
+  it('copies only animation settings to every page', () => {
+    renderWorkspace()
+
+    fireEvent.change(screen.getByLabelText('进入效果'), { target: { value: 'fade' } })
+    fireEvent.change(screen.getByLabelText('页面切换'), { target: { value: 'cover' } })
+    fireEvent.click(screen.getByLabelText('主题内部动效'))
+    fireEvent.click(screen.getByRole('button', { name: '应用动效到全部页面' }))
+
+    const nextSlides = useNativeDeckStore.getState().slides
+    expect(nextSlides).toHaveLength(2)
+    expect(nextSlides.every((slide) => (slide.props.__animation as Record<string, unknown>).enter === 'fade')).toBe(true)
+    expect(nextSlides.every((slide) => (slide.props.__animation as Record<string, unknown>).transition === 'cover')).toBe(true)
+    expect(nextSlides.every((slide) => (slide.props.__animation as Record<string, unknown>).internal === false)).toBe(true)
+    expect(nextSlides[1].props.image).toBe('/files/old.png')
+  })
+
+  it('supports undo and redo for native property edits', () => {
+    renderWorkspace()
+    fireEvent.change(screen.getByLabelText('title'), { target: { value: '修改后的标题' } })
+    fireEvent.click(screen.getByRole('button', { name: '撤销' }))
+    expect(useNativeDeckStore.getState().slides[0].props.title).toBe('议程')
+    fireEvent.click(screen.getByRole('button', { name: '重做' }))
+    expect(useNativeDeckStore.getState().slides[0].props.title).toBe('修改后的标题')
   })
 
   it('routes native projects to the HTML workspace from SlidePreview', async () => {
@@ -339,7 +373,7 @@ describe('NativeDeckWorkspace', () => {
     renderWorkspace([{ ...slides[1], props: { ...slides[1].props, image: '' } }])
 
     expect(screen.queryByRole('dialog', { name: '图片生成设置' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '批量生成' })).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: '批量生成' }).length).toBeGreaterThan(0)
 
     fireEvent.click(screen.getByRole('button', { name: '项目设置' }))
     expect(screen.getByRole('dialog', { name: '图片生成设置' })).toBeInTheDocument()

@@ -61,7 +61,7 @@ docker compose -f docker-compose.allinone.yml up -d
 npm run build:desktop
 ```
 
-构建完成后，安装包位于 `desktop/dist/EasySlide-0.3.0-Setup.exe`。便携目录可从 `desktop/dist/EasySlide-0.3.0-Portable` 压缩分发。
+构建完成后，安装包位于 `release/EasySlide-0.3.0-Setup.exe`。便携版位于 `release/EasySlide-0.3.0-Portable`，可直接运行或压缩分发。
 
 ## 配置
 

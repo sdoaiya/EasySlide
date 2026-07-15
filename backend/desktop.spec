@@ -54,6 +54,7 @@ a = Analysis(
         (str(BACKEND_DIR / 'migrations'), 'migrations'),
         (str(BACKEND_DIR.parent / 'assets'), 'assets'),
         (str(BACKEND_DIR.parent / 'shared' / 'native-deck'), 'shared/native-deck'),
+        (str(BACKEND_DIR.parent / 'frontend' / 'public' / 'template-packs' / 'gorden'), 'template-packs/gorden'),
     ],
     hiddenimports=hiddenimports,
     hookspath=[],

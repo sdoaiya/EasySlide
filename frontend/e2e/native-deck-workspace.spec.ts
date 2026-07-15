@@ -110,10 +110,23 @@ for (const viewport of [
     if (viewport.width === 1200) {
       await expect(page.getByRole('button', { name: '打开属性栏' })).toBeVisible()
       await page.getByRole('button', { name: '打开属性栏' }).click()
-      await expect(page.getByRole('complementary', { name: '属性栏' })).toContainText('title')
+      await expect(page.getByRole('complementary', { name: '属性栏' }).getByRole('textbox', { name: 'title', exact: true })).toBeVisible()
     } else {
-      await expect(page.getByRole('complementary', { name: '属性栏' })).toContainText('title')
+      await expect(page.getByRole('complementary', { name: '属性栏' }).getByRole('textbox', { name: 'title', exact: true })).toBeVisible()
     }
+
+    const inspector = page.getByRole('complementary', { name: '属性栏' })
+    await inspector.getByRole('combobox', { name: '进入效果' }).selectOption('fade')
+    await expect(page.getByRole('button', { name: '重新预览动效' })).toBeEnabled()
+    await page.getByRole('button', { name: '重新预览动效' }).click()
+    await expect(page.locator('main .native-enter-fade')).toHaveClass(/native-enter-fade/)
+    await page.getByRole('button', { name: /第 2 页/ }).click()
+    await inspector.getByRole('combobox', { name: '页面切换' }).selectOption('cover')
+    await inspector.getByRole('combobox', { name: '切换速度' }).selectOption('fast')
+    await inspector.getByRole('combobox', { name: '切换方向' }).selectOption('u')
+    await page.getByRole('button', { name: /第 1 页/ }).click()
+    await page.getByRole('button', { name: /第 2 页/ }).click()
+    await expect(page.locator('main > div > div.native-page-transition-cover')).toHaveClass(/native-page-transition-cover/)
 
     const overflow = await page.evaluate(() => ({
       width: document.documentElement.scrollWidth - window.innerWidth,

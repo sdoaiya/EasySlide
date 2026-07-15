@@ -57,17 +57,32 @@ canvas.save(ico_target, sizes=[(256, 256), (128, 128), (64, 64), (48, 48), (32, 
   }
   npm --prefix desktop run dist:win
 
-  $finalDesktopDist = Join-Path $PSScriptRoot '..\desktop\dist'
+  # Keep the Electron builder cache separate from the user-facing delivery folder.
+  # When running from a Codex worktree, deliver to the repository's main worktree.
+  $mainWorktree = $null
+  $worktreeLines = @(git worktree list --porcelain)
+  for ($i = 0; $i -lt $worktreeLines.Count; $i++) {
+    if ($worktreeLines[$i] -like 'worktree *' -and ($i + 2) -lt $worktreeLines.Count -and $worktreeLines[$i + 2] -eq 'branch refs/heads/main') {
+      $mainWorktree = $worktreeLines[$i].Substring(9)
+      break
+    }
+  }
+  $deliveryRoot = if ($env:EASLIDE_RELEASE_DIR) { $env:EASLIDE_RELEASE_DIR } elseif ($mainWorktree) { $mainWorktree } else { Join-Path $PSScriptRoot '..' }
+  $finalDesktopDist = Join-Path $deliveryRoot 'release'
   if (Test-Path $finalDesktopDist) {
     Remove-Item -Recurse -Force $finalDesktopDist
   }
   Copy-Item -Recurse -Force $desktopOutput $finalDesktopDist
 
+  # Do not expose Electron's unpacked/debug intermediates as delivery artifacts.
+  Remove-Item -Recurse -Force (Join-Path $finalDesktopDist 'win-unpacked') -ErrorAction SilentlyContinue
+  Remove-Item -Force (Join-Path $finalDesktopDist 'builder-debug.yml') -ErrorAction SilentlyContinue
+
   $portableDir = Join-Path $finalDesktopDist 'EasySlide-0.3.0-Portable'
   if (Test-Path $portableDir) {
     Remove-Item -Recurse -Force $portableDir
   }
-  Copy-Item -Recurse -Force (Join-Path $finalDesktopDist 'win-unpacked') $portableDir
+  Copy-Item -Recurse -Force (Join-Path $desktopOutput 'win-unpacked') $portableDir
   New-Item -ItemType File -Force -Path (Join-Path $portableDir 'portable.flag') | Out-Null
 }
 finally {

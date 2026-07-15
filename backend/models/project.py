@@ -60,6 +60,7 @@ class Project(db.Model):
     native_image_settings = db.Column(db.Text, nullable=True)
     template_image_path = db.Column(db.String(500), nullable=True)
     template_style = db.Column(db.Text, nullable=True)  # 风格描述文本（无模板图模式）
+    template_pack_id = db.Column(db.String(120), nullable=True)  # 内置模板包标识，旧项目为空
     # 导出设置
     export_extractor_method = db.Column(db.String(50), nullable=True, default='hybrid')  # 组件提取方法: mineru, hybrid
     export_inpaint_method = db.Column(db.String(50), nullable=True, default='hybrid')  # 背景图获取方法: generative, baidu, hybrid
@@ -117,6 +118,7 @@ class Project(db.Model):
             'native_image_settings': self.get_native_image_settings(),
             'template_image_url': f'/files/{self.id}/template/{self.template_image_path.split("/")[-1]}' if self.template_image_path else None,
             'template_style': self.template_style,
+            'template_pack_id': self.template_pack_id,
             'export_extractor_method': self.export_extractor_method or 'hybrid',
             'export_inpaint_method': self.export_inpaint_method or 'hybrid',
             'export_allow_partial': self.export_allow_partial or False,
@@ -131,6 +133,13 @@ class Project(db.Model):
         if include_pages:
             # pages 现在是列表，不需要 order_by（已在 relationship 中定义）
             data['pages'] = [page.to_dict() for page in self.pages]
+            active_image_tasks = [
+                task for task in self.tasks
+                if task.task_type == 'GENERATE_IMAGES'
+                and task.status in {'PENDING', 'PROCESSING', 'RUNNING', 'PAUSED'}
+            ]
+            active_image_tasks.sort(key=lambda task: task.created_at or datetime.min, reverse=True)
+            data['active_image_tasks'] = [task.to_dict() for task in active_image_tasks]
         
         return data
     
