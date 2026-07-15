@@ -36,8 +36,89 @@ logger = logging.getLogger(__name__)
 project_bp = Blueprint('projects', __name__, url_prefix='/api/projects')
 ASYNC_EXPORT_TASK_TYPES = {
     'EXPORT_EDITABLE_PPTX', 'EXPORT_NATIVE_PPTX', 'EXPORT_NATIVE_PDF',
-    'EXPORT_NATIVE_HTML', 'EXPORT_VIDEO',
+    'EXPORT_NATIVE_HTML', 'EXPORT_VIDEO', 'GENERATE_NATIVE_DECK',
 }
+PAUSABLE_TASK_TYPES = ASYNC_EXPORT_TASK_TYPES | {'GENERATE_IMAGES'}
+MAX_IMAGE_GENERATION_WORKERS = 4
+
+
+def _resolve_image_generation_workers(requested, configured):
+    """Keep image-model fan-out within the provider-safe product limit."""
+    try:
+        value = int(configured if requested is None else requested)
+    except (TypeError, ValueError):
+        value = MAX_IMAGE_GENERATION_WORKERS
+    return min(MAX_IMAGE_GENERATION_WORKERS, max(1, value))
+
+
+def _submit_image_generation_task(task, project, pages, options=None):
+    """Submit a recoverable batch image task for pages that still need images."""
+    options = options or {}
+    file_service = FileService(current_app.config['UPLOAD_FOLDER'])
+    use_template = options.get('use_template', True)
+    ref_image_path = file_service.get_template_path(project.id) if use_template else None
+    if not ref_image_path and not project.template_style:
+        raise ValueError("请先上传模板图片或添加风格描述。")
+
+    outline = _reconstruct_outline_from_pages(get_filtered_pages(project.id, None))
+    max_workers = _resolve_image_generation_workers(
+        options.get('max_workers'),
+        current_app.config.get('MAX_IMAGE_WORKERS', MAX_IMAGE_GENERATION_WORKERS),
+    )
+    language = options.get('language', current_app.config.get('OUTPUT_LANGUAGE', 'zh'))
+    page_ids = [page.id for page in pages]
+    task.set_progress({
+        'total': len(pages),
+        'completed': 0,
+        'failed': 0,
+        'page_ids': page_ids,
+        'image_options': {
+            'use_template': use_template,
+            'language': language,
+            'max_workers': max_workers,
+        },
+    })
+    task.status = 'PENDING'
+    task.error_message = None
+    task.completed_at = None
+    for page in pages:
+        page.status = 'QUEUED'
+    db.session.commit()
+
+    combined_requirements = project.extra_requirements or ""
+    if project.template_style:
+        combined_requirements += f"\n\nppt页面风格描述：\n\n{project.template_style}"
+
+    try:
+        task_manager.submit_task(
+            task.id,
+            generate_images_task,
+            project.id,
+            get_ai_service(),
+            file_service,
+            outline,
+            use_template,
+            max_workers,
+            project.image_aspect_ratio,
+            current_app.config['DEFAULT_RESOLUTION'],
+            current_app._get_current_object(),
+            combined_requirements if combined_requirements.strip() else None,
+            language,
+            page_ids,
+            get_image_prompt_field_names(),
+        )
+    except Exception as exc:
+        task.status = 'FAILED'
+        task.error_message = str(exc)
+        task.completed_at = datetime.utcnow()
+        for page in pages:
+            if not page.generated_image_path:
+                page.status = 'FAILED'
+        db.session.commit()
+        raise
+
+    project.status = 'GENERATING_IMAGES'
+    db.session.commit()
 
 
 def _get_project_reference_files_content(project_id: str) -> list:
@@ -243,6 +324,10 @@ def create_project():
         if render_mode not in ('image', 'native'):
             return bad_request("Invalid render_mode")
         native_theme = data.get('native_theme') or ('theme01' if render_mode == 'native' else None)
+
+        template_pack_id = data.get('template_pack_id')
+        if template_pack_id is not None and (not isinstance(template_pack_id, str) or len(template_pack_id) > 120):
+            return bad_request('template_pack_id must be text within 120 characters')
         
         # Validate and set aspect ratio if provided
         image_aspect_ratio = '16:9'
@@ -259,6 +344,7 @@ def create_project():
             outline_text=data.get('outline_text'),
             description_text=data.get('description_text'),
             template_style=data.get('template_style'),
+            template_pack_id=(template_pack_id.strip() or None) if isinstance(template_pack_id, str) else None,
             image_aspect_ratio=image_aspect_ratio,
             render_mode=render_mode,
             native_theme=native_theme,
@@ -366,6 +452,12 @@ def update_project(project_id):
         # Update template_style if provided
         if 'template_style' in data:
             project.template_style = data['template_style']
+
+        if 'template_pack_id' in data:
+            template_pack_id = data['template_pack_id']
+            if template_pack_id is not None and (not isinstance(template_pack_id, str) or len(template_pack_id) > 120):
+                return bad_request('template_pack_id must be text within 120 characters')
+            project.template_pack_id = (template_pack_id.strip() or None) if isinstance(template_pack_id, str) else None
 
         if 'native_image_settings' in data:
             try:
@@ -1041,31 +1133,24 @@ def generate_images(project_id):
         
         data = request.get_json() or {}
         
-        # Get page_ids from request body and fetch filtered pages
+        # Get page_ids from request body and fetch filtered pages.
         selected_page_ids = parse_page_ids_from_body(data)
-        pages = get_filtered_pages(project_id, selected_page_ids if selected_page_ids else None)
+        requested_pages = get_filtered_pages(project_id, selected_page_ids if selected_page_ids else None)
         
-        if not pages:
+        if not requested_pages:
             return bad_request("No pages found for project")
-        
-        # 检查是否有模板图片或风格描述
-        from services import FileService
-        file_service = FileService(current_app.config['UPLOAD_FOLDER'])
-        use_template = data.get('use_template', True)
-        ref_image_path = None
-        if use_template:
-            ref_image_path = file_service.get_template_path(project_id)
-        
-        if not ref_image_path and not project.template_style:
-            return bad_request("请先上传模板图片或添加风格描述。")
-        
-        # Reconstruct outline from pages with part structure
-        outline = _reconstruct_outline_from_pages(pages)
-        
-        # 从配置中读取默认并发数，如果请求中提供了则使用请求的值
-        max_workers = data.get('max_workers', current_app.config.get('MAX_IMAGE_WORKERS', 8))
-        use_template = data.get('use_template', True)
-        language = data.get('language', current_app.config.get('OUTPUT_LANGUAGE', 'zh'))
+
+        # Batch generation is additive. Explicit single-page regeneration remains
+        # available through the page endpoint with force_regenerate=true.
+        pages = [page for page in requested_pages if not page.generated_image_path]
+        skipped_existing = len(requested_pages) - len(pages)
+        if not pages:
+            return success_response({
+                'task_id': None,
+                'status': 'NO_PENDING_IMAGES',
+                'total_pages': 0,
+                'skipped_existing': skipped_existing,
+            })
         
         # Create task
         task = Task(
@@ -1073,61 +1158,15 @@ def generate_images(project_id):
             task_type='GENERATE_IMAGES',
             status='PENDING'
         )
-        task.set_progress({
-            'total': len(pages),
-            'completed': 0,
-            'failed': 0
-        })
-        
         db.session.add(task)
         db.session.commit()
-        
-        # Get singleton AI service instance
-        ai_service = get_ai_service()
-        
-        # 合并额外要求和风格描述
-        combined_requirements = project.extra_requirements or ""
-        if project.template_style:
-            style_requirement = f"\n\nppt页面风格描述：\n\n{project.template_style}"
-            combined_requirements = combined_requirements + style_requirement
-        
-        # Set all target pages to QUEUED before submitting background task
-        # This ensures the status is visible to frontend immediately after API returns
-        for page in pages:
-            page.status = 'QUEUED'
-        db.session.commit()
-
-        # Get app instance for background task
-        app = current_app._get_current_object()
-        image_prompt_field_names = get_image_prompt_field_names()
-
-        # Submit background task
-        task_manager.submit_task(
-            task.id,
-            generate_images_task,
-            project_id,
-            ai_service,
-            file_service,
-            outline,
-            use_template,
-            max_workers,
-            project.image_aspect_ratio,
-            current_app.config['DEFAULT_RESOLUTION'],
-            app,
-            combined_requirements if combined_requirements.strip() else None,
-            language,
-            selected_page_ids if selected_page_ids else None,
-            image_prompt_field_names
-        )
-        
-        # Update project status
-        project.status = 'GENERATING_IMAGES'
-        db.session.commit()
+        _submit_image_generation_task(task, project, pages, data)
         
         return success_response({
             'task_id': task.id,
             'status': 'GENERATING_IMAGES',
-            'total_pages': len(pages)
+            'total_pages': len(pages),
+            'skipped_existing': skipped_existing,
         }, status_code=202)
     
     except Exception as e:
@@ -1159,8 +1198,8 @@ def pause_export_task(project_id, task_id):
     task = Task.query.get(task_id)
     if not task or task.project_id != project_id:
         return not_found('Task')
-    if task.task_type not in ASYNC_EXPORT_TASK_TYPES:
-        return bad_request('Only asynchronous export tasks can be paused')
+    if task.task_type not in PAUSABLE_TASK_TYPES:
+        return bad_request('This asynchronous task cannot be paused')
     if task.status in {'PENDING', 'PROCESSING', 'RUNNING'}:
         task.status = 'PAUSED'
         db.session.commit()
@@ -1172,8 +1211,8 @@ def resume_export_task(project_id, task_id):
     task = Task.query.get(task_id)
     if not task or task.project_id != project_id:
         return not_found('Task')
-    if task.task_type not in ASYNC_EXPORT_TASK_TYPES:
-        return bad_request('Only asynchronous export tasks can be resumed')
+    if task.task_type not in PAUSABLE_TASK_TYPES:
+        return bad_request('This asynchronous task cannot be resumed')
     if task.status != 'PAUSED':
         return success_response(task.to_dict())
 
@@ -1196,6 +1235,28 @@ def resume_export_task(project_id, task_id):
     if task_manager.is_task_active(task.id):
         task.status = 'PROCESSING'
         db.session.commit()
+        return success_response(task.to_dict())
+
+    if task.task_type == 'GENERATE_IMAGES':
+        project = Project.query.get(project_id)
+        if not project:
+            return not_found('Project')
+        progress = task.get_progress()
+        saved_page_ids = progress.get('page_ids') if isinstance(progress.get('page_ids'), list) else None
+        pages = get_filtered_pages(project_id, saved_page_ids)
+        pages = [page for page in pages if not page.generated_image_path]
+        if not pages:
+            task.status = 'COMPLETED'
+            task.completed_at = datetime.utcnow()
+            db.session.commit()
+            return success_response(task.to_dict())
+        try:
+            _submit_image_generation_task(task, project, pages, progress.get('image_options'))
+        except Exception as exc:
+            task.status = 'PAUSED'
+            task.error_message = str(exc)
+            db.session.commit()
+            return error_response('SERVER_ERROR', str(exc), 500)
         return success_response(task.to_dict())
 
     resume = task.get_progress().get('_resume')

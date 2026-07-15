@@ -12,6 +12,22 @@ from conftest import assert_success_response, assert_error_response
 
 class TestProjectCreate:
     """项目创建测试"""
+
+    def test_desktop_schema_backfills_template_pack_id(self, app, monkeypatch):
+        from app import _ensure_desktop_sqlite_schema
+        from models import db
+
+        monkeypatch.setenv('DATABASE_PATH', 'legacy-test.db')
+        with app.app_context():
+            db.session.execute(db.text('ALTER TABLE projects DROP COLUMN template_pack_id'))
+            db.session.commit()
+            _ensure_desktop_sqlite_schema(app)
+            columns = {
+                row[1]
+                for row in db.session.execute(db.text('PRAGMA table_info(projects)')).fetchall()
+            }
+
+        assert 'template_pack_id' in columns
     
     def test_create_project_idea_mode(self, client):
         """测试从想法创建项目"""
@@ -23,6 +39,25 @@ class TestProjectCreate:
         data = assert_success_response(response, 201)
         assert 'project_id' in data['data']
         assert data['data']['status'] == 'DRAFT'
+
+    def test_create_and_update_template_pack_id(self, client):
+        response = client.post('/api/projects', json={
+            'creation_type': 'idea',
+            'idea_prompt': '生成一份模板包测试 PPT',
+            'template_pack_id': 'gorden-data-viz-deck',
+        })
+
+        data = assert_success_response(response, 201)
+        project_id = data['data']['project_id']
+
+        project = assert_success_response(client.get(f'/api/projects/{project_id}'))
+        assert project['data']['template_pack_id'] == 'gorden-data-viz-deck'
+
+        updated = assert_success_response(client.put(
+            f'/api/projects/{project_id}',
+            json={'template_pack_id': None},
+        ))
+        assert updated['data']['template_pack_id'] is None
     
     def test_create_project_outline_mode(self, client):
         """测试从大纲创建项目"""
@@ -80,6 +115,21 @@ class TestProjectCreate:
         )['data']
         assert project['render_mode'] == 'native'
         assert project['native_theme'] == 'theme01'
+
+    def test_create_classic_native_project_uses_core_layouts(self, client):
+        response = client.post('/api/projects', json={
+            'creation_type': 'idea',
+            'idea_prompt': '测试经典原生模式',
+            'render_mode': 'native',
+            'native_theme': 'core01',
+        })
+
+        created = assert_success_response(response, 201)['data']
+        project = assert_success_response(
+            client.get(f"/api/projects/{created['project_id']}")
+        )['data']
+        assert project['render_mode'] == 'native'
+        assert project['native_theme'] == 'core01'
 
     def test_create_project_rejects_invalid_render_mode(self, client):
         response = client.post('/api/projects', json={
@@ -163,6 +213,130 @@ class TestProjectGet:
         
         # 可能返回404或400
         assert response.status_code in [400, 404]
+
+
+class TestImageGenerationConcurrency:
+    def test_batch_image_generation_caps_workers_at_four(self):
+        from controllers.project_controller import _resolve_image_generation_workers
+
+        assert _resolve_image_generation_workers(20, 20) == 4
+        assert _resolve_image_generation_workers(2, 20) == 2
+        assert _resolve_image_generation_workers(None, 20) == 4
+
+    def test_batch_image_generation_skips_pages_with_existing_images(self, app):
+        from models import db, Page, Project, Task
+        from controllers import project_controller as project_controller_module
+
+        with app.app_context():
+            project = Project(
+                id='proj-skip-existing-images',
+                creation_type='idea',
+                idea_prompt='test',
+                template_style='clean',
+                image_aspect_ratio='16:9',
+                status='DESCRIPTIONS_GENERATED',
+            )
+            completed_page = Page(
+                id='page-already-generated',
+                project_id=project.id,
+                order_index=0,
+                status='COMPLETED',
+                generated_image_path='generated/existing.png',
+            )
+            pending_page = Page(
+                id='page-needs-generation',
+                project_id=project.id,
+                order_index=1,
+                status='DESCRIPTION_GENERATED',
+            )
+            for page in (completed_page, pending_page):
+                page.set_outline_content({'title': page.id, 'points': []})
+                page.set_description_content({'text': page.id})
+            db.session.add_all([project, completed_page, pending_page])
+            db.session.commit()
+
+            with (
+                patch.object(project_controller_module, 'get_ai_service', return_value=object()),
+                patch.object(project_controller_module.task_manager, 'submit_task') as submit_task,
+            ):
+                response = app.test_client().post(f'/api/projects/{project.id}/generate/images', json={})
+
+            data = assert_success_response(response, 202)['data']
+            task = Task.query.get(data['task_id'])
+            db.session.refresh(completed_page)
+            db.session.refresh(pending_page)
+
+            assert data['total_pages'] == 1
+            assert task.get_progress()['page_ids'] == [pending_page.id]
+            assert completed_page.generated_image_path == 'generated/existing.png'
+            assert completed_page.status == 'COMPLETED'
+            assert pending_page.status == 'QUEUED'
+            submit_task.assert_called_once()
+
+    def test_batch_image_generation_can_resolve_template_pack_per_page(self, app):
+        from PIL import Image
+        from models import db, Page, Project
+        from controllers import project_controller as project_controller_module
+        from services import task_manager as task_manager_module
+
+        class BatchAIService:
+            def flatten_outline(self, outline):
+                return outline
+
+            def extract_image_urls_from_markdown(self, _text):
+                return []
+
+            def generate_image_prompt(self, *args, **kwargs):
+                return 'prompt'
+
+            def generate_image(self, *args, **kwargs):
+                return Image.new('RGB', (32, 32), color='blue')
+
+        with app.app_context():
+            project = Project(
+                id='proj-batch-template-pack',
+                creation_type='idea',
+                idea_prompt='test',
+                template_style='clean',
+                image_aspect_ratio='16:9',
+                status='DESCRIPTIONS_GENERATED',
+            )
+            page = Page(project_id=project.id, order_index=0, status='DESCRIPTION_GENERATED')
+            page.set_outline_content({'title': 'Page 1', 'points': []})
+            page.set_description_content({'text': 'Description 1'})
+            db.session.add_all([project, page])
+            db.session.commit()
+
+            def fake_save_image_with_version(_image, _project_id, _page_id, _file_service, page_obj=None, image_format='PNG'):
+                if page_obj:
+                    page_obj.generated_image_path = f'generated/{_page_id}.png'
+                    page_obj.status = 'COMPLETED'
+                    db.session.commit()
+                return (f'generated/{_page_id}.png', 1)
+
+            with (
+                patch.object(project_controller_module, 'get_ai_service', return_value=BatchAIService()),
+                patch.object(task_manager_module, 'save_image_with_version', side_effect=fake_save_image_with_version),
+            ):
+                client = app.test_client()
+                response = client.post(
+                    f'/api/projects/{project.id}/generate/images',
+                    json={'page_ids': [page.id]},
+                )
+                data = assert_success_response(response, 202)
+                task_id = data['data']['task_id']
+
+                deadline = time.time() + 3
+                task = None
+                while time.time() < deadline:
+                    task = client.get(f'/api/projects/{project.id}/tasks/{task_id}').get_json()['data']
+                    if task['status'] in {'COMPLETED', 'FAILED'}:
+                        break
+                    time.sleep(0.05)
+
+                assert task['status'] == 'COMPLETED'
+                assert task['progress']['completed'] == 1
+                assert task['progress']['failed'] == 0
 
 
 class TestResourceConcurrency:

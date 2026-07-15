@@ -100,7 +100,21 @@ describe('Home render mode selection', () => {
       '16:9',
       'native',
       'theme03',
+      undefined,
     ]);
+  });
+
+  it('sends core01 when classic native generation is selected', async () => {
+    const user = userEvent.setup();
+    renderHome();
+
+    await user.click(screen.getByRole('radio', { name: '原生可编辑' }));
+    await user.click(screen.getByRole('radio', { name: '经典原生生成' }));
+    await user.type(screen.getByRole('textbox', { name: /生成一份关于/ }), '经典原生项目');
+    await user.click(screen.getByRole('button', { name: '下一步' }));
+    await waitFor(() => expect(initializeProject).toHaveBeenCalledOnce());
+
+    expect(initializeProject.mock.calls[0].slice(6, 8)).toEqual(['native', 'core01']);
   });
 
   it('hides image templates in native mode but keeps text style as a generation hint', async () => {

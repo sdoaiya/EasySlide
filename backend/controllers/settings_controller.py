@@ -321,9 +321,9 @@ def update_settings():
 
         if "max_image_workers" in data:
             workers = int(data["max_image_workers"])
-            if workers < 1 or workers > 20:
+            if workers < 1 or workers > 4:
                 return bad_request(
-                    "Max image workers must be between 1 and 20"
+                    "Max image workers must be between 1 and 4"
                 )
             settings.max_image_workers = workers
 

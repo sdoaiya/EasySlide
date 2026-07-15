@@ -8,7 +8,7 @@ from pathlib import Path
 
 _root = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parents[2]))
 DEFAULT_MANIFEST = _root / 'shared' / 'native-deck' / 'layout-manifest.json'
-NATIVE_METADATA_FIELDS = {'__media_prompts', '__unmapped_content'}
+NATIVE_METADATA_FIELDS = {'__media_prompts', '__unmapped_content', '__animation'}
 
 
 class NativeDeckService:
@@ -73,13 +73,25 @@ class NativeDeckService:
     def normalize_slide(self, layout, props):
         self.validate_props(layout, props)
         contract = self._get_layout(layout)
-        normalized = {}
+        normalized = deepcopy(contract.get('defaultProps') or {})
         for key, value in props.items():
+            if value is None and key in normalized:
+                # Preserve a usable layout default when generation omits a field.
+                continue
             if value is None:
                 normalized[key] = self._blank_value(contract['propShapes'].get(key))
+            elif self._is_empty_value(value) and key in normalized:
+                # Keep the layout's usable default when a model omits a field
+                # or returns an empty value. Explicit non-empty user content
+                # still always wins.
+                continue
             else:
                 normalized[key] = value
         return {'layout': layout, 'theme': contract['theme'], 'props': normalized}
+
+    @staticmethod
+    def _is_empty_value(value):
+        return value is None or value == '' or value == []
 
     def fit_copy_budgets(self, layout, props):
         """Trim model-generated copy to the selected layout's hard limits."""

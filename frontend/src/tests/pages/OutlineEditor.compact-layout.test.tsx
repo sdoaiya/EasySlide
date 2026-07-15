@@ -114,6 +114,7 @@ describe('OutlineEditor compact layout', () => {
     expect(root).toHaveClass('h-full', 'min-h-0', 'overflow-hidden');
     expect(scrollRegion).toHaveClass('flex-1', 'min-h-0', 'overflow-y-auto');
     expect(scrollRegion).not.toContainElement(footer);
+    expect(footer).toHaveClass('fixed', 'inset-x-0', 'bottom-0', 'z-40');
     expect(footer).toContainElement(screen.getByRole('button', { name: '上一步' }));
     expect(footer).toContainElement(screen.getByRole('button', { name: '下一步' }));
   });

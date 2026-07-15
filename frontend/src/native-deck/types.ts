@@ -6,6 +6,7 @@ export interface NativeSlideSpec {
   pageId: string
   layout: string
   props: Record<string, unknown>
+  pending?: boolean
 }
 
 export interface NativeLayoutComponentProps {

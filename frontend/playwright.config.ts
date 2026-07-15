@@ -70,10 +70,12 @@ export default defineConfig({
   ],
   
   // 本地开发时启动服务
-  webServer: process.env.CI ? undefined : {
+  // BASE_URL allows UI-only smoke tests against an already running local server.
+  // The default Docker-backed workflow remains unchanged when BASE_URL is absent.
+  webServer: process.env.CI || process.env.BASE_URL ? undefined : {
     command: 'cd .. && docker compose up -d && sleep 10',
     url: 'http://localhost:3011',
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: true,
     timeout: 120000,
   },
 })

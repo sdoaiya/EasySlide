@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { getTemplateFile } from '@/components/shared/TemplateSelector';
+import { GORDEN_TEMPLATE_PACKS } from '@/config/gordenTemplatePacks';
 
 describe('getTemplateFile', () => {
   afterEach(() => {
@@ -19,6 +20,24 @@ describe('getTemplateFile', () => {
     expect(file).toBeInstanceOf(File);
     expect(file?.name).toBe('template_tuku_warehouseSafety.png');
     expect(file?.type).toBe('image/png');
+  });
+
+  it('exposes all 21 Gorden template packs and loads their style board as an image', async () => {
+    expect(GORDEN_TEMPLATE_PACKS).toHaveLength(21);
+    expect(new Set(GORDEN_TEMPLATE_PACKS.map((template) => template.id)).size).toBe(21);
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(new Blob(['reference'], { type: 'image/webp' }), {
+        status: 200,
+        headers: { 'content-type': 'image/webp' },
+      })
+    );
+
+    const file = await getTemplateFile('gorden-data-viz-deck', []);
+
+    expect(file).toBeInstanceOf(File);
+    expect(file?.name).toBe('data-viz-deck-reference.webp');
+    expect(file?.type).toBe('image/webp');
   });
 
   it('rejects a preset template response that is html', async () => {

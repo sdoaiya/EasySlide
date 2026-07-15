@@ -85,6 +85,9 @@ const previewI18n = {
       editMode: "编辑模式", viewMode: "查看模式", page: "第 {{num}} 页",
       projectSettings: "项目设置", changeTemplate: "更换模板", refresh: "刷新",
       batchGenerate: "批量生成图片 ({{count}})", generateSelected: "生成选中页面 ({{count}})",
+      pauseGeneration: "暂停生成", resumeGeneration: "继续生成",
+      generationProgress: "{{status}} {{completed}} / {{total}}",
+      generationRunning: "正在生成", generationPaused: "已暂停",
       multiSelect: "多选", cancelMultiSelect: "取消多选", pagesUnit: "页",
       noPages: "还没有页面", noPagesHint: "请先返回编辑页面添加内容", backToEdit: "返回编辑",
       generating: "正在生成中...", queued: "排队等待生成...", notGenerated: "尚未生成图片", generateThisPage: "生成此页",
@@ -204,6 +207,9 @@ const previewI18n = {
       editMode: "Edit Mode", viewMode: "View Mode", page: "Page {{num}}",
       projectSettings: "Project Settings", changeTemplate: "Change Template", refresh: "Refresh",
       batchGenerate: "Batch Generate Images ({{count}})", generateSelected: "Generate Selected ({{count}})",
+      pauseGeneration: "Pause Generation", resumeGeneration: "Resume Generation",
+      generationProgress: "{{status}} {{completed}} / {{total}}",
+      generationRunning: "Generating", generationPaused: "Paused",
       multiSelect: "Multi-select", cancelMultiSelect: "Cancel Multi-select", pagesUnit: " pages",
       noPages: "No pages yet", noPagesHint: "Please go back to editor to add content first", backToEdit: "Back to Editor",
       generating: "Generating...", queued: "Queued for generation...", notGenerated: "Image not generated yet", generateThisPage: "Generate This Page",
@@ -268,6 +274,8 @@ import {
   FileText,
   Loader2,
   Info,
+  Pause,
+  Play,
 } from 'lucide-react';
 import { Button, Loading, Modal, Textarea, useToast, useConfirm, MaterialSelector, ProjectSettingsModal, ExportTasksPanel, TextStyleSelector } from '@/components/shared';
 import { MaterialGeneratorModal } from '@/components/shared/MaterialGeneratorModal';
@@ -285,6 +293,7 @@ import { normalizeErrorMessage } from '@/utils';
 import { NativeDeckWorkspaceLoader } from '@/components/native-deck/NativeDeckWorkspaceLoader';
 import type { NativeSlideSpec } from '@/native-deck/types';
 import { getNativeDeckTaskStorageKey } from '@/utils/projectUtils';
+import { findGordenTemplatePack } from '@/config/gordenTemplatePacks';
 
 const VIDEO_VOICE_OPTIONS = [
   { group: '中文', voices: [
@@ -374,6 +383,10 @@ export const SlidePreview: React.FC = () => {
     isGlobalLoading,
     taskProgress,
     pageGeneratingTasks,
+    activeImageTask,
+    restoreImageGeneration,
+    pauseImageGeneration,
+    resumeImageGeneration,
     warningMessage,
   } = useProjectStore();
   
@@ -512,7 +525,7 @@ export const SlidePreview: React.FC = () => {
   const [selectionStart, setSelectionStart] = useState<{ x: number; y: number } | null>(null);
   const [selectionRect, setSelectionRect] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
   const { show, ToastContainer } = useToast();
-  const { confirm, ConfirmDialog } = useConfirm();
+  const { ConfirmDialog } = useConfirm();
 
 
   // Memoize pages with generated images to avoid re-computing in multiple places
@@ -524,6 +537,15 @@ export const SlidePreview: React.FC = () => {
     () => currentProject?.pages?.some(p => p.generated_image_path) ?? false,
     [currentProject?.pages]
   );
+  const pendingBatchImageCount = useMemo(() => {
+    const pages = isMultiSelectMode && selectedPageIds.size > 0
+      ? currentProject?.pages.filter(page => page.id && selectedPageIds.has(page.id))
+      : currentProject?.pages;
+    return pages?.filter(page => page.id && !page.generated_image_path && !pageGeneratingTasks[page.id]).length || 0;
+  }, [currentProject?.pages, isMultiSelectMode, pageGeneratingTasks, selectedPageIds]);
+  const imageGenerationActive = !!activeImageTask
+    && ['PENDING', 'PROCESSING', 'RUNNING', 'PAUSED'].includes(activeImageTask.status);
+  const imageGenerationPaused = activeImageTask?.status === 'PAUSED';
 
   useEffect(() => {
     if (!currentProject) return;
@@ -538,11 +560,13 @@ export const SlidePreview: React.FC = () => {
 
   // 加载项目数据 & 用户模板
   useEffect(() => {
-    if (projectId && (!currentProject || currentProject.id !== projectId)) {
-      // 直接使用 projectId 同步项目数据
-      syncProject(projectId);
+    let cancelled = false;
+    if (projectId) {
+      void syncProject(projectId).then(() => {
+        if (!cancelled) restoreImageGeneration();
+      });
     }
-    
+
     // 加载用户模板列表（用于按需获取File）
     const loadTemplates = async () => {
       try {
@@ -554,8 +578,9 @@ export const SlidePreview: React.FC = () => {
         console.error('Failed to load user templates:', error);
       }
     };
-    loadTemplates();
-  }, [projectId, currentProject, syncProject]);
+    void loadTemplates();
+    return () => { cancelled = true; };
+  }, [projectId, restoreImageGeneration, syncProject]);
 
   // 监听警告消息
   const lastWarningRef = React.useRef<string | null>(null);
@@ -694,14 +719,14 @@ export const SlidePreview: React.FC = () => {
   const handleGenerateAll = async () => {
     // 先检查分辨率，如果是1K则显示警告
     await checkResolutionAndExecute(async () => {
-      const pageIds = getSelectedPageIdsForExport();
       const isPartialGenerate = isMultiSelectMode && selectedPageIds.size > 0;
-
-      // 检查要生成的页面中是否有已有图片的
       const pagesToGenerate = isPartialGenerate
         ? currentProject?.pages.filter(p => p.id && selectedPageIds.has(p.id))
         : currentProject?.pages;
-      const hasImages = pagesToGenerate?.some((p) => p.generated_image_path);
+      const pageIds = pagesToGenerate
+        ?.filter(page => page.id && !page.generated_image_path && !pageGeneratingTasks[page.id])
+        .map(page => page.id!) || [];
+      if (pageIds.length === 0) return;
 
       const executeGenerate = async () => {
         try {
@@ -742,19 +767,7 @@ export const SlidePreview: React.FC = () => {
           });
         }
       };
-
-      if (hasImages) {
-        const message = isPartialGenerate
-          ? t('preview.confirmRegenerateSelected', { count: selectedPageIds.size })
-          : t('preview.confirmRegenerateAll');
-        confirm(
-          message,
-          executeGenerate,
-          { title: t('preview.confirmRegenerateTitle'), variant: 'warning' }
-        );
-      } else {
-        await executeGenerate();
-      }
+      await executeGenerate();
     });
   };
 
@@ -1488,6 +1501,13 @@ export const SlidePreview: React.FC = () => {
     setIsUploadingTemplate(true);
     try {
       await uploadTemplate(projectId, file);
+      const gordenStyle = findGordenTemplatePack(templateId)?.style;
+      await updateProject(projectId, { template_pack_id: findGordenTemplatePack(templateId)?.id || null });
+      if (gordenStyle) {
+        const mergedStyle = [gordenStyle, templateStyle.trim()].filter(Boolean).join('\n');
+        await updateProject(projectId, { template_style: mergedStyle });
+        setTemplateStyle(mergedStyle);
+      }
       await syncProject(projectId);
       setIsTemplateModalOpen(false);
       show({ message: t('slidePreview.templateChanged'), type: 'success' });
@@ -1518,14 +1538,16 @@ export const SlidePreview: React.FC = () => {
   }
 
   if ((currentProject as typeof currentProject & { render_mode?: string }).render_mode === 'native') {
-    const nativeSlides = currentProject.pages.flatMap((page): NativeSlideSpec[] => {
+    const nativeSlides = currentProject.pages.map((page): NativeSlideSpec => {
       const nativePage = page as Page & { native_layout?: string; native_props?: Record<string, unknown> };
-      if (!nativePage.native_layout) return [];
-      return [{
+      const outline = (page.outline_content || {}) as Record<string, unknown>;
+      const title = typeof outline.title === 'string' ? outline.title : `第 ${page.order_index + 1} 页`;
+      return {
         pageId: nativePage.id || nativePage.page_id,
-        layout: nativePage.native_layout,
-        props: nativePage.native_props || {},
-      }];
+        layout: nativePage.native_layout || 'pending',
+        props: nativePage.native_props || { title },
+        pending: !nativePage.native_layout,
+      };
     });
     const nativeProjectId = projectId || currentProject.id || currentProject.project_id;
     const generationTaskId = (location.state as { taskId?: string } | null)?.taskId
@@ -2249,15 +2271,36 @@ export const SlidePreview: React.FC = () => {
           <div className="p-3 md:p-4 border-b border-gray-200 dark:border-border-primary flex-shrink-0 space-y-2 md:space-y-3 md:sticky md:top-0 md:z-10">
             <Button
               variant="primary"
-              icon={<Sparkles size={16} className="md:w-[18px] md:h-[18px]" />}
-              onClick={handleGenerateAll}
+              icon={imageGenerationActive
+                ? imageGenerationPaused
+                  ? <Play size={16} className="md:h-[18px] md:w-[18px]" />
+                  : <Pause size={16} className="md:h-[18px] md:w-[18px]" />
+                : <Sparkles size={16} className="md:h-[18px] md:w-[18px]" />}
+              onClick={imageGenerationActive
+                ? imageGenerationPaused
+                  ? resumeImageGeneration
+                  : pauseImageGeneration
+                : handleGenerateAll}
               className="w-full text-sm md:text-base"
-              disabled={isMultiSelectMode && selectedPageIds.size === 0}
+              disabled={!imageGenerationActive && (pendingBatchImageCount === 0 || (isMultiSelectMode && selectedPageIds.size === 0))}
             >
-              {isMultiSelectMode && selectedPageIds.size > 0
-                ? t('preview.generateSelected', { count: selectedPageIds.size })
-                : t('preview.batchGenerate', { count: currentProject.pages.length })}
+              {imageGenerationActive
+                ? imageGenerationPaused
+                  ? t('preview.resumeGeneration')
+                  : t('preview.pauseGeneration')
+                : isMultiSelectMode && selectedPageIds.size > 0
+                  ? t('preview.generateSelected', { count: pendingBatchImageCount })
+                  : t('preview.batchGenerate', { count: pendingBatchImageCount })}
             </Button>
+            {imageGenerationActive && activeImageTask?.progress && (
+              <div className="text-center text-xs text-slate-500 dark:text-foreground-tertiary">
+                {t('preview.generationProgress', {
+                  status: imageGenerationPaused ? t('preview.generationPaused') : t('preview.generationRunning'),
+                  completed: activeImageTask.progress.completed || 0,
+                  total: activeImageTask.progress.total || 0,
+                })}
+              </div>
+            )}
           </div>
           
           {/* 缩略图列表：桌面端垂直，移动端横向滚动 */}

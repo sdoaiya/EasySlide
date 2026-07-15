@@ -11,13 +11,27 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/api/endpoints', () => ({
   getTaskStatus: mocks.getTaskStatus,
   generateNativeDeck: mocks.generateNativeDeck,
+  pauseTask: vi.fn(),
+  resumeTask: vi.fn(),
 }));
 vi.mock('@/store/useProjectStore', () => ({
   useProjectStore: (selector: (state: { syncProject: typeof mocks.syncProject }) => unknown) =>
     selector({ syncProject: mocks.syncProject }),
 }));
 vi.mock('@/components/native-deck/NativeDeckWorkspace', () => ({
-  NativeDeckWorkspace: () => <div>可编辑页面</div>,
+  NativeDeckWorkspace: (props: { pageGenerationStatus?: { status: string; completed: number; failed: number; total: number; error?: string } }) => (
+    <div>
+      可编辑页面
+      {props.pageGenerationStatus && props.pageGenerationStatus.status !== 'COMPLETED' && (
+        <div role={props.pageGenerationStatus.status === 'FAILED' ? 'alert' : 'status'}>
+          {props.pageGenerationStatus.status === 'FAILED'
+            ? `页面生成失败：${props.pageGenerationStatus.error || '请稍后重试'}`
+            : `正在生成页面 ${props.pageGenerationStatus.completed}/${props.pageGenerationStatus.total}`}
+          {props.pageGenerationStatus.failed > 0 && `，失败 ${props.pageGenerationStatus.failed}`}
+        </div>
+      )}
+    </div>
+  ),
 }));
 
 async function sleep(ms: number) {

@@ -61,12 +61,19 @@ def generate_native_deck(project_id):
     if project.render_mode != 'native':
         return bad_request('只有原生可编辑项目可以生成原生页面')
 
-    page_count = Page.query.filter_by(project_id=project_id).count()
+    data = request.get_json(silent=True) or {}
+    requested_page_ids = data.get('page_ids')
+    if requested_page_ids is not None and (not isinstance(requested_page_ids, list) or not requested_page_ids or any(not isinstance(item, str) for item in requested_page_ids)):
+        return bad_request('page_ids 必须是非空文本数组')
+    pages_query = Page.query.filter_by(project_id=project_id)
+    if requested_page_ids:
+        pages_query = pages_query.filter(Page.id.in_(requested_page_ids))
+    page_count = pages_query.count()
     if not page_count:
         return bad_request('请先生成大纲页面')
 
     task = Task(project_id=project_id, task_type='GENERATE_NATIVE_DECK', status='PENDING')
-    task.set_progress({'total': page_count, 'completed': 0, 'failed': 0})
+    task.set_progress({'total': page_count, 'completed': 0, 'failed': 0, 'page_ids': requested_page_ids})
     db.session.add(task)
     db.session.commit()
     task_manager.submit_task(
@@ -74,6 +81,7 @@ def generate_native_deck(project_id):
         generate_native_deck_task,
         project_id,
         get_ai_service(),
+        page_ids=requested_page_ids,
         app=current_app._get_current_object(),
     )
     return success_response(task.to_dict(), status_code=202)

@@ -42,6 +42,33 @@ export async function loadDashiRuntimePage(layout: string) {
   return module.runtimePages.find((page) => page.key === layout)
 }
 
+/** Keep only props understood by the loaded Dashi page contract. */
+export function pruneDashiProps(page: Pick<DashiRuntimePage, 'defaultProps' | 'controls'>, value: Record<string, unknown>) {
+  const allowed = new Set([
+    ...Object.keys(page.defaultProps || {}),
+    ...(page.controls || []).flatMap((control) => [control.key, control.publicKey].filter((key): key is string => typeof key === 'string')),
+  ])
+  return pruneObject(value, page.defaultProps || {}, allowed)
+}
+
+function pruneObject(value: Record<string, unknown>, shape: Record<string, unknown>, allowed: Set<string>) {
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key]) => allowed.has(key))
+    .map(([key, item]) => [key, pruneValue(item, shape[key], allowed)]))
+}
+
+function pruneValue(value: unknown, shape: unknown, allowed: Set<string>): unknown {
+  if (Array.isArray(value)) {
+    const itemShape = Array.isArray(shape) ? shape[0] : undefined
+    return value.map((item) => pruneValue(item, itemShape, allowed))
+  }
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const objectShape = shape && typeof shape === 'object' && !Array.isArray(shape) ? shape as Record<string, unknown> : {}
+    return pruneObject(value as Record<string, unknown>, objectShape, new Set(Object.keys(objectShape)))
+  }
+  return value
+}
+
 function cacheModule(theme: string, module: Promise<DashiRuntimeModule>) {
   modules.set(theme, module)
   return module

@@ -31,6 +31,179 @@
   font-weight: 700;
 }
 
+.native-slide-pending {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f7f9fb;
+  color: #64748b;
+}
+
+.native-slide-pending-panel {
+  display: flex;
+  width: 520px;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  border: 1px dashed #bae6fd;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.92);
+  padding: 48px;
+  text-align: center;
+  box-shadow: 0 14px 38px rgba(15, 23, 42, 0.08);
+}
+
+.native-slide-pending-panel strong {
+  color: #334155;
+  font-size: 24px;
+}
+
+.native-slide-pending-mark {
+  display: flex;
+  width: 56px;
+  height: 56px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 16px;
+  background: #e0f2fe;
+  color: #0284c7;
+  font-size: 28px;
+}
+
+/* Export capture must use the settled layout. Dashi's own .rd-anim rules are
+   enabled by the deck runtime's active marker, so isolate them here without
+   changing the editor or the exported offline HTML player. */
+.native-export-surface [data-deck-active] * {
+  animation: none !important;
+}
+
+@keyframes native-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes native-slide-up { from { opacity: 0; transform: translateY(28px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes native-slide-down { from { opacity: 0; transform: translateY(-28px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes native-slide-left { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes native-slide-right { from { opacity: 0; transform: translateX(-28px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes native-zoom-in { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: scale(1); } }
+@keyframes native-blur-in { from { opacity: 0; filter: blur(10px); } to { opacity: 1; filter: blur(0); } }
+@keyframes native-element-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes native-element-slide-up { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes native-element-slide-down { from { opacity: 0; transform: translateY(-18px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes native-element-slide-left { from { opacity: 0; transform: translateX(18px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes native-element-slide-right { from { opacity: 0; transform: translateX(-18px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes native-element-zoom { from { opacity: 0; transform: scale(.94); } to { opacity: 1; transform: scale(1); } }
+@keyframes native-element-blur { from { opacity: 0; filter: blur(8px); } to { opacity: 1; filter: blur(0); } }
+@keyframes native-element-wipe { from { opacity: 0; clip-path: inset(0 100% 0 0); } to { opacity: 1; clip-path: inset(0); } }
+@keyframes native-element-rotate { from { opacity: 0; transform: rotate(-12deg) scale(.94); } to { opacity: 1; transform: rotate(0) scale(1); } }
+
+.native-enter-fade { animation: native-fade-in 420ms ease both; }
+.native-enter-slide-up { animation: native-slide-up 420ms ease both; }
+.native-enter-slide-down { animation: native-slide-down 420ms ease both; }
+.native-enter-slide-left { animation: native-slide-left 420ms ease both; }
+.native-enter-slide-right { animation: native-slide-right 420ms ease both; }
+.native-enter-zoom-in { animation: native-zoom-in 420ms ease both; }
+.native-enter-blur-in { animation: native-blur-in 420ms ease both; }
+.native-enter-stagger-up > * { animation: native-slide-up var(--native-animation-duration, 420ms) var(--native-animation-easing, ease) both; }
+.native-enter-stagger-fade > * { animation: native-fade-in var(--native-animation-duration, 420ms) var(--native-animation-easing, ease) both; }
+.native-enter-stagger-up > *:nth-child(1), .native-enter-stagger-up > * > *:nth-child(1) { animation-delay: calc(var(--native-animation-delay, 0ms) + 40ms); }
+.native-enter-stagger-up > *:nth-child(2), .native-enter-stagger-up > * > *:nth-child(2) { animation-delay: calc(var(--native-animation-delay, 0ms) + 100ms); }
+.native-enter-stagger-up > *:nth-child(3), .native-enter-stagger-up > * > *:nth-child(3) { animation-delay: calc(var(--native-animation-delay, 0ms) + 160ms); }
+.native-enter-stagger-up > *:nth-child(4), .native-enter-stagger-up > * > *:nth-child(4) { animation-delay: calc(var(--native-animation-delay, 0ms) + 220ms); }
+.native-enter-stagger-up > *:nth-child(5), .native-enter-stagger-up > * > *:nth-child(5) { animation-delay: calc(var(--native-animation-delay, 0ms) + 280ms); }
+.native-enter-stagger-up > *:nth-child(n+6), .native-enter-stagger-up > * > *:nth-child(n+6) { animation-delay: calc(var(--native-animation-delay, 0ms) + 340ms); }
+.native-enter-stagger-up > * > * { animation: native-slide-up var(--native-animation-duration, 420ms) var(--native-animation-easing, ease) both; }
+.native-enter-stagger-fade > *:nth-child(1), .native-enter-stagger-fade > * > *:nth-child(1) { animation-delay: calc(var(--native-animation-delay, 0ms) + 40ms); }
+.native-enter-stagger-fade > *:nth-child(2), .native-enter-stagger-fade > * > *:nth-child(2) { animation-delay: calc(var(--native-animation-delay, 0ms) + 100ms); }
+.native-enter-stagger-fade > *:nth-child(3), .native-enter-stagger-fade > * > *:nth-child(3) { animation-delay: calc(var(--native-animation-delay, 0ms) + 160ms); }
+.native-enter-stagger-fade > *:nth-child(4), .native-enter-stagger-fade > * > *:nth-child(4) { animation-delay: calc(var(--native-animation-delay, 0ms) + 220ms); }
+.native-enter-stagger-fade > *:nth-child(5), .native-enter-stagger-fade > * > *:nth-child(5) { animation-delay: calc(var(--native-animation-delay, 0ms) + 280ms); }
+.native-enter-stagger-fade > *:nth-child(n+6), .native-enter-stagger-fade > * > *:nth-child(n+6) { animation-delay: calc(var(--native-animation-delay, 0ms) + 340ms); }
+.native-enter-stagger-fade > * > * { animation: native-fade-in var(--native-animation-duration, 420ms) var(--native-animation-easing, ease) both; }
+
+/* Optional element-level motion; the export surface omits the data attribute. */
+.native-slide[data-element-animation="fade"] > *, .native-slide[data-element-animation="fade"] > * > *,
+.native-slide[data-element-animation="slide-up"] > *, .native-slide[data-element-animation="slide-up"] > * > *,
+.native-slide[data-element-animation="slide-down"] > *, .native-slide[data-element-animation="slide-down"] > * > *,
+.native-slide[data-element-animation="slide-left"] > *, .native-slide[data-element-animation="slide-left"] > * > *,
+.native-slide[data-element-animation="slide-right"] > *, .native-slide[data-element-animation="slide-right"] > * > *,
+.native-slide[data-element-animation="zoom-in"] > *, .native-slide[data-element-animation="zoom-in"] > * > *,
+.native-slide[data-element-animation="blur-in"] > *, .native-slide[data-element-animation="blur-in"] > * > *,
+.native-slide[data-element-animation="wipe"] > *, .native-slide[data-element-animation="wipe"] > * > *,
+.native-slide[data-element-animation="rotate-in"] > *, .native-slide[data-element-animation="rotate-in"] > * > * {
+  animation-duration: var(--native-element-duration, 360ms);
+  animation-delay: calc(var(--native-element-delay, 0ms) + var(--native-element-index, 0) * var(--native-element-stagger, 70ms));
+  animation-timing-function: var(--native-element-easing, ease);
+  animation-fill-mode: both;
+}
+.native-slide[data-element-animation="fade"] > *, .native-slide[data-element-animation="fade"] > * > * { animation-name: native-element-fade; }
+.native-slide[data-element-animation="slide-up"] > *, .native-slide[data-element-animation="slide-up"] > * > * { animation-name: native-element-slide-up; }
+.native-slide[data-element-animation="slide-down"] > *, .native-slide[data-element-animation="slide-down"] > * > * { animation-name: native-element-slide-down; }
+.native-slide[data-element-animation="slide-left"] > *, .native-slide[data-element-animation="slide-left"] > * > * { animation-name: native-element-slide-left; }
+.native-slide[data-element-animation="slide-right"] > *, .native-slide[data-element-animation="slide-right"] > * > * { animation-name: native-element-slide-right; }
+.native-slide[data-element-animation="zoom-in"] > *, .native-slide[data-element-animation="zoom-in"] > * > * { animation-name: native-element-zoom; }
+.native-slide[data-element-animation="blur-in"] > *, .native-slide[data-element-animation="blur-in"] > * > * { animation-name: native-element-blur; }
+.native-slide[data-element-animation="wipe"] > *, .native-slide[data-element-animation="wipe"] > * > * { animation-name: native-element-wipe; }
+.native-slide[data-element-animation="rotate-in"] > *, .native-slide[data-element-animation="rotate-in"] > * > * { animation-name: native-element-rotate; }
+.native-slide[data-element-animation] > *:nth-child(1), .native-slide[data-element-animation] > * > *:nth-child(1) { --native-element-index: 0; }
+.native-slide[data-element-animation] > *:nth-child(2), .native-slide[data-element-animation] > * > *:nth-child(2) { --native-element-index: 1; }
+.native-slide[data-element-animation] > *:nth-child(3), .native-slide[data-element-animation] > * > *:nth-child(3) { --native-element-index: 2; }
+.native-slide[data-element-animation] > *:nth-child(4), .native-slide[data-element-animation] > * > *:nth-child(4) { --native-element-index: 3; }
+.native-slide[data-element-animation] > *:nth-child(5), .native-slide[data-element-animation] > * > *:nth-child(5) { --native-element-index: 4; }
+.native-slide[data-element-animation] > *:nth-child(n+6), .native-slide[data-element-animation] > * > *:nth-child(n+6) { --native-element-index: 5; }
+.native-slide[data-element-trigger="click"][data-element-step="0"] > *,
+.native-slide[data-element-trigger="click"][data-element-step="0"] > * > * {
+  opacity: 0 !important;
+  animation: none !important;
+}
+
+@keyframes native-page-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes native-page-zoom { from { opacity: 0; transform: scale(.72); } to { opacity: 1; transform: scale(1); } }
+@keyframes native-page-dissolve { from { opacity: 0; filter: blur(3px); } to { opacity: 1; filter: blur(0); } }
+@keyframes native-page-outgoing-fade { from { opacity: 1; } to { opacity: 0; } }
+@keyframes native-page-push { from { opacity: .7; transform: translate(var(--native-page-from, 24px) var(--native-page-from-y, 0)); } to { opacity: 1; transform: translate(0 0); } }
+@keyframes native-page-wipe { from { clip-path: var(--native-wipe-from, inset(0 100% 0 0)); } to { clip-path: inset(0); } }
+@keyframes native-page-split { from { clip-path: inset(0 50%); } to { clip-path: inset(0); } }
+@keyframes native-page-cover { from { opacity: .7; transform: translate(var(--native-page-from, 28px) var(--native-page-from-y, 0)); } to { opacity: 1; transform: translate(0 0); } }
+
+.native-page-transition-fade { animation-name: native-page-fade; animation-timing-function: ease; animation-fill-mode: both; }
+.native-page-transition-zoom { animation-name: native-page-zoom; animation-timing-function: ease-out; animation-fill-mode: both; }
+.native-page-transition-dissolve { animation-name: native-page-dissolve; animation-timing-function: ease; animation-fill-mode: both; }
+.native-page-outgoing { animation: native-page-outgoing-fade 520ms ease both; pointer-events: none; }
+.native-page-transition-push, .native-page-transition-cover, .native-page-transition-uncover { animation-name: native-page-push; animation-timing-function: ease-out; animation-fill-mode: both; }
+.native-page-transition-wipe { animation-name: native-page-wipe; animation-timing-function: ease-out; animation-fill-mode: both; }
+.native-page-transition-split { animation-name: native-page-split; animation-timing-function: ease-out; animation-fill-mode: both; }
+.native-page-transition-slow { animation-duration: 900ms; }
+.native-page-transition-med { animation-duration: 520ms; }
+.native-page-transition-fast { animation-duration: 260ms; }
+.native-page-transition-dir-l { --native-page-from: 28px; --native-page-from-y: 0; --native-wipe-from: inset(0 100% 0 0); }
+.native-page-transition-dir-r { --native-page-from: -28px; --native-page-from-y: 0; --native-wipe-from: inset(0 0 0 100%); }
+.native-page-transition-dir-u { --native-page-from: 0; --native-page-from-y: -28px; --native-wipe-from: inset(100% 0 0 0); }
+.native-page-transition-dir-d { --native-page-from: 0; --native-page-from-y: 28px; --native-wipe-from: inset(0 0 100% 0); }
+
+@media (prefers-reduced-motion: reduce) {
+  .native-enter-fade,
+  .native-enter-slide-up,
+  .native-enter-slide-left,
+  .native-enter-slide-right,
+  .native-enter-zoom-in,
+  .native-enter-blur-in,
+  .native-enter-stagger-up > *,
+  .native-enter-stagger-up > * > *,
+  .native-enter-stagger-fade > *,
+  .native-enter-stagger-fade > * > *,
+  .native-slide[data-element-animation] > *,
+  .native-slide[data-element-animation] > * > *,
+  .native-page-transition-fade,
+  .native-page-transition-zoom,
+  .native-page-transition-dissolve,
+  .native-page-transition-push,
+  .native-page-transition-wipe,
+  .native-page-transition-split,
+  .native-page-transition-cover,
+  .native-page-transition-uncover {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+  }
+}
+
 .core01-kicker {
   margin: 0;
   color: #087f8c;

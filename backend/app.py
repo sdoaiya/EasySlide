@@ -239,18 +239,25 @@ def create_app():
 
 
 def _pause_interrupted_export_tasks():
-    """Exports cannot keep running after the desktop backend exits."""
-    from models import Task
+    """In-memory tasks cannot keep running after the desktop backend exits."""
+    from models import Page, Task
 
     tasks = Task.query.filter(
         Task.task_type.in_([
             'EXPORT_EDITABLE_PPTX', 'EXPORT_NATIVE_PPTX', 'EXPORT_NATIVE_PDF',
-            'EXPORT_NATIVE_HTML', 'EXPORT_VIDEO',
+            'EXPORT_NATIVE_HTML', 'EXPORT_VIDEO', 'GENERATE_IMAGES',
         ]),
         Task.status.in_(['PENDING', 'PROCESSING', 'RUNNING']),
     ).all()
     for task in tasks:
         task.status = 'PAUSED'
+        if task.task_type == 'GENERATE_IMAGES':
+            page_ids = task.get_progress().get('page_ids')
+            if isinstance(page_ids, list):
+                Page.query.filter(
+                    Page.id.in_(page_ids),
+                    Page.generated_image_path.is_(None),
+                ).update({'status': 'QUEUED'}, synchronize_session=False)
     if tasks:
         db.session.commit()
 
@@ -275,6 +282,7 @@ def _ensure_desktop_sqlite_schema(app):
             'export_high_fidelity_editable': 'BOOLEAN NOT NULL DEFAULT 0',
             'enable_icon_subject_extraction': 'BOOLEAN DEFAULT 0',
             'image_aspect_ratio': "VARCHAR(10) DEFAULT '16:9'",
+            'template_pack_id': 'VARCHAR(120)',
         },
         'pages': {
             'part': 'VARCHAR(200)',

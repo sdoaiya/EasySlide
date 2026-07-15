@@ -15,6 +15,7 @@ import { useImagePaste, buildMaterialsMarkdown } from '@/hooks/useImagePaste';
 import type { Material, RenderMode } from '@/types';
 import { useT } from '@/hooks/useT';
 import { ASPECT_RATIO_OPTIONS } from '@/config/aspectRatio';
+import { findGordenTemplatePack } from '@/config/gordenTemplatePacks';
 
 type CreationType = 'idea' | 'outline' | 'description' | 'ppt_renovation';
 
@@ -686,14 +687,15 @@ export const Home: React.FC = () => {
       }
       
       // 传递风格描述（只要有内容就传递，不管开关状态）
-      const styleDesc = templateStyle.trim() ? templateStyle.trim() : undefined;
+      const gordenStyle = findGordenTemplatePack(selectedTemplateId)?.style;
+      const styleDesc = [gordenStyle, templateStyle.trim()].filter(Boolean).join('\n') || undefined;
 
       // 传递参考文件ID列表，确保 AI 生成时能读取参考文件内容
       const refFileIds = referenceFiles
         .filter(f => f.parse_status === 'completed')
         .map(f => f.id);
 
-      await initializeProject(activeTab as 'idea' | 'outline' | 'description', content, templateFile || undefined, styleDesc, refFileIds.length > 0 ? refFileIds : undefined, aspectRatio, renderMode, nativeTheme);
+      await initializeProject(activeTab as 'idea' | 'outline' | 'description', content, templateFile || undefined, styleDesc, refFileIds.length > 0 ? refFileIds : undefined, aspectRatio, renderMode, nativeTheme, findGordenTemplatePack(selectedTemplateId)?.id);
       
       // 根据类型跳转到不同页面
       const projectId = localStorage.getItem('currentProjectId');
@@ -1143,7 +1145,7 @@ export const Home: React.FC = () => {
               onDocumentFiles={handleDocumentFiles}
               onSelectFromLibrary={() => setIsMaterialSelectorOpen(true)}
               rows={activeTab === 'idea' ? 4 : 8}
-              className="rounded-[20px] border border-slate-200 bg-white text-sm shadow-sm transition-colors duration-200 focus-within:!border-cyan-500 focus-within:!ring-0 [&_[contenteditable]:focus-visible]:!outline-none dark:border-border-primary dark:bg-background-tertiary dark:text-white md:text-base"
+              className="rounded-[20px] border border-slate-200 bg-white text-sm shadow-sm transition-colors duration-200 focus-within:!border-cyan-500 focus-within:!ring-0 [&_[contenteditable]:focus-visible]:!outline-none [&_[contenteditable]]:!h-[260px] [&_[contenteditable]]:!min-h-0 [&_[contenteditable]]:resize-none md:[&_[contenteditable]]:!h-[360px] dark:border-border-primary dark:bg-background-tertiary dark:text-white md:text-base"
               toolbarLeft={
                 <div className="flex items-center gap-1">
                   <button

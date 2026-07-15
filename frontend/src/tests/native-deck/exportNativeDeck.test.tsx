@@ -1,7 +1,7 @@
 import { render } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { NativeDeckExportSurface } from '@/components/native-deck/NativeDeckExportSurface'
-import { assertNoFullSlideRasterConflict, exportNativeDeck } from '@/native-deck/exportNativeDeck'
+import { assertNoFullSlideRasterConflict, exportNativeDeck, resolveNativeElementEnter } from '@/native-deck/exportNativeDeck'
 import type { NativeSlideSpec } from '@/native-deck/types'
 import { exportEditablePptxInBrowser } from '@/vendor/html-deck-to-pptx/editable-browser.mjs'
 
@@ -22,10 +22,17 @@ describe('native deck browser export', () => {
     vi.mocked(exportEditablePptxInBrowser).mockClear()
   })
 
+  it('maps Dashi internal motion to a conservative PPTX entrance fallback', () => {
+    expect(resolveNativeElementEnter({}, 'theme01_page001')).toBe('fade')
+    expect(resolveNativeElementEnter({ internal: false }, 'theme01_page001')).toBeUndefined()
+    expect(resolveNativeElementEnter({ elementEnter: 'wipe' }, 'theme01_page001')).toBe('wipe')
+  })
+
   it('installs the deck DOM contract and switches the active slide', () => {
     const { container } = render(<NativeDeckExportSurface slides={slides} />)
     const deckSlides = container.querySelectorAll('#deck > .slide')
 
+    expect(container.querySelector('#deck')).toHaveClass('native-export-surface')
     expect(deckSlides).toHaveLength(2)
     expect(deckSlides[0]).toHaveClass('active')
     expect(window.__getVisibleSlides?.()).toHaveLength(2)
@@ -34,6 +41,11 @@ describe('native deck browser export', () => {
     expect(deckSlides[0]).not.toHaveClass('active')
     expect(deckSlides[1]).toHaveClass('active')
     expect(deckSlides[1]).toHaveAttribute('data-deck-active')
+  })
+
+  it('keeps the configured animation metadata on each export slide', () => {
+    const { container } = render(<NativeDeckExportSurface slides={[{ ...slides[0], props: { ...slides[0].props, __animation: { enter: 'fade', transition: 'zoom', internal: false } } }]} />)
+    expect(container.querySelector('#deck > .slide')).toHaveAttribute('data-native-animation', JSON.stringify({ enter: 'fade', transition: 'zoom', internal: false }))
   })
 
   it('forwards progress and pause callbacks to the vendored exporter', async () => {

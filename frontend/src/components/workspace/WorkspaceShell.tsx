@@ -8,11 +8,15 @@ type WorkspaceShellProps = {
   sidebar: ReactNode;
   children: ReactNode;
   inspector?: ReactNode;
-  statusBar: ReactNode;
+  statusBar?: ReactNode;
   hidePanelToggles?: boolean;
+  presenting?: boolean;
+  sidebarWidth?: string;
+  hideStatusBar?: boolean;
+  softBorders?: boolean;
 };
 
-export function WorkspaceShell({ toolbar, sidebar, children, inspector, statusBar, hidePanelToggles = false }: WorkspaceShellProps) {
+export function WorkspaceShell({ toolbar, sidebar, children, inspector, statusBar, hidePanelToggles = false, presenting = false, sidebarWidth = 'var(--workspace-sidebar-width)', hideStatusBar = false, softBorders = false }: WorkspaceShellProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [inspectorDrawer, setInspectorDrawer] = useState(() => window.matchMedia(inspectorDrawerQuery).matches);
   const [inspectorCollapsed, setInspectorCollapsed] = useState(inspectorDrawer);
@@ -36,8 +40,14 @@ export function WorkspaceShell({ toolbar, sidebar, children, inspector, statusBa
     return () => window.removeEventListener('keydown', closeDrawer);
   }, [inspectorDrawer]);
 
+  // Keep the canvas as the only flexible track. The inspector scrolls internally,
+  // so long fields must never participate in sizing the middle column.
   const style = {
-    gridTemplateColumns: `${sidebarCollapsed ? 'var(--workspace-sidebar-collapsed-width)' : 'var(--workspace-sidebar-width)'} minmax(0, 1fr) ${inspector && !inspectorDrawer ? (inspectorCollapsed ? 'var(--workspace-sidebar-collapsed-width)' : 'var(--workspace-inspector-width)') : '0'}`,
+    gridTemplateRows: hideStatusBar || presenting ? 'var(--workspace-toolbar-height) minmax(0, 1fr)' : 'var(--workspace-toolbar-height) minmax(0, 1fr) var(--workspace-statusbar-height)',
+    gridTemplateAreas: hideStatusBar || presenting ? '"toolbar toolbar toolbar" "sidebar canvas inspector"' : '"toolbar toolbar toolbar" "sidebar canvas inspector" "status status status"',
+    gridTemplateColumns: presenting
+      ? 'minmax(0, 1fr)'
+      : `minmax(0, ${sidebarCollapsed ? 'var(--workspace-sidebar-collapsed-width)' : sidebarWidth}) minmax(0, 1fr) minmax(0, ${inspector && !inspectorDrawer ? (inspectorCollapsed ? 'var(--workspace-sidebar-collapsed-width)' : 'var(--workspace-inspector-width)') : '0'})`,
   } satisfies CSSProperties;
 
   const inspectorLabel = inspectorDrawer
@@ -46,11 +56,12 @@ export function WorkspaceShell({ toolbar, sidebar, children, inspector, statusBa
 
   return (
     <section
-      className="workspace-shell relative text-foreground-primary"
+      className="workspace-shell relative min-w-0 text-foreground-primary"
       data-inspector-layout={inspectorDrawer ? 'drawer' : 'column'}
+      data-presenting={presenting ? 'true' : 'false'}
       style={style}
     >
-      <header className="flex min-w-0 items-center gap-2 border-b border-[var(--app-border)] bg-[var(--app-surface)]/95 px-2 backdrop-blur" style={{ gridArea: 'toolbar' }}>
+      <header className="flex min-w-0 items-center gap-2 border-b border-[var(--app-border)] bg-[var(--app-surface)]/95 px-2 backdrop-blur" style={{ gridArea: 'toolbar', display: presenting ? 'none' : undefined }}>
         {!hidePanelToggles && (
           <button
             type="button"
@@ -81,13 +92,13 @@ export function WorkspaceShell({ toolbar, sidebar, children, inspector, statusBa
       <aside
         aria-label="页面栏"
         data-collapsed={sidebarCollapsed}
-        className="min-h-0 overflow-hidden border-r border-[var(--app-border)] bg-[var(--app-surface-muted)]"
-        style={{ gridArea: 'sidebar' }}
+        className={`min-h-0 overflow-hidden bg-[var(--app-surface-muted)] ${softBorders ? 'border-r border-slate-200/60' : 'border-r border-[var(--app-border)]'}`}
+        style={{ gridArea: 'sidebar', display: presenting ? 'none' : undefined }}
       >
         {!sidebarCollapsed && <div className="h-full overflow-auto">{sidebar}</div>}
       </aside>
 
-      <main className="min-h-0 min-w-0 overflow-hidden" style={{ gridArea: 'canvas' }}>
+      <main className="min-h-0 min-w-0 w-full overflow-hidden" style={{ gridArea: 'canvas' }}>
         {children}
       </main>
 
@@ -95,16 +106,16 @@ export function WorkspaceShell({ toolbar, sidebar, children, inspector, statusBa
         <aside
           aria-label="属性栏"
           data-collapsed={inspectorCollapsed}
-          className={`min-h-0 overflow-hidden border-l border-[var(--app-border)] bg-[var(--app-surface)] ${inspectorDrawer ? 'absolute bottom-[var(--workspace-statusbar-height)] right-0 top-[var(--workspace-toolbar-height)] z-20 w-[var(--workspace-inspector-width)] shadow-[var(--app-shadow-soft)]' : ''}`}
-          style={{ gridArea: 'inspector', visibility: inspectorDrawer && inspectorCollapsed ? 'hidden' : undefined }}
+          className={`min-h-0 min-w-0 w-full overflow-x-hidden overflow-y-hidden bg-[var(--app-surface)] ${softBorders ? 'border-l border-slate-200/60' : 'border-l border-[var(--app-border)]'} ${inspectorDrawer ? 'absolute bottom-[var(--workspace-statusbar-height)] right-0 top-[var(--workspace-toolbar-height)] z-20 w-[var(--workspace-inspector-width)] shadow-[var(--app-shadow-soft)]' : ''}`}
+          style={{ gridArea: 'inspector', display: presenting ? 'none' : undefined, visibility: inspectorDrawer && inspectorCollapsed ? 'hidden' : undefined }}
         >
-          {!inspectorCollapsed && <div className="h-full overflow-auto">{inspector}</div>}
+          {!inspectorCollapsed && <div className="h-full min-w-0 overflow-x-hidden overflow-y-auto">{inspector}</div>}
         </aside>
       )}
 
-      <footer className="min-w-0 border-t border-[var(--app-border)] bg-[var(--app-surface)]/95" style={{ gridArea: 'status' }}>
+      {!hideStatusBar && <footer className="min-w-0 border-t border-[var(--app-border)] bg-[var(--app-surface)]/95" style={{ gridArea: 'status', display: presenting ? 'none' : undefined }}>
         {statusBar}
-      </footer>
+      </footer>}
     </section>
   );
 }

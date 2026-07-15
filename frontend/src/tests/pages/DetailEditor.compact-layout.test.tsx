@@ -97,14 +97,15 @@ describe('DetailEditor compact layout', () => {
     const scrollRegion = screen.getByTestId('detail-editor-scroll-region');
     const footer = screen.getByTestId('detail-editor-footer');
     expect(scrollRegion).not.toContainElement(footer);
+    expect(footer).toHaveClass('fixed', 'inset-x-0', 'bottom-0', 'z-40');
     expect(footer).toContainElement(screen.getByRole('button', { name: '上一步' }));
-    expect(footer).toContainElement(screen.getByRole('button', { name: '生成图片' }));
+    expect(footer).toContainElement(screen.getByRole('button', { name: '开始生成' }));
   });
 
   it('keeps image projects on the existing direct preview flow', async () => {
     renderEditor();
 
-    fireEvent.click(screen.getByRole('button', { name: '生成图片' }));
+    fireEvent.click(screen.getByRole('button', { name: '开始生成' }));
 
     expect(await screen.findByText('预览页面')).toBeInTheDocument();
     expect(mocks.generateNativeDeck).not.toHaveBeenCalled();
