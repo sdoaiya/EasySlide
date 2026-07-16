@@ -224,8 +224,19 @@ describe('useExportTasksStore', () => {
     expect(getTaskStatus).not.toHaveBeenCalledWith('project-a', 'native-task')
   })
 
-  it('keeps polling tasks active when a status request times out', async () => {
-    vi.mocked(getTaskStatus).mockRejectedValueOnce({ code: 'ECONNABORTED', message: 'timeout' })
+  it('retries polling after a timeout and keeps the download link when the task completes', async () => {
+    vi.useFakeTimers()
+    vi.mocked(getTaskStatus)
+      .mockRejectedValueOnce({ code: 'ECONNABORTED', message: 'timeout' })
+      .mockResolvedValueOnce({
+        data: {
+          status: 'COMPLETED',
+          progress: {
+            download_url_absolute: 'http://127.0.0.1/files/project-a/exports/report.pptx',
+            filename: '年度经营复盘.pptx',
+          },
+        },
+      } as any)
 
     act(() => {
       useExportTasksStore.getState().addTask({
@@ -243,5 +254,16 @@ describe('useExportTasksStore', () => {
 
     expect(useExportTasksStore.getState().tasks[0].status).toBe('PROCESSING')
     expect(useExportTasksStore.getState().tasks[0].errorMessage).toBeUndefined()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+
+    expect(getTaskStatus).toHaveBeenCalledTimes(2)
+    expect(useExportTasksStore.getState().tasks[0].status).toBe('COMPLETED')
+    expect(useExportTasksStore.getState().tasks[0].downloadUrl).toBe(
+      'http://127.0.0.1/files/project-a/exports/report.pptx',
+    )
+    expect(useExportTasksStore.getState().tasks[0].filename).toBe('年度经营复盘.pptx')
   })
 })

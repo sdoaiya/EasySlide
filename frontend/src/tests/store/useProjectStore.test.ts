@@ -26,6 +26,8 @@ vi.mock('@/api/endpoints', () => ({
 
 describe('useProjectStore', () => {
   beforeEach(() => {
+    delete (window as any).electronAPI
+    vi.clearAllMocks()
     // 重置store状态
     const { result } = renderHook(() => useProjectStore())
     act(() => {
@@ -105,6 +107,56 @@ describe('useProjectStore', () => {
       })
       
       expect(result.current.error).toBeNull()
+    })
+  })
+
+  describe('导出下载', () => {
+    it('uses backend filename when exporting PPTX through the desktop download path', async () => {
+      const saveDownload = vi.fn().mockResolvedValue('D:/exports/年度经营复盘.pptx')
+      ;(window as any).electronAPI = { saveDownload }
+      vi.mocked(api.exportPPTX).mockResolvedValue({
+        data: {
+          download_url: '/files/project-a/exports/generated-url-name.pptx',
+          filename: '年度经营复盘.pptx',
+        },
+      } as any)
+      const { result } = renderHook(() => useProjectStore())
+      act(() => {
+        result.current.setCurrentProject({ id: 'project-a', pages: [] } as any)
+      })
+
+      await act(async () => {
+        await result.current.exportPPTX()
+      })
+
+      expect(saveDownload).toHaveBeenCalledWith(
+        '/files/project-a/exports/generated-url-name.pptx',
+        '年度经营复盘.pptx',
+      )
+    })
+
+    it('uses backend filename when exporting PDF through the desktop download path', async () => {
+      const saveDownload = vi.fn().mockResolvedValue('D:/exports/年度经营复盘.pdf')
+      ;(window as any).electronAPI = { saveDownload }
+      vi.mocked(api.exportPDF).mockResolvedValue({
+        data: {
+          download_url: '/files/project-a/exports/generated-url-name.pdf',
+          filename: '年度经营复盘.pdf',
+        },
+      } as any)
+      const { result } = renderHook(() => useProjectStore())
+      act(() => {
+        result.current.setCurrentProject({ id: 'project-a', pages: [] } as any)
+      })
+
+      await act(async () => {
+        await result.current.exportPDF()
+      })
+
+      expect(saveDownload).toHaveBeenCalledWith(
+        '/files/project-a/exports/generated-url-name.pdf',
+        '年度经营复盘.pdf',
+      )
     })
   })
 

@@ -291,9 +291,11 @@ import { getPageImageVersions, setCurrentImageVersion, updateProject, uploadTemp
 import type { ImageVersion, DescriptionContent, ExportExtractorMethod, ExportInpaintMethod, Page, NarrationConfig } from '@/types';
 import { normalizeErrorMessage } from '@/utils';
 import { NativeDeckWorkspaceLoader } from '@/components/native-deck/NativeDeckWorkspaceLoader';
-import type { NativeSlideSpec } from '@/native-deck/types';
+import { buildNativeProjectSlides } from '@/native-deck/nativeProjectSlides';
 import { getNativeDeckTaskStorageKey } from '@/utils/projectUtils';
 import { findGordenTemplatePack } from '@/config/gordenTemplatePacks';
+import layoutManifest from '../../../shared/native-deck/layout-manifest.json';
+import type { NativeLayoutContract } from '@/components/native-deck/NativeDeckPropertyPanel';
 
 const VIDEO_VOICE_OPTIONS = [
   { group: '中文', voices: [
@@ -546,6 +548,22 @@ export const SlidePreview: React.FC = () => {
   const imageGenerationActive = !!activeImageTask
     && ['PENDING', 'PROCESSING', 'RUNNING', 'PAUSED'].includes(activeImageTask.status);
   const imageGenerationPaused = activeImageTask?.status === 'PAUSED';
+  const activeImageTaskRef = useRef(activeImageTask);
+  const pauseImageGenerationRef = useRef(pauseImageGeneration);
+
+  useEffect(() => {
+    activeImageTaskRef.current = activeImageTask;
+    pauseImageGenerationRef.current = pauseImageGeneration;
+  }, [activeImageTask, pauseImageGeneration]);
+
+  useEffect(() => {
+    return () => {
+      const task = activeImageTaskRef.current;
+      if (task && ['PENDING', 'PROCESSING', 'RUNNING'].includes(task.status)) {
+        void pauseImageGenerationRef.current();
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!currentProject) return;
@@ -1220,6 +1238,7 @@ export const SlidePreview: React.FC = () => {
   ) => {
     setShowExportMenu(false);
     if (!projectId) return;
+    setShowExportTasksPanel(true);
 
     const pageIds = options?.pageIds ?? getSelectedPageIdsForExport();
     const exportTaskId = `export-${Date.now()}`;
@@ -1237,6 +1256,7 @@ export const SlidePreview: React.FC = () => {
             : await apiExportImages(projectId, pageIds);
         const downloadUrl = response.data?.download_url || response.data?.download_url_absolute;
         if (downloadUrl) {
+          const filename = response.data?.filename;
           addTask({
             id: exportTaskId,
             taskId: '',
@@ -1244,9 +1264,9 @@ export const SlidePreview: React.FC = () => {
             type: type as ExportTaskType,
             status: 'COMPLETED',
             downloadUrl,
+            filename,
             pageIds: pageIds,
           });
-          window.open(downloadUrl, '_blank');
         }
       } else if (type === 'editable-pptx') {
         // Async export - create processing task and start polling
@@ -1538,17 +1558,10 @@ export const SlidePreview: React.FC = () => {
   }
 
   if ((currentProject as typeof currentProject & { render_mode?: string }).render_mode === 'native') {
-    const nativeSlides = currentProject.pages.map((page): NativeSlideSpec => {
-      const nativePage = page as Page & { native_layout?: string; native_props?: Record<string, unknown> };
-      const outline = (page.outline_content || {}) as Record<string, unknown>;
-      const title = typeof outline.title === 'string' ? outline.title : `第 ${page.order_index + 1} 页`;
-      return {
-        pageId: nativePage.id || nativePage.page_id,
-        layout: nativePage.native_layout || 'pending',
-        props: nativePage.native_props || { title },
-        pending: !nativePage.native_layout,
-      };
-    });
+    const nativeSlides = buildNativeProjectSlides(
+      currentProject,
+      layoutManifest.layouts as unknown as readonly NativeLayoutContract[],
+    );
     const nativeProjectId = projectId || currentProject.id || currentProject.project_id;
     const generationTaskId = (location.state as { taskId?: string } | null)?.taskId
       || localStorage.getItem(getNativeDeckTaskStorageKey(nativeProjectId));

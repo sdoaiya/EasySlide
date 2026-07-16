@@ -79,6 +79,22 @@ const storeI18n = {
 const t = getT(storeI18n);
 const pollingImageTaskIds = new Set<string>();
 
+const getUnfinishedImageTaskPageIds = (task: Task, project: Project): string[] => {
+  const manifestPages = Array.isArray(task.progress?.pages) ? task.progress.pages : null;
+  if (manifestPages) {
+    return manifestPages
+      .filter((item: any) => typeof item?.page_id === 'string' && item.status !== 'completed')
+      .map((item: any) => item.page_id);
+  }
+  if (Array.isArray(task.progress?.page_ids)) {
+    return (task.progress!.page_ids as unknown[]).filter((id): id is string => typeof id === 'string');
+  }
+  return project.pages
+    .filter(page => page.status === 'QUEUED' || page.status === 'GENERATING')
+    .map(page => page.id)
+    .filter((id): id is string => !!id);
+};
+
 interface ProjectState {
   // 状态
   currentProject: Project | null;
@@ -524,7 +540,10 @@ const debouncedUpdatePage = debounce(
               devLog('[导出可编辑PPTX] 从任务响应中获取下载链接:', downloadUrl);
               // 延迟一下，确保状态更新完成后再打开下载链接
               setTimeout(() => {
-                window.open(downloadUrl, '_blank');
+                downloadFromUrl(
+                  downloadUrl,
+                  progress?.filename || downloadUrl.split('/').pop()?.split('?')[0],
+                );
               }, 500);
             } else {
               console.warn('[导出可编辑PPTX] 任务完成但没有下载链接');
@@ -1130,7 +1149,14 @@ const debouncedUpdatePage = debounce(
           return;
         }
 
-        if (['PENDING', 'PROCESSING', 'RUNNING', 'PAUSED'].includes(task.status)) {
+        if (task.status === 'PAUSED') {
+          stopPolling();
+          set({ activeImageTask: task });
+          await syncCurrentProject();
+          return;
+        }
+
+        if (['PENDING', 'PROCESSING', 'RUNNING'].includes(task.status)) {
           set({ activeImageTask: task });
           await syncCurrentProject();
 
@@ -1139,7 +1165,7 @@ const debouncedUpdatePage = debounce(
             const nextTasks = { ...get().pageGeneratingTasks };
             pageIds.forEach(id => {
               const page = project.pages.find(item => item.id === id);
-              if (page?.generated_image_path || page?.status === 'FAILED') {
+              if (page?.generated_image_path || (page?.status === 'FAILED' && task.status !== 'PAUSED')) {
                 if (nextTasks[id] === taskId) delete nextTasks[id];
               } else {
                 nextTasks[id] = taskId;
@@ -1178,19 +1204,18 @@ const debouncedUpdatePage = debounce(
       set({ activeImageTask: null });
       return;
     }
-    const savedPageIds = Array.isArray(task.progress?.page_ids)
-      ? (task.progress!.page_ids as unknown[]).filter((id): id is string => typeof id === 'string')
-      : project.pages
-          .filter(page => page.status === 'QUEUED' || page.status === 'GENERATING')
-          .map(page => page.id)
-          .filter((id): id is string => !!id);
+    const savedPageIds = getUnfinishedImageTaskPageIds(task, project);
     const nextTasks: Record<string, string> = {};
     savedPageIds.forEach(id => {
       const page = project.pages.find(item => item.id === id);
-      if (page && !page.generated_image_path && page.status !== 'FAILED') nextTasks[id] = task.task_id;
+      if (page && !page.generated_image_path && (page.status !== 'FAILED' || task.status === 'PAUSED')) {
+        nextTasks[id] = task.task_id;
+      }
     });
     set({ activeImageTask: task, pageGeneratingTasks: nextTasks });
-    get().pollImageTask(task.task_id, savedPageIds);
+    if (task.status !== 'PAUSED') {
+      get().pollImageTask(task.task_id, savedPageIds);
+    }
   },
 
   pauseImageGeneration: async () => {
@@ -1205,9 +1230,7 @@ const debouncedUpdatePage = debounce(
     if (!currentProject?.id || !activeImageTask) return;
     const task = (await api.resumeTask(currentProject.id, activeImageTask.task_id)).data;
     if (!task) return;
-    const pageIds = Array.isArray(task.progress?.page_ids)
-      ? (task.progress!.page_ids as unknown[]).filter((id): id is string => typeof id === 'string')
-      : Object.keys(get().pageGeneratingTasks);
+    const pageIds = getUnfinishedImageTaskPageIds(task, currentProject);
     const nextTasks: Record<string, string> = {};
     pageIds.forEach(id => { nextTasks[id] = task.task_id; });
     set({ activeImageTask: task, pageGeneratingTasks: nextTasks });
@@ -1271,8 +1294,10 @@ const debouncedUpdatePage = debounce(
         throw new Error(t('store.exportLinkFailed'));
       }
 
-      const filename = downloadUrl.split('/').pop()?.split('?')[0] || 'presentation.pptx';
-      downloadFromUrl(downloadUrl, filename);
+      const filename = response.data?.filename
+        || downloadUrl.split('/').pop()?.split('?')[0]
+        || 'presentation.pptx';
+      await downloadFromUrl(downloadUrl, filename);
     } catch (error: any) {
       set({ error: error.message || t('store.exportFailed') });
     } finally {
@@ -1296,8 +1321,10 @@ const debouncedUpdatePage = debounce(
         throw new Error(t('store.exportLinkFailed'));
       }
 
-      const filename = downloadUrl.split('/').pop()?.split('?')[0] || 'presentation.pdf';
-      downloadFromUrl(downloadUrl, filename);
+      const filename = response.data?.filename
+        || downloadUrl.split('/').pop()?.split('?')[0]
+        || 'presentation.pdf';
+      await downloadFromUrl(downloadUrl, filename);
     } catch (error: any) {
       set({ error: error.message || t('store.exportFailed') });
     } finally {

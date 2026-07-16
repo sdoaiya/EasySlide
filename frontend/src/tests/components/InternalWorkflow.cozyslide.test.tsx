@@ -34,18 +34,36 @@ const mocks = vi.hoisted(() => {
     regenerateRenovationPage: vi.fn(),
     generatePageImage: vi.fn(),
     generateImages: vi.fn(),
+    restoreImageGeneration: vi.fn(),
+    pauseImageGeneration: vi.fn(),
+    resumeImageGeneration: vi.fn(),
     regeneratePageImage: vi.fn(),
     isGlobalLoading: false,
     isOutlineStreaming: false,
     taskProgress: null,
     pageGeneratingTasks: {},
+    activeImageTask: null as any,
     warningMessage: null,
     setError: vi.fn(),
   };
 
   const toastShow = vi.fn();
+  let exportTasks: any[] = [];
+  const addExportTask = vi.fn((task: any) => {
+    exportTasks = [{ ...task, createdAt: new Date().toISOString() }, ...exportTasks];
+  });
 
-  return { store, toastShow };
+  return {
+    store,
+    toastShow,
+    get exportTasks() {
+      return exportTasks;
+    },
+    set exportTasks(value: any[]) {
+      exportTasks = value;
+    },
+    addExportTask,
+  };
 });
 
 vi.mock('@/store/useProjectStore', () => {
@@ -57,9 +75,9 @@ vi.mock('@/store/useProjectStore', () => {
 
 vi.mock('@/store/useExportTasksStore', () => ({
   useExportTasksStore: () => ({
-    addTask: vi.fn(),
+    addTask: mocks.addExportTask,
     pollTask: vi.fn(),
-    tasks: [],
+    tasks: mocks.exportTasks,
     restoreActiveTasks: vi.fn(),
   }),
 }));
@@ -136,7 +154,7 @@ vi.mock('@/components/shared', () => ({
     </label>
   ),
   ProjectSettingsModal: () => null,
-  ExportTasksPanel: () => null,
+  ExportTasksPanel: () => <div>导出任务面板</div>,
   TextStyleSelector: () => null,
   useToast: () => ({ show: mocks.toastShow, ToastContainer: () => null }),
   useConfirm: () => ({ confirm: vi.fn(), ConfirmDialog: null }),
@@ -187,9 +205,16 @@ function renderAt(path: string, element: React.ReactNode) {
 describe('EasySlide internal workflow chrome', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.exportTasks = [];
     mocks.store.currentProject.pages = [];
     mocks.store.currentProject.creation_type = 'ppt_renovation';
+    mocks.store.activeImageTask = null;
+    mocks.store.pageGeneratingTasks = {};
     mocks.store.generateOutlineStream.mockResolvedValue({ complete: true });
+    mocks.store.syncProject.mockResolvedValue(mocks.store.currentProject);
+    (window as any).electronAPI = {
+      saveDownload: vi.fn().mockResolvedValue({ success: true }),
+    };
   });
 
   it('labels the outline editor as the content-structure step', () => {
@@ -247,6 +272,55 @@ describe('EasySlide internal workflow chrome', () => {
 
     expect(screen.getByTestId('slide-preview-viewport')).toHaveClass('overflow-hidden');
     expect(screen.getByTestId('slide-preview-canvas').style.width).toContain('cqh');
+  });
+
+  it('pauses active image generation when leaving the preview page', () => {
+    mocks.store.activeImageTask = {
+      task_id: 'image-task-active',
+      task_type: 'GENERATE_IMAGES',
+      status: 'PROCESSING',
+      progress: { total: 2, completed: 0, page_ids: ['page-1', 'page-2'] },
+    };
+
+    const { unmount } = renderAt('/project/project-1/preview', <SlidePreview />);
+    unmount();
+
+    expect(mocks.store.pauseImageGeneration).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens the export task panel after starting a PPTX export', async () => {
+    const endpoints = await import('@/api/endpoints');
+    mocks.store.currentProject.pages = [{
+      id: 'page-1',
+      page_id: 'page-1',
+      order_index: 0,
+      status: 'COMPLETED',
+      generated_image_path: '/files/page-1.png',
+      outline_content: { title: 'Slide 1', points: [] },
+      description_content: { text: 'Desc 1' },
+    }];
+    vi.mocked(endpoints.exportPPTX).mockResolvedValueOnce({
+      data: {
+        download_url: '/files/project-1/exports/年度经营复盘.pptx',
+        filename: '年度经营复盘.pptx',
+      },
+    } as any);
+
+    renderAt('/project/project-1/preview', <SlidePreview />);
+
+    fireEvent.click(screen.getByRole('button', { name: '导出 导出' }));
+    fireEvent.click(screen.getByRole('button', { name: '导出为 PPTX' }));
+    fireEvent.click(screen.getByRole('button', { name: '开始导出' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('导出任务面板')).toBeInTheDocument();
+    });
+    expect(mocks.addExportTask).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'pptx',
+      status: 'COMPLETED',
+      filename: '年度经营复盘.pptx',
+    }));
+    expect((window as any).electronAPI.saveDownload).not.toHaveBeenCalled();
   });
 
   it('shows backend ElevenLabs voice errors when enabling TTS fails', async () => {

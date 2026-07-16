@@ -1,7 +1,10 @@
 """Settings model"""
 import json
 from datetime import datetime, timezone
+from sqlalchemy import text
+from sqlalchemy.orm.attributes import flag_modified
 from . import db
+from secret_storage import EncryptedText, SECRET_FIELD_NAMES, is_encrypted
 
 
 def _utcnow_naive():
@@ -17,7 +20,7 @@ class Settings(db.Model):
     id = db.Column(db.Integer, primary_key=True, default=1)
     ai_provider_format = db.Column(db.String(20), nullable=True)   # AI提供商格式: openai, gemini (NULL=use .env)
     api_base_url = db.Column(db.String(500), nullable=True)        # API基础URL
-    api_key = db.Column(db.String(500), nullable=True)             # API密钥
+    api_key = db.Column(EncryptedText(), nullable=True)            # API密钥
     image_resolution = db.Column(db.String(20), nullable=True)     # 图像清晰度: 1K, 2K, 4K (NULL=use .env)
     image_aspect_ratio = db.Column(db.String(10), nullable=True)   # 图像比例: 16:9, 4:3, 1:1 (NULL=use .env)
     max_description_workers = db.Column(db.Integer, nullable=True)  # 描述生成最大工作线程数 (NULL=use .env)
@@ -27,7 +30,7 @@ class Settings(db.Model):
     text_model = db.Column(db.String(100), nullable=True)  # 文本大模型名称（覆盖 Config.TEXT_MODEL）
     image_model = db.Column(db.String(100), nullable=True)  # 图片大模型名称（覆盖 Config.IMAGE_MODEL）
     mineru_api_base = db.Column(db.String(255), nullable=True)  # MinerU 服务地址（覆盖 Config.MINERU_API_BASE）
-    mineru_token = db.Column(db.String(500), nullable=True)  # MinerU API Token（覆盖 Config.MINERU_TOKEN）
+    mineru_token = db.Column(EncryptedText(), nullable=True)  # MinerU API Token（覆盖 Config.MINERU_TOKEN）
     image_caption_model = db.Column(db.String(100), nullable=True)  # 图片识别模型（覆盖 Config.IMAGE_CAPTION_MODEL）
     output_language = db.Column(db.String(10), nullable=True)  # 输出语言偏好（zh, en, ja, auto）(NULL=use .env)
     
@@ -45,33 +48,33 @@ class Settings(db.Model):
     image_prompt_extra_fields = db.Column(db.Text, nullable=True)  # JSON array: 哪些额外字段传入文生图 prompt
 
     # 百度 API 配置
-    baidu_api_key = db.Column(db.String(500), nullable=True)  # 百度 API Key
+    baidu_api_key = db.Column(EncryptedText(), nullable=True)  # 百度 API Key
 
     # ElevenLabs TTS 配置
     elevenlabs_enabled = db.Column(db.Boolean, nullable=False, default=False)
-    elevenlabs_api_key = db.Column(db.String(500), nullable=True)
+    elevenlabs_api_key = db.Column(EncryptedText(), nullable=True)
     elevenlabs_voice_id = db.Column(db.String(100), nullable=True)
 
     # 每种模型类型的提供商配置（source 可选 gemini/openai/lazyllm厂商名，NULL=使用全局配置）
     text_model_source = db.Column(db.String(50), nullable=True)           # 文本模型提供商 (gemini, openai, qwen, doubao, deepseek, ...)
     image_model_source = db.Column(db.String(50), nullable=True)          # 图片模型提供商
     image_caption_model_source = db.Column(db.String(50), nullable=True)  # 图片识别模型提供商
-    lazyllm_api_keys = db.Column(db.Text, nullable=True)                  # JSON: {"qwen": "key1", "doubao": "key2", ...}
+    lazyllm_api_keys = db.Column(EncryptedText(), nullable=True)          # JSON: {"qwen": "key1", "doubao": "key2", ...}
 
     # Per-model API 凭证（当 source 为 gemini/openai 时使用，NULL=使用全局 api_key/api_base_url）
-    text_api_key = db.Column(db.String(500), nullable=True)
+    text_api_key = db.Column(EncryptedText(), nullable=True)
     text_api_base_url = db.Column(db.String(500), nullable=True)
-    image_api_key = db.Column(db.String(500), nullable=True)
+    image_api_key = db.Column(EncryptedText(), nullable=True)
     image_api_base_url = db.Column(db.String(500), nullable=True)
-    image_caption_api_key = db.Column(db.String(500), nullable=True)
+    image_caption_api_key = db.Column(EncryptedText(), nullable=True)
     image_caption_api_base_url = db.Column(db.String(500), nullable=True)
 
     # OpenAI image API protocol: auto (default), images (force images.generate), chat (force chat.completions)
     openai_image_api_protocol = db.Column(db.String(10), nullable=True)
 
     # OpenAI Codex OAuth credentials
-    openai_oauth_access_token = db.Column(db.Text, nullable=True)
-    openai_oauth_refresh_token = db.Column(db.Text, nullable=True)
+    openai_oauth_access_token = db.Column(EncryptedText(), nullable=True)
+    openai_oauth_refresh_token = db.Column(EncryptedText(), nullable=True)
     openai_oauth_expires_at = db.Column(db.DateTime, nullable=True)
     openai_oauth_account_id = db.Column(db.String(100), nullable=True)
 
@@ -193,6 +196,21 @@ class Settings(db.Model):
                 return None
         return self.openai_oauth_access_token
 
+    def migrate_legacy_secrets(self):
+        """Rewrite existing plaintext setting values through the encrypted column type."""
+        column_list = ", ".join(SECRET_FIELD_NAMES)
+        row = db.session.execute(text(f"SELECT {column_list} FROM settings WHERE id = :id"), {"id": self.id}).mappings().first()
+        if not row:
+            return False
+        changed = False
+        for field in SECRET_FIELD_NAMES:
+            raw_value = row.get(field)
+            if raw_value and not is_encrypted(raw_value):
+                setattr(self, field, raw_value)
+                flag_modified(self, field)
+                changed = True
+        return changed
+
     def is_openai_oauth_connected(self):
         """Return whether stored OpenAI OAuth credentials can still be presented as connected."""
         if not self.openai_oauth_access_token:
@@ -289,15 +307,19 @@ class Settings(db.Model):
         """
         Get or create the single settings instance.
 
-        Returns the ORM object as-is from the database.  ``.env``
-        defaults for ``None`` fields are merged only at serialisation
-        time in ``to_dict()``, so this method has no write side-effects.
+        Returns the ORM object from the database. ``.env`` defaults for
+        ``None`` fields are merged only at serialisation time in ``to_dict()``.
+        Legacy plaintext credentials are migrated to local encrypted storage
+        on first read.
         """
         settings = Settings.query.first()
 
         if settings is None:
             settings = Settings(id=1)
             db.session.add(settings)
+            db.session.commit()
+
+        if settings.migrate_legacy_secrets():
             db.session.commit()
 
         return settings

@@ -9,6 +9,7 @@ assert _SPEC and _SPEC.loader
 _MODULE = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_MODULE)
 append_image_page_role_hint = _MODULE.append_image_page_role_hint
+append_template_visual_profile_hint = _MODULE.append_template_visual_profile_hint
 infer_image_page_role = _MODULE.infer_image_page_role
 resolve_template_reference_path = _MODULE.resolve_template_reference_path
 
@@ -28,8 +29,44 @@ def test_appends_role_hint_without_duplicate_or_data_mutation():
     assert result is not None
     assert result.startswith(base)
     assert '章节分隔页' in result
+    assert '大标题' in result
     assert append_image_page_role_hint(result, 'section') == result
     assert append_image_page_role_hint('', 'content').startswith('本页视觉角色：普通内容页')
+
+
+def test_role_hints_carry_distinct_image_generation_constraints():
+    cover = append_image_page_role_hint('', 'cover')
+    data = append_image_page_role_hint('', 'data')
+    ending = append_image_page_role_hint('', 'ending')
+
+    assert cover is not None
+    assert data is not None
+    assert ending is not None
+    assert '低密度' in cover
+    assert 'KPI' in data
+    assert '图表' in data
+    assert '总结' in ending
+    assert '下一步' in ending
+    assert '禁止占位符' in data
+
+
+def test_appends_gorden_template_visual_profile_without_duplicate():
+    base = '深蓝商务风'
+    result = append_template_visual_profile_hint(base, 'gorden-data-viz-deck')
+
+    assert result is not None
+    assert result.startswith(base)
+    assert '模板视觉DNA' in result
+    assert '数据仪表盘' in result
+    assert 'KPI' in result
+    assert '深色高对比' in result
+    assert append_template_visual_profile_hint(result, 'gorden-data-viz-deck') == result
+
+
+def test_template_visual_profile_is_noop_for_unknown_or_empty_pack():
+    assert append_template_visual_profile_hint('原始要求', None) == '原始要求'
+    assert append_template_visual_profile_hint('原始要求', 'custom-pack') == '原始要求'
+    assert append_template_visual_profile_hint('', 'custom-pack') is None
 
 
 def test_resolves_role_asset_and_preserves_legacy_fallback(tmp_path, monkeypatch):

@@ -1288,13 +1288,30 @@ Output format — use exactly this delimiter before each narration:
         normalized_config,
     )
     return prompt
-def get_native_slide_prompt(outline, layout_candidates, style_hint=None):
+def get_native_slide_prompt(outline, layout_candidates, style_hint=None, design_intent=None):
     """Build a constrained prompt for one native slide."""
     style_section = f"\n文字描述风格：\n{style_hint}\n" if style_hint else ""
+    design_section = f"""
+Huashu 设计规划：
+{json.dumps(design_intent, ensure_ascii=False)}
+
+页面规划：
+{json.dumps((design_intent or {}).get('page_plan') or {}, ensure_ascii=False)}
+
+整套设计说明：
+{json.dumps((design_intent or {}).get('deck_plan') or {}, ensure_ascii=False)}
+
+反模板化约束：
+- 先理解整套叙事节奏和当前页面角色，再选择最合适的原生布局。
+- 不要连续重复最近使用的布局；但内容匹配优先于为了不同而强行选择错误版式。
+- 输出内容必须来自页面大纲、项目主题或设计规划，不要保留候选布局默认示例文案。
+- 只通过 layout + props 表达设计，不要返回 HTML、CSS、className 或解释文字。
+""" if design_intent else ""
     return f"""你正在生成一页结构化、可编辑的演示文稿页面。
 只能从候选布局中选择一个 layout，并且 props 只能包含该布局 propShapes 声明的字段。
 严格遵守 copyBudgets 和 arrayLimits。不要返回 HTML、CSS、className 或解释文字。
 {style_section}
+{design_section}
 
 页面大纲：
 {json.dumps(outline or {}, ensure_ascii=False)}

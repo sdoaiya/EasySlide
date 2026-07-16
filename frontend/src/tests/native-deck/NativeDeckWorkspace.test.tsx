@@ -21,6 +21,7 @@ const previewMocks = vi.hoisted(() => ({
     taskProgress: null,
     pageGeneratingTasks: {},
     warningMessage: null,
+    restoreImageGeneration: vi.fn(),
   },
 }))
 
@@ -33,6 +34,8 @@ const nativeApiMocks = vi.hoisted(() => ({
   exportNativeVideo: vi.fn(),
   generateMaterialImage: vi.fn(),
   updateProject: vi.fn(),
+  getNativePageVersions: vi.fn(),
+  restoreNativePageVersion: vi.fn(),
 }))
 
 const exportTaskMocks = vi.hoisted(() => ({
@@ -92,6 +95,8 @@ vi.mock('@/api/endpoints', () => ({
   exportEditablePPTX: vi.fn(),
   exportVideo: vi.fn(),
   exportNativeVideo: nativeApiMocks.exportNativeVideo,
+  getNativePageVersions: nativeApiMocks.getNativePageVersions,
+  restoreNativePageVersion: nativeApiMocks.restoreNativePageVersion,
 }))
 
 const slides: NativeSlideSpec[] = [
@@ -137,6 +142,8 @@ describe('NativeDeckWorkspace', () => {
     nativeApiMocks.exportNativeVideo.mockReset().mockResolvedValue({ data: { task_id: 'video-task-1' } })
     nativeApiMocks.generateMaterialImage.mockReset()
     nativeApiMocks.updateProject.mockReset().mockResolvedValue({ data: undefined })
+    nativeApiMocks.getNativePageVersions.mockReset().mockResolvedValue({ data: { versions: [] } })
+    nativeApiMocks.restoreNativePageVersion.mockReset().mockResolvedValue({ data: {} })
     frameMocks.capture.mockReset().mockResolvedValue([new Blob(['frame'], { type: 'image/png' })])
     exportMocks.exportNativeDeck.mockReset().mockResolvedValue({
       blob: new Blob(['pptx'], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' }),
@@ -145,7 +152,25 @@ describe('NativeDeckWorkspace', () => {
     exportTaskMocks.addTask.mockReset()
     exportTaskMocks.updateTask.mockReset()
     exportTaskMocks.pollTask.mockReset().mockResolvedValue(undefined)
+    previewMocks.store.syncProject.mockReset().mockResolvedValue(undefined)
+    previewMocks.store.restoreImageGeneration.mockReset()
     useNativeDeckStore.setState({ slides: [], selectedPageId: null, dirtyPageIds: new Set() })
+  })
+
+  it('marks pages with Huashu quality warnings in the page rail', () => {
+    renderWorkspace([
+      {
+        ...slides[0],
+        props: {
+          ...slides[0].props,
+          __design_intent: {
+            quality_report: { status: 'warning', score: 85, outline_coverage: 0.4, issues: ['low_outline_coverage'] },
+          },
+        },
+      },
+    ])
+
+    expect(screen.getByRole('button', { name: '第 1 页：议程，存在质量警告' })).toBeInTheDocument()
   })
 
   afterEach(() => {
@@ -158,16 +183,57 @@ describe('NativeDeckWorkspace', () => {
     expect(screen.getByRole('complementary', { name: '页面栏' })).toBeInTheDocument()
     expect(screen.getByRole('main')).toHaveTextContent('议程')
     expect(screen.getByRole('complementary', { name: '属性栏' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '收起页面栏' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '收起属性栏' })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '第 2 页：客户案例' }))
 
     expect(useNativeDeckStore.getState().selectedPageId).toBe('page-2')
+    fireEvent.click(screen.getByRole('tab', { name: '媒体' }))
     expect(screen.getByAltText('image 1')).toHaveAttribute('src', '/files/old.png')
+  })
+
+  it('offers regeneration and persistent version history for a generated native page', async () => {
+    const onRegenerate = vi.fn()
+    nativeApiMocks.getNativePageVersions.mockResolvedValue({ data: { versions: [{ version_id: 'current', version_number: 2, is_current: true, layout: 'core01_agenda', props: slides[0].props }] } })
+    render(
+      <NativeDeckWorkspace
+        projectId="project-1"
+        slides={slides}
+        layoutContracts={layoutContracts}
+        singlePageGenerationAction={{ label: '重新生成本页', onClick: onRegenerate }}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: '重新生成本页' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '页面版本' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '重新生成本页' }))
+    expect(onRegenerate).toHaveBeenCalledWith('page-1')
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(screen.getByText('版本 2（当前）')).toBeInTheDocument()
+  })
+
+  it('opens an in-app full-screen presentation overlay', () => {
+    const requestFullscreen = vi.fn().mockResolvedValue(undefined)
+    const originalRequestFullscreen = document.documentElement.requestFullscreen
+    Object.defineProperty(document.documentElement, 'requestFullscreen', { configurable: true, value: requestFullscreen })
+    renderWorkspace()
+
+    fireEvent.click(screen.getByRole('button', { name: '演示模式' }))
+
+    const presentation = screen.getByRole('dialog', { name: '演示模式' })
+    expect(presentation).toHaveClass('fixed', 'inset-0')
+    expect(presentation.querySelector('button[aria-label="退出演示模式"]')).toBeInTheDocument()
+    expect(requestFullscreen).toHaveBeenCalledOnce()
+    Object.defineProperty(document.documentElement, 'requestFullscreen', { configurable: true, value: originalRequestFullscreen })
   })
 
   it('edits text and array fields from the selected layout contract', () => {
     renderWorkspace()
 
+    fireEvent.click(screen.getByRole('tab', { name: '内容' }))
     fireEvent.change(screen.getByLabelText('title'), { target: { value: '更新后的议程' } })
     expect(screen.getByRole('main')).toHaveTextContent('更新后的议程')
 
@@ -182,6 +248,7 @@ describe('NativeDeckWorkspace', () => {
 
   it('does not discard local edits when the parent rerenders equivalent slide data', () => {
     const { rerender } = renderWorkspace()
+    fireEvent.click(screen.getByRole('tab', { name: '内容' }))
     fireEvent.change(screen.getByLabelText('title'), { target: { value: '尚未保存的编辑' } })
 
     rerender(
@@ -199,6 +266,7 @@ describe('NativeDeckWorkspace', () => {
 
   it('merges newly generated server pages without discarding dirty edits or selection', () => {
     const { rerender } = renderWorkspace()
+    fireEvent.click(screen.getByRole('tab', { name: '内容' }))
     fireEvent.change(screen.getByLabelText('title'), { target: { value: '尚未保存的编辑' } })
     fireEvent.click(screen.getByRole('button', { name: '第 2 页：客户案例' }))
 
@@ -222,6 +290,7 @@ describe('NativeDeckWorkspace', () => {
   it('clears a media slot and autosaves the current layout and props', async () => {
     renderWorkspace()
     fireEvent.click(screen.getByRole('button', { name: '第 2 页：客户案例' }))
+    fireEvent.click(screen.getByRole('tab', { name: '媒体' }))
 
     fireEvent.click(screen.getByRole('button', { name: '清除 image 1' }))
     expect(screen.queryByAltText('image 1')).not.toBeInTheDocument()
@@ -239,6 +308,7 @@ describe('NativeDeckWorkspace', () => {
   it('shows copy budget errors and does not send invalid content', async () => {
     renderWorkspace()
 
+    fireEvent.click(screen.getByRole('tab', { name: '内容' }))
     fireEvent.change(screen.getByLabelText('title'), { target: { value: '这是一段明显超过二十四个字符限制并且不应发送到后端保存的标题文案' } })
 
     expect(screen.getByRole('alert')).toHaveTextContent('title 最多 24 个字符')
@@ -247,15 +317,37 @@ describe('NativeDeckWorkspace', () => {
     expect(useNativeDeckStore.getState().dirtyPageIds.has('page-1')).toBe(true)
   })
 
-  it('keeps the page dirty when autosave fails', async () => {
-    vi.mocked(apiClient.put).mockRejectedValueOnce(new Error('network down'))
+  it('retries autosave before keeping the page dirty', async () => {
+    vi.mocked(apiClient.put).mockRejectedValueOnce(new Error('network down')).mockResolvedValueOnce({ data: { success: true } })
     renderWorkspace()
 
+    fireEvent.click(screen.getByRole('tab', { name: '内容' }))
     fireEvent.change(screen.getByLabelText('title'), { target: { value: '保存会失败' } })
     await flushAutoSave()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000)
+    })
 
+    expect(apiClient.put).toHaveBeenCalledTimes(2)
+    expect(useNativeDeckStore.getState().dirtyPageIds.has('page-1')).toBe(false)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('已保存')
+  })
+
+  it('keeps the page dirty after all autosave retries fail', async () => {
+    vi.mocked(apiClient.put).mockRejectedValue(new Error('network down'))
+    renderWorkspace()
+
+    fireEvent.click(screen.getByRole('tab', { name: '内容' }))
+    fireEvent.change(screen.getByLabelText('title'), { target: { value: '保存会失败' } })
+    await flushAutoSave()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000)
+    })
+
+    expect(apiClient.put).toHaveBeenCalledTimes(3)
     expect(useNativeDeckStore.getState().dirtyPageIds.has('page-1')).toBe(true)
-    expect(screen.getByRole('alert')).toHaveTextContent('自动保存失败')
+    expect(screen.getByRole('status')).toHaveTextContent('自动保存失败，请检查网络后重试')
   })
 
   it('adds, duplicates, reorders, and deletes native pages through project APIs', async () => {
@@ -287,8 +379,10 @@ describe('NativeDeckWorkspace', () => {
     renderWorkspace()
 
     expect(screen.getByRole('button', { name: '演示模式' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: '页面' }))
     fireEvent.change(screen.getByLabelText('页面布局'), { target: { value: 'core01_process' } })
     expect(screen.getByLabelText('页面布局')).toHaveValue('core01_process')
+    fireEvent.click(screen.getByRole('tab', { name: '内容' }))
     expect(screen.getByLabelText('steps 1')).toBeInTheDocument()
 
     expect(screen.getByText('100%')).toBeInTheDocument()
@@ -296,7 +390,6 @@ describe('NativeDeckWorkspace', () => {
     expect(screen.getByText('110%')).toBeInTheDocument()
     fireEvent.keyDown(window, { key: 'PageDown' })
     expect(useNativeDeckStore.getState().selectedPageId).toBe('page-2')
-    expect(screen.getByAltText('image 1')).toHaveAttribute('src', '/files/old.png')
     fireEvent.keyDown(window, { key: 'Home' })
     expect(useNativeDeckStore.getState().selectedPageId).toBe('page-1')
     fireEvent.keyDown(window, { key: 'End' })
@@ -310,6 +403,8 @@ describe('NativeDeckWorkspace', () => {
   it('copies only animation settings to every page', () => {
     renderWorkspace()
 
+    fireEvent.click(screen.getByRole('tab', { name: '动效' }))
+    fireEvent.click(screen.getByText('页面动效'))
     fireEvent.change(screen.getByLabelText('进入效果'), { target: { value: 'fade' } })
     fireEvent.change(screen.getByLabelText('页面切换'), { target: { value: 'cover' } })
     fireEvent.click(screen.getByLabelText('主题内部动效'))
@@ -325,6 +420,7 @@ describe('NativeDeckWorkspace', () => {
 
   it('supports undo and redo for native property edits', () => {
     renderWorkspace()
+    fireEvent.click(screen.getByRole('tab', { name: '内容' }))
     fireEvent.change(screen.getByLabelText('title'), { target: { value: '修改后的标题' } })
     fireEvent.click(screen.getByRole('button', { name: '撤销' }))
     expect(useNativeDeckStore.getState().slides[0].props.title).toBe('议程')
@@ -359,6 +455,7 @@ describe('NativeDeckWorkspace', () => {
 
     await waitFor(() => expect(screen.getByRole('main')).toHaveTextContent('真实 HTML 页面'))
     expect(screen.getByRole('complementary', { name: '属性栏' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: '内容' }))
     expect(screen.getByLabelText('title')).toHaveValue('真实 HTML 页面')
   }, 15000)
 
@@ -368,12 +465,30 @@ describe('NativeDeckWorkspace', () => {
     expect(screen.getByRole('option', { name: '讲解视频' })).toBeInTheDocument()
   })
 
+  it('regenerates only the selected fallback page from the property panel', () => {
+    const onGeneratePage = vi.fn()
+    render(
+      <NativeDeckWorkspace
+        projectId="project-1"
+        slides={[{ ...slides[0], props: { ...slides[0].props, __design_intent: { generation_fallback: true } } }]}
+        layoutContracts={layoutContracts}
+        singlePageGenerationAction={{ label: '生成本页', onClick: onGeneratePage }}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '重新生成本页' }))
+    expect(onGeneratePage).toHaveBeenCalledWith('page-1')
+  })
+
   it('waits for an explicit batch action before generating missing images', async () => {
     vi.useRealTimers()
     renderWorkspace([{ ...slides[1], props: { ...slides[1].props, image: '' } }])
 
     expect(screen.queryByRole('dialog', { name: '图片生成设置' })).not.toBeInTheDocument()
-    expect(screen.getAllByRole('button', { name: '批量生成' }).length).toBeGreaterThan(0)
+    const imageButtons = screen.getAllByRole('button', { name: '批量生成图片' })
+    expect(imageButtons).toHaveLength(1)
+    expect(imageButtons.some((button) => button.className.includes('bg-gradient-to-r'))).toBe(false)
+    expect(screen.getByRole('navigation', { name: '原生页面' })).not.toHaveTextContent('批量生成图片')
 
     fireEvent.click(screen.getByRole('button', { name: '项目设置' }))
     expect(screen.getByRole('dialog', { name: '图片生成设置' })).toBeInTheDocument()
@@ -381,6 +496,36 @@ describe('NativeDeckWorkspace', () => {
 
     await waitFor(() => expect(nativeApiMocks.updateProject).toHaveBeenCalled())
     expect(nativeApiMocks.generateMaterialImage).not.toHaveBeenCalled()
+  })
+
+  it('keeps click-triggered element animation visible while editing', () => {
+    renderWorkspace()
+
+    fireEvent.click(screen.getByRole('tab', { name: '动效' }))
+    fireEvent.click(screen.getByText('页面动效'))
+    fireEvent.change(screen.getByLabelText('元素逐项进入'), { target: { value: 'fade' } })
+    fireEvent.change(screen.getByLabelText('元素触发方式'), { target: { value: 'click' } })
+
+    expect(screen.getByRole('main')).toHaveTextContent('议程')
+    expect(screen.getByRole('main')).toHaveTextContent('现状')
+  })
+
+  it('keeps page generation out of the top toolbar when image generation is available', () => {
+    const { container } = render(
+      <NativeDeckWorkspace
+        projectId="project-1"
+        slides={[{ ...slides[1], props: { ...slides[1].props, image: '' } }]}
+        layoutContracts={layoutContracts}
+        pageGenerationAction={{ label: '批量生成页面', onClick: vi.fn() }}
+        autoSaveDelay={300}
+      />,
+    )
+
+    const toolbar = container.querySelector('header')
+    expect(toolbar).toBeInTheDocument()
+    expect(toolbar).not.toHaveTextContent('批量生成页面')
+    expect(toolbar).toHaveTextContent('批量生成图片')
+    expect(screen.getByRole('button', { name: '批量生成页面' })).toBeInTheDocument()
   })
 
   it('uses the compact native toolbar and tracks PPTX export as a task', async () => {

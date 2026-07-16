@@ -65,6 +65,33 @@ describe('History EasySlide clone', () => {
     expect(screen.queryByText('历史项目')).not.toBeInTheDocument();
   });
 
+  it('uses server-wide project stats instead of the current page only', async () => {
+    endpointMocks.listProjects.mockResolvedValueOnce({
+      data: {
+        total: 10,
+        stats: { total: 10, completed: 4, generating: 2, in_progress: 4 },
+        projects: [{
+          project_id: 'p1',
+          project_title: '当前页项目',
+          status: 'DRAFT',
+          pages: [],
+        }],
+      },
+    });
+
+    render(
+      <MemoryRouter>
+        <History />
+      </MemoryRouter>
+    );
+
+    await screen.findByText('项目总数');
+    const completedCard = screen.getByText('已完成').parentElement?.parentElement?.parentElement;
+    const generatingCard = screen.getByText('生成中').parentElement?.parentElement?.parentElement;
+    expect(completedCard).toHaveTextContent('4');
+    expect(generatingCard).toHaveTextContent('2');
+  });
+
   it('matches the ezppt-like project dashboard structure', async () => {
     endpointMocks.listProjects.mockResolvedValueOnce({
       data: {

@@ -1536,7 +1536,7 @@ class ExportService:
         rendered_by_id = {item['id']: item for item in manifest['elements']}
         decision_fields = (
             'z_order', 'editable', 'confidence', 'render_decision',
-            'fallback_reason', 'editable_text_added',
+            'fallback_reason', 'editable_text_added', 'suppressed_due_background_failure',
         )
         for collection_name in ('text_boxes', 'images', 'visual_inventory'):
             for item in manifest.get(collection_name, []):
@@ -1631,6 +1631,7 @@ class ExportService:
             'visual_inventory': visual_inventory,
             'quality_checks': {
                 'font_size_calibrated': all(bool(item.get('font_size')) for item in text_boxes),
+                'font_inventory_recorded': True,
                 'visual_inventory_matched': not visual_inventory,
                 'background_strategy_checked': False,
                 'shape_corner_geometry_checked': True,
@@ -1640,6 +1641,18 @@ class ExportService:
             'shapes': [],
             'images': images,
             'formula_inventory': formula_inventory,
+            'font_inventory': [
+                {
+                    'id': item['id'],
+                    'font_family': item.get('font_family'),
+                    'font_effects': item.get('font_effects') or {},
+                    'is_bold': bool(item.get('is_bold')),
+                    'is_italic': bool(item.get('is_italic')),
+                    'is_underline': bool(item.get('is_underline')),
+                    'confidence': item.get('font_confidence'),
+                }
+                for item in text_boxes
+            ],
             'asset_provenance': [
                 {
                     'path': item['path'],
@@ -1654,7 +1667,10 @@ class ExportService:
     @staticmethod
     def _validate_page_rebuild_manifest(manifest: Dict[str, Any]) -> Dict[str, Any]:
         errors = []
-        if manifest.get('background_strategy', {}).get('mode') == 'source-full-slide-raster' and manifest.get('text_boxes'):
+        if manifest.get('background_strategy', {}).get('mode') == 'source-full-slide-raster' and any(
+            not item.get('suppressed_due_background_failure')
+            for item in manifest.get('text_boxes', [])
+        ):
             errors.append('禁止使用原始整页截图作为背景再叠加可编辑文字')
         for item in manifest.get('text_boxes', []):
             if not item.get('box_px'):
@@ -1682,7 +1698,13 @@ class ExportService:
         render_result = manifest.get('render_result') or {}
         if render_result and not render_result.get('background_added'):
             errors.append('背景图写入PPTX失败')
-        expected_foreground = len(manifest.get('text_boxes', [])) + len(manifest.get('images', []))
+        expected_foreground = sum(
+            1 for item in manifest.get('text_boxes', [])
+            if not item.get('suppressed_due_background_failure')
+        ) + sum(
+            1 for item in manifest.get('images', [])
+            if not item.get('suppressed_due_background_failure')
+        )
         if render_result and expected_foreground and render_result.get('foreground_shape_count', 0) == 0:
             errors.append('未向PPTX写入任何可编辑前景元素')
         return {'passed': not errors, 'errors': errors}
@@ -1802,6 +1824,25 @@ class ExportService:
                 "box_px": [],
             })
         return assets
+
+    @staticmethod
+    def _validate_processed_asset_sheet(source_sheet, processed_sheet, grid) -> None:
+        """Reject model output that silently drops an item from the contact sheet."""
+        for cell in grid:
+            box = (cell['x'], cell['y'], cell['x'] + cell['w'], cell['y'] + cell['h'])
+            source = source_sheet.crop(box).convert('RGBA')
+            processed = processed_sheet.crop(box).convert('RGBA')
+            source_alpha = source.getchannel('A')
+            processed_alpha = processed.getchannel('A')
+            source_pixels = sum(1 for value in source_alpha.getdata() if value > 16)
+            processed_pixels = sum(1 for value in processed_alpha.getdata() if value > 16)
+            if source_pixels and processed_pixels < max(8, int(source_pixels * 0.08)):
+                raise RuntimeError(f"asset-sheet 元素缺失: {cell.get('id')}")
+
+            # A transparent result with no alpha is already rejected above. For opaque
+            # results, also reject a near-empty crop after matte recovery.
+            if source_pixels and processed_pixels and processed_pixels < 8:
+                raise RuntimeError(f"asset-sheet 元素输出为空: {cell.get('id')}")
 
     @staticmethod
     def _collect_foreground_image_elements(elements, depth=0):
@@ -1927,6 +1968,8 @@ class ExportService:
                 if result is None:
                     raise RuntimeError("图像模型未返回可分离的透明或纯色背景")
                 logger.info("  [asset-sheet] recovered transparency from opaque matte")
+
+            ExportService._validate_processed_asset_sheet(sheet_img, result, grid)
 
             processed_path = str(Path(output_dir) / "foreground_asset_sheet_processed.png")
             result.save(processed_path)
@@ -2200,6 +2243,28 @@ class ExportService:
                 background_path=background_path,
                 high_fidelity_editable=export_high_fidelity_editable,
             )
+            for font_item in page_manifest.get('font_inventory', []):
+                style = text_styles_cache.get(font_item['id'])
+                if style is None:
+                    continue
+                font_item.update({
+                    'font_family': getattr(style, 'font_family', None),
+                    'font_effects': getattr(style, 'font_effects', {}) or {},
+                    'is_bold': bool(getattr(style, 'is_bold', False)),
+                    'is_italic': bool(getattr(style, 'is_italic', False)),
+                    'is_underline': bool(getattr(style, 'is_underline', False)),
+                    'confidence': getattr(style, 'confidence', None),
+                })
+                text_item = next((item for item in page_manifest['text_boxes'] if item['id'] == font_item['id']), None)
+                if text_item is not None:
+                    text_item.update({
+                        'font_family': font_item['font_family'],
+                        'font_effects': font_item['font_effects'],
+                        'is_bold': font_item['is_bold'],
+                        'is_italic': font_item['is_italic'],
+                        'is_underline': font_item['is_underline'],
+                        'font_confidence': font_item['confidence'],
+                    })
             logger.info(f"    使用背景: {background_path}")
             background_added = False
             try:
@@ -2262,7 +2327,8 @@ class ExportService:
                 text_styles_cache=text_styles_cache,
                 text_hint_font_sizes=ExportService._text_hint_font_sizes(editable_img.elements),
                 warnings=warnings,
-                fail_fast=fail_fast
+                fail_fast=fail_fast,
+                suppress_text=page_manifest['background_strategy']['mode'] == 'source-full-slide-raster',
             )
             ExportService._apply_page_render_results(page_manifest, render_results)
             foreground_shape_count = len(slide.shapes) - foreground_shape_start
@@ -2337,6 +2403,7 @@ class ExportService:
         fail_fast: bool = False,  # 是否在遇到错误时立即停止
         render_results: Optional[List[Dict[str, Any]]] = None,
         parent_id: Optional[str] = None,
+        suppress_text: bool = False,
     ):
         """
         递归地将EditableElement添加到幻灯片
@@ -2400,6 +2467,7 @@ class ExportService:
                     'render_decision': 'skipped_due_parent_raster_fallback',
                     'fallback_reason': reason,
                     'editable_text_added': False,
+                    'suppressed_due_background_failure': reason == 'missing_clean_background',
                     'rendered': False,
                 })
                 suppressed_text_ids.extend(skip_descendants(child, reason))
@@ -2524,12 +2592,34 @@ class ExportService:
             
             logger.info(f"{'  ' * depth}  添加元素: type={elem_type}, bbox={bbox_list}, content={elem.content[:30] if elem.content else None}, image_path={elem.image_path}, 使用{'全局' if depth > 0 else '局部'}坐标")
 
+            if suppress_text:
+                add_render_result(
+                    elem,
+                    'skipped_due_background_failure',
+                    rendered=False,
+                    editable=False,
+                    fallback_reason='missing_clean_background',
+                    suppressed_due_background_failure=True,
+                )
+                skip_descendants(elem, 'missing_clean_background')
+                continue
+
             # 根据类型添加元素（参考原实现的_add_mineru_text_to_slide和_add_mineru_image_to_slide）
             if elem_type in ['text', 'title', 'list', 'paragraph', 'header', 'footer', 'heading', 'table_caption', 'image_caption', 'equation', 'interline_equation', 'inline_equation']:
                 # 添加文本（参考_add_mineru_text_to_slide）
                 if elem.content:
                     text = elem.content.strip()
                     if text:
+                        if suppress_text:
+                            add_render_result(
+                                elem,
+                                'skipped_due_background_failure',
+                                rendered=False,
+                                editable=False,
+                                fallback_reason='missing_clean_background',
+                                suppressed_due_background_failure=True,
+                            )
+                            continue
                         try:
                             # 确定文本级别
                             level = 'title' if elem_type in ['title', 'heading'] else 'default'
@@ -2641,6 +2731,7 @@ class ExportService:
                         depth=depth + 1,
                         text_styles_cache=text_styles_cache,
                         text_hint_font_sizes=text_hint_font_sizes,
+                        suppress_text=suppress_text,
                         warnings=warnings,
                         fail_fast=fail_fast,
                         render_results=render_results,
@@ -2755,6 +2846,7 @@ class ExportService:
                         depth=depth + 1,
                         text_styles_cache=text_styles_cache,
                         text_hint_font_sizes=text_hint_font_sizes,
+                        suppress_text=suppress_text,
                         warnings=warnings,
                         fail_fast=fail_fast,
                         render_results=render_results,

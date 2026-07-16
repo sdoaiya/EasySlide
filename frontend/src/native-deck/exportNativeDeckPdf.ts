@@ -1,5 +1,6 @@
 import { toPng } from 'html-to-image'
 import { PDFDocument } from 'pdf-lib'
+import { prepareNativeDeckForCapture } from './exportNativeDeckFrames'
 
 type NativeDeckPdfOptions = {
   title: string
@@ -12,10 +13,10 @@ const PDF_WIDTH = 960
 const PDF_HEIGHT = 540
 
 export async function exportNativeDeckPdf({ title, root = document }: NativeDeckPdfOptions) {
+  await prepareNativeDeckForCapture(root)
   const slides = Array.from(root.querySelectorAll<HTMLElement>('#deck > .slide'))
   if (!slides.length) throw new Error('没有可导出的原生页面')
 
-  await document.fonts?.ready
   const pdf = await PDFDocument.create()
   pdf.setTitle(title)
 

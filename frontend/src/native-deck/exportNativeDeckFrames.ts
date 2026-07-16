@@ -5,11 +5,7 @@ const WIDTH = 1920
 const HEIGHT = 1080
 
 export async function captureNativeDeckFrames(root: ParentNode = document) {
-  await waitForNativeLayouts(root)
-  await document.fonts?.ready
-  await waitForNativeMedia(root)
-  await waitForNativeAnimations(root)
-  await waitForNativeStableLayout(root)
+  await prepareNativeDeckForCapture(root)
   const slides = Array.from(root.querySelectorAll<HTMLElement>('#deck > .slide'))
   if (!slides.length) throw new Error('没有可导出的视频页面')
 
@@ -26,6 +22,14 @@ export async function captureNativeDeckFrames(root: ParentNode = document) {
     frames.push(dataUrlBlob(dataUrl))
   }
   return frames
+}
+
+export async function prepareNativeDeckForCapture(root: ParentNode = document) {
+  await waitForNativeLayouts(root)
+  await document.fonts?.ready
+  await waitForNativeMedia(root)
+  await waitForNativeAnimations(root)
+  await waitForNativeStableLayout(root)
 }
 
 /** Wait until slide geometry is identical across two animation frames. */

@@ -91,6 +91,17 @@ def _safe_export_filename(raw_filename, fallback_filename, extension):
 
 def _project_title_filename(project, extension, fallback_filename):
     title = (project.project_title or '').strip()
+    if not title:
+        for source in (
+            getattr(project, 'idea_prompt', None),
+            getattr(project, 'outline_text', None),
+            getattr(project, 'description_text', None),
+        ):
+            value = (source or '').strip()
+            if value:
+                title = next((line.strip() for line in value.splitlines() if line.strip()), '')
+                if title:
+                    break
     if title:
         return _safe_export_filename(None, f'{title}.{extension}', extension)
     return _safe_export_filename(fallback_filename, fallback_filename, extension)
@@ -374,9 +385,11 @@ def export_pptx(project_id):
         exports_dir = file_service._get_exports_dir(project_id)
 
         # Get filename from query params or use default
-        filename = secure_filename(request.args.get('filename', f'presentation_{project_id}.pptx'))
-        if not filename.endswith('.pptx'):
-            filename += '.pptx'
+        filename = _safe_export_filename(
+            request.args.get('filename'),
+            _project_title_filename(project, 'pptx', f'presentation_{project_id}.pptx'),
+            'pptx',
+        )
 
         output_path = os.path.join(exports_dir, filename)
 
@@ -401,6 +414,7 @@ def export_pptx(project_id):
             data={
                 "download_url": download_path,
                 "download_url_absolute": download_url_absolute,
+                "filename": filename,
             },
             message="Export PPTX task created"
         )
@@ -457,9 +471,11 @@ def export_pdf(project_id):
         exports_dir = file_service._get_exports_dir(project_id)
 
         # Get filename from query params or use default
-        filename = secure_filename(request.args.get('filename', f'presentation_{project_id}.pdf'))
-        if not filename.endswith('.pdf'):
-            filename += '.pdf'
+        filename = _safe_export_filename(
+            request.args.get('filename'),
+            _project_title_filename(project, 'pdf', f'presentation_{project_id}.pdf'),
+            'pdf',
+        )
 
         output_path = os.path.join(exports_dir, filename)
 
@@ -475,6 +491,7 @@ def export_pdf(project_id):
             data={
                 "download_url": download_path,
                 "download_url_absolute": download_url_absolute,
+                "filename": filename,
             },
             message="Export PDF task created"
         )
@@ -525,11 +542,11 @@ def export_images(project_id):
         if len(image_items) == 1:
             page, path = image_items[0]
             ext = os.path.splitext(path)[1] or '.png'
-            filename = f'slide_{page.id}_{timestamp}{ext}'
+            filename = _project_title_filename(project, ext.lstrip('.'), f'slide_{page.id}_{timestamp}{ext}')
             output_path = os.path.join(exports_dir, filename)
             shutil.copy2(path, output_path)
         else:
-            filename = f'slides_{s_project_id}_{timestamp}.zip'
+            filename = _project_title_filename(project, 'zip', f'slides_{s_project_id}_{timestamp}.zip')
             output_path = os.path.join(exports_dir, filename)
             with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zf:
                 for page, path in image_items:
@@ -543,6 +560,7 @@ def export_images(project_id):
             data={
                 "download_url": download_path,
                 "download_url_absolute": f"{base_url}{download_path}",
+                "filename": filename,
             },
             message="Export images completed"
         )
@@ -831,13 +849,11 @@ def export_video(project_id):
 
         data = request.get_json() or {}
 
-        # 参数 — 使用 secure_filename 防止路径遍历
-        raw_filename = data.get('filename', f'narration_{project_id}.mp4')
-        filename = secure_filename(raw_filename)
-        if not filename:
-            filename = f'narration_{project_id}.mp4'
-        if not filename.endswith('.mp4'):
-            filename += '.mp4'
+        filename = _safe_export_filename(
+            data.get('filename'),
+            _project_title_filename(project, 'mp4', f'narration_{project_id}.mp4'),
+            'mp4',
+        )
 
         voice = data.get('voice', current_app.config.get('TTS_DEFAULT_VOICE_ZH', 'zh-CN-XiaoxiaoNeural'))
         rate = data.get('rate', current_app.config.get('TTS_DEFAULT_RATE', '+0%'))

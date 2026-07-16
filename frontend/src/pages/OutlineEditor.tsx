@@ -751,36 +751,38 @@ export const OutlineEditor: React.FC = () => {
           </div>
         </section>
       </main>
-      <footer data-testid="outline-editor-footer" className="fixed inset-x-0 bottom-0 z-40 flex min-h-[68px] items-center justify-between border-t border-sky-100 bg-white/95 px-4 py-2 shadow-[0_-8px_24px_rgba(15,23,42,0.12)] backdrop-blur-sm dark:border-border-primary dark:bg-background-secondary/95 dark:shadow-none">
-        <Button
-          variant="secondary"
-          icon={<ArrowLeft size={16} />}
-          onClick={() => navigate(fromHistory ? '/history' : '/app')}
-        >
-          {t('common.previous')}
-        </Button>
-        <Button
-          variant="primary"
-          icon={<ArrowRight size={16} />}
-          onClick={async () => {
-            if (isInputDirty && projectId && currentProject) {
-              const field = currentProject.creation_type === 'outline'
-                ? 'outline_text'
-                : currentProject.creation_type === 'descriptions'
-                  ? 'description_text'
-                  : 'idea_prompt';
-              try {
-                await updateProject(projectId, { [field]: inputText } as any);
-              } catch (e) {
-                console.error('自动保存失败:', e);
+      <footer data-testid="outline-editor-footer" className="pointer-events-none fixed bottom-5 left-1/2 z-50 w-[calc(100vw-32px)] max-w-xl -translate-x-1/2">
+        <div data-testid="outline-editor-footer-bar" className="pointer-events-auto flex min-h-[56px] items-center justify-between gap-3 rounded-2xl border border-sky-100/80 bg-white/95 px-3 py-2 shadow-[0_16px_45px_rgba(15,23,42,0.18)] backdrop-blur-xl dark:border-border-primary dark:bg-background-secondary/95 dark:shadow-none">
+          <Button
+            variant="secondary"
+            icon={<ArrowLeft size={16} />}
+            onClick={() => navigate(fromHistory ? '/history' : '/app')}
+          >
+            {t('common.previous')}
+          </Button>
+          <Button
+            variant="primary"
+            icon={<ArrowRight size={16} />}
+            onClick={async () => {
+              if (isInputDirty && projectId && currentProject) {
+                const field = currentProject.creation_type === 'outline'
+                  ? 'outline_text'
+                  : currentProject.creation_type === 'descriptions'
+                    ? 'description_text'
+                    : 'idea_prompt';
+                try {
+                  await updateProject(projectId, { [field]: inputText } as any);
+                } catch (e) {
+                  console.error('自动保存失败:', e);
+                }
               }
-            }
-            await saveAllPages();
-            navigate(`/project/${projectId}/detail`);
-          }}
-        >
-          {t('common.next')}
-        </Button>
+              await saveAllPages();
+              navigate(`/project/${projectId}/detail`);
+            }}
+          >
+            {t('common.next')}
+          </Button>
+        </div>
       </footer>
       {ConfirmDialog}
       <ToastContainer />

@@ -29,6 +29,7 @@ class Page(db.Model):
     narration_text = db.Column(db.Text, nullable=True)  # Plain text narration for TTS video export
     native_layout = db.Column(db.String(100), nullable=True)
     native_props = db.Column(db.Text, nullable=True)
+    native_versions = db.Column(db.Text, nullable=True)
     status = db.Column(db.String(50), nullable=False, default='DRAFT')
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -93,6 +94,68 @@ class Page(db.Model):
     def set_native_props(self, data):
         """Store native slide properties as JSON."""
         self.native_props = json.dumps(data, ensure_ascii=False) if data else None
+
+    def get_native_versions(self):
+        if not self.native_versions:
+            return []
+        try:
+            data = json.loads(self.native_versions)
+            return data if isinstance(data, list) else []
+        except (TypeError, json.JSONDecodeError):
+            logger.warning('Invalid native_versions on page %s', self.id)
+            return []
+
+    def set_native_versions(self, versions):
+        self.native_versions = json.dumps(versions, ensure_ascii=False) if versions else None
+
+    def snapshot_native_version(self):
+        if not self.native_layout:
+            return None
+        versions = self.get_native_versions()
+        version = {
+            'version_id': str(uuid.uuid4()),
+            'layout': self.native_layout,
+            'props': self.get_native_props(),
+            'created_at': datetime.utcnow().isoformat(),
+        }
+        versions.append(version)
+        self.set_native_versions(versions)
+        return version
+
+    def native_version_list(self):
+        versions = list(reversed(self.get_native_versions()))
+        current = {
+            'version_id': 'current',
+            'layout': self.native_layout,
+            'props': self.get_native_props(),
+            'created_at': self.updated_at.isoformat() if self.updated_at else None,
+            'is_current': True,
+        }
+        return [
+            {**current, 'version_number': len(versions) + 1},
+            *[
+                {**version, 'version_number': len(versions) - index, 'is_current': False}
+                for index, version in enumerate(versions)
+            ],
+        ]
+
+    def restore_native_version(self, version_id):
+        versions = self.get_native_versions()
+        index = next((item for item, version in enumerate(versions) if version.get('version_id') == version_id), None)
+        if index is None:
+            return False
+        selected = versions.pop(index)
+        if self.native_layout:
+            versions.append({
+                'version_id': str(uuid.uuid4()),
+                'layout': self.native_layout,
+                'props': self.get_native_props(),
+                'created_at': datetime.utcnow().isoformat(),
+            })
+        self.native_layout = selected.get('layout')
+        self.set_native_props(selected.get('props'))
+        self.set_native_versions(versions)
+        return True
 
     def to_dict(self, include_versions=False):
         """Convert to dictionary"""

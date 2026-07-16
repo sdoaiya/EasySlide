@@ -758,6 +758,23 @@ class TestExportVideoRoute:
         assert data['narration_config']['min_words'] == 80
         assert data['narration_config']['max_words'] == 120
 
+    def test_export_video_default_filename_uses_project_theme(self, client, app, monkeypatch):
+        monkeypatch.setattr('services.task_manager.task_manager.submit_task', lambda *args, **kwargs: None)
+        project_id = self._create_project_with_image_page(app, allow_partial=True)
+        response = client.post(
+            f'/api/projects/{project_id}/export/video',
+            json={},
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()['data']
+        with app.app_context():
+            from models import Task
+            task = Task.query.get(data['task_id'])
+
+        assert task is not None
+        assert task.get_progress()['_resume']['kwargs']['filename'] == '视频导出测试.mp4'
+
     def test_export_video_no_pages(self, client, sample_project):
         if not sample_project:
             pytest.skip("sample_project fixture returned None")

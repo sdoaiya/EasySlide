@@ -15,6 +15,8 @@ extraResources:
     to: backend
   - from: resources/icon.png
     to: icon.png
+  - from: resources/bootstrap-settings.json
+    to: bootstrap-settings.json
 win:
   target:
     - nsis

@@ -9,7 +9,6 @@ export interface NativeSlideRendererProps {
   slide: NativeSlideSpec
   initializeEffects?: boolean
   animate?: boolean
-  elementAnimationActive?: boolean
   elementAnimationStep?: number
 }
 
@@ -28,15 +27,19 @@ type NativeAnimationConfig = {
   elementTrigger?: 'auto' | 'click'
 }
 
-export const NativeSlideRenderer = memo(function NativeSlideRenderer({ slide, initializeEffects = true, animate = true, elementAnimationActive = true, elementAnimationStep = 1 }: NativeSlideRendererProps) {
+const pageEnterEffects = new Set(['fade', 'slide-up', 'slide-down', 'slide-left', 'slide-right', 'zoom-in', 'blur-in', 'stagger-up', 'stagger-fade'])
+const elementEnterEffects = new Set(['fade', 'slide-up', 'slide-down', 'slide-left', 'slide-right', 'zoom-in', 'blur-in', 'wipe', 'rotate-in'])
+const easingValues = new Set(['linear', 'ease', 'ease-out', 'ease-in-out'])
+
+export const NativeSlideRenderer = memo(function NativeSlideRenderer({ slide, initializeEffects = true, animate = true, elementAnimationStep = 1 }: NativeSlideRendererProps) {
   return (
     <NativeSlideErrorBoundary key={slide.layout} layout={slide.layout} resetKey={slide.props}>
-      <NativeSlideContent slide={slide} initializeEffects={initializeEffects} animate={animate} elementAnimationActive={elementAnimationActive} elementAnimationStep={elementAnimationStep} />
+      <NativeSlideContent slide={slide} initializeEffects={initializeEffects} animate={animate} elementAnimationStep={elementAnimationStep} />
     </NativeSlideErrorBoundary>
   )
 })
 
-function NativeSlideContent({ slide, initializeEffects = true, animate = true, elementAnimationActive = true, elementAnimationStep = 1 }: NativeSlideRendererProps) {
+function NativeSlideContent({ slide, initializeEffects = true, animate = true, elementAnimationStep = 1 }: NativeSlideRendererProps) {
   if (slide.pending) return <PendingSlide title={typeof slide.props.title === 'string' ? slide.props.title : '页面待生成'} />
 
   const Layout = layoutRegistry[slide.layout as keyof typeof layoutRegistry]
@@ -44,32 +47,36 @@ function NativeSlideContent({ slide, initializeEffects = true, animate = true, e
   const animation = slide.props.__animation && typeof slide.props.__animation === 'object'
     ? slide.props.__animation as NativeAnimationConfig
     : undefined
-  const animationClass = animate && animation?.enter && animation.enter !== 'none' ? `native-enter-${animation.enter}` : ''
+  const enter = pickMotion(animation?.enter, pageEnterEffects)
+  const elementEnter = pickMotion(animation?.elementEnter, elementEnterEffects)
+  const easing = pickEasing(animation?.easing)
+  const elementEasing = pickEasing(animation?.elementEasing)
+  const animationClass = animate && enter ? `native-enter-${enter}` : ''
   const animationStyle = animationClass ? {
-    animationDuration: `${Number(animation?.duration || 420)}ms`,
-    animationDelay: `${Math.max(0, Number(animation?.delay || 0))}ms`,
-    animationTimingFunction: ['linear', 'ease', 'ease-out', 'ease-in-out'].includes(String(animation?.easing)) ? String(animation?.easing) : 'ease',
-    '--native-animation-duration': `${Number(animation?.duration || 420)}ms`,
-    '--native-animation-delay': `${Math.max(0, Number(animation?.delay || 0))}ms`,
-    '--native-animation-easing': ['linear', 'ease', 'ease-out', 'ease-in-out'].includes(String(animation?.easing)) ? String(animation?.easing) : 'ease',
+    animationDuration: `${clampNumber(animation?.duration, 420, 120, 2000)}ms`,
+    animationDelay: `${clampNumber(animation?.delay, 0, 0, 1500)}ms`,
+    animationTimingFunction: easing,
+    '--native-animation-duration': `${clampNumber(animation?.duration, 420, 120, 2000)}ms`,
+    '--native-animation-delay': `${clampNumber(animation?.delay, 0, 0, 1500)}ms`,
+    '--native-animation-easing': easing,
   } : undefined
-  const elementAnimation = animate && animation?.elementEnter && animation.elementEnter !== 'none' ? animation.elementEnter : undefined
+  const elementAnimation = animate && elementEnter ? elementEnter : undefined
   const elementAnimationStyle = elementAnimation ? {
-    '--native-element-duration': `${Math.max(80, Number(animation?.elementDuration || 360))}ms`,
-    '--native-element-delay': `${Math.max(0, Number(animation?.elementDelay || 0))}ms`,
-    '--native-element-stagger': `${Math.max(0, Number(animation?.elementStagger || 70))}ms`,
-    '--native-element-easing': ['linear', 'ease', 'ease-out', 'ease-in-out'].includes(String(animation?.elementEasing)) ? String(animation?.elementEasing) : 'ease',
+    '--native-element-duration': `${clampNumber(animation?.elementDuration, 360, 80, 2000)}ms`,
+    '--native-element-delay': `${clampNumber(animation?.elementDelay, 0, 0, 5000)}ms`,
+    '--native-element-stagger': `${clampNumber(animation?.elementStagger, 70, 0, 1000)}ms`,
+    '--native-element-easing': elementEasing,
   } as React.CSSProperties : undefined
 
   if (Layout) {
     return (
       <SlideFrame slide={slide} ready animate={animate} initializeEffects={initializeEffects} elementAnimation={elementAnimation} elementAnimationStep={elementAnimationStep} elementAnimationStyle={elementAnimationStyle}>
-        <div key={String(animation?.replay || 0)} className={animationClass} style={animationStyle}><Layout props={resolveDashiAssetProps(props) as Record<string, unknown>} /></div>
+        <div key={String(animation?.replay || 0)} className={`native-slide-content ${animationClass}`.trim()} style={animationStyle}><Layout props={resolveDashiAssetProps(props) as Record<string, unknown>} /></div>
       </SlideFrame>
     )
   }
 
-  if (isDashiLayout(slide.layout)) return <DashiSlide key={`${slide.layout}:${animation?.replay || 0}`} slide={{ ...slide, props: { ...props, __animationClass: animationClass, __animationStyle: animationStyle, __animationReplay: animation?.replay, __elementAnimation: elementAnimation, __elementAnimationStyle: elementAnimationStyle, __elementAnimationStep: elementAnimationStep, __elementAnimationTrigger: animation?.elementTrigger } }} initializeEffects={initializeEffects && animation?.internal !== false} animate={animate} />
+  if (isDashiLayout(slide.layout)) return <DashiSlide key={`${slide.layout}:${animation?.replay || 0}`} slide={{ ...slide, props: { ...props, __animationClass: animationClass, __animationStyle: animationStyle, __animationReplay: animation?.replay, __elementAnimation: elementAnimation, __elementAnimationStyle: elementAnimationStyle, __elementAnimationStep: elementAnimationStep, __elementAnimationTrigger: animation?.elementTrigger === 'click' ? 'click' : 'auto' } }} initializeEffects={initializeEffects && animation?.internal !== false} animate={animate} />
 
   return <ErrorSlide message={`未知原生布局：${slide.layout}`} />
 }
@@ -142,21 +149,30 @@ function DashiSlide({ slide, initializeEffects = true, animate = true }: NativeS
   const elementAnimationStep = typeof slide.props.__elementAnimationStep === 'number' ? slide.props.__elementAnimationStep : 1
   return (
     <SlideFrame frameRef={frameRef} slide={slide} ready={runtimeReady} animate={animate} initializeEffects={initializeEffects} elementAnimation={elementAnimation} elementAnimationStep={elementAnimationStep} elementAnimationStyle={elementAnimationStyle}>
-      <div key={String(slide.props.__animationReplay || 0)} className={animationClass} style={animationStyle}><Component {...props} /></div>
+      <div key={String(slide.props.__animationReplay || 0)} className={`native-slide-content ${animationClass}`.trim()} style={animationStyle}><Component {...props} /></div>
     </SlideFrame>
   )
 }
 
 const SlideFrame = ({ slide, ready, animate = true, initializeEffects = true, elementAnimation, elementAnimationStep = 1, elementAnimationStyle, children, frameRef }: NativeSlideRendererProps & { ready?: boolean; children: ReactNode; frameRef?: Ref<HTMLDivElement>; elementAnimation?: string; elementAnimationStep?: number; elementAnimationStyle?: React.CSSProperties }) => {
+  const intent = slide.props.__design_intent
+  const visualSystem = intent && typeof intent === 'object' && typeof (intent as Record<string, unknown>).page_plan === 'object'
+    ? String(((intent as Record<string, unknown>).page_plan as Record<string, unknown>).visual_system || '')
+    : ''
+  const designEngine = intent && typeof intent === 'object'
+    ? String((intent as Record<string, unknown>).design_engine || '')
+    : ''
   return (
     <div
       ref={frameRef}
       className="native-slide"
       data-layout={slide.layout}
+      data-visual-system={visualSystem || undefined}
+      data-design-engine={designEngine || undefined}
       data-page-id={slide.pageId}
       data-deck-active={animate && initializeEffects ? '' : undefined}
       data-element-animation={elementAnimation}
-      data-element-trigger={elementAnimation ? String((slide.props.__animation as { elementTrigger?: string } | undefined)?.elementTrigger || slide.props.__elementAnimationTrigger || 'auto') : undefined}
+      data-element-trigger={elementAnimation ? elementTriggerValue((slide.props.__animation as { elementTrigger?: string } | undefined)?.elementTrigger || slide.props.__elementAnimationTrigger) : undefined}
       data-element-step={elementAnimation ? String(Math.max(0, Math.min(1, elementAnimationStep))) : undefined}
       data-native-layout-ready={ready ? 'true' : undefined}
       style={{ width: 1920, height: 1080, ...elementAnimationStyle }}
@@ -184,7 +200,7 @@ function PendingSlide({ title }: { title: string }) {
       <div className="native-slide-pending-panel">
         <div className="native-slide-pending-mark">*</div>
         <strong>{title}</strong>
-        <span>页面尚未生成，点击生成本页或批量生成</span>
+        <span>页面尚未生成，点击生成本页或批量生成页面</span>
       </div>
     </div>
   )
@@ -192,4 +208,24 @@ function PendingSlide({ title }: { title: string }) {
 
 function runtimeProps(props: Record<string, unknown>) {
   return Object.fromEntries(Object.entries(props).filter(([key]) => !key.startsWith('__')))
+}
+
+function pickMotion(value: unknown, allowed: Set<string>) {
+  const text = typeof value === 'string' ? value : ''
+  return text && text !== 'none' && allowed.has(text) ? text : ''
+}
+
+function pickEasing(value: unknown) {
+  const text = typeof value === 'string' ? value : ''
+  return easingValues.has(text) ? text : 'ease'
+}
+
+function clampNumber(value: unknown, fallback: number, min: number, max: number) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return fallback
+  return Math.max(min, Math.min(max, number))
+}
+
+function elementTriggerValue(value: unknown) {
+  return value === 'click' ? 'click' : 'auto'
 }

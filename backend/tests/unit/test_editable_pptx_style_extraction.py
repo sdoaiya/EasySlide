@@ -5,7 +5,7 @@ from zipfile import ZipFile
 
 from PIL import Image
 
-from services.export_service import ExportError, ExportService
+from services.export_service import ExportError, ExportService, ExportWarnings
 from services.image_editability.text_attribute_extractors import (
     CaptionModelTextAttributeExtractor,
     TextStyleResult,
@@ -451,6 +451,31 @@ def test_complex_raster_fallback_suppresses_descendant_editable_text(tmp_path):
     assert "must not be duplicated" not in slide_xml
 
 
+def test_full_slide_background_fallback_suppresses_text_overlay(tmp_path, monkeypatch):
+    background = tmp_path / "slide.png"
+    output = tmp_path / "full-slide-fallback.pptx"
+    Image.new("RGB", (300, 120), "white").save(background)
+    editable = EditableImageStub(str(background))
+    editable.elements = [
+        EditableImageStub.Element(
+            str(background), element_id="title", content="不要重影",
+            element_type="title", bbox=EditableImageStub.BBox(10, 10, 140, 40),
+        )
+    ]
+    monkeypatch.setattr(ExportService, '_create_local_clean_background', staticmethod(lambda *args, **kwargs: None))
+
+    _, warnings = ExportService.create_editable_pptx_with_recursive_analysis(
+        editable_images=[editable], output_file=str(output),
+        slide_width_pixels=300, slide_height_pixels=120, fail_fast=True,
+    )
+
+    manifest = json.loads((Path(warnings.rebuild_artifacts_dir) / 'page_001' / 'manifest.json').read_text(encoding='utf-8'))
+    assert manifest['background_strategy']['mode'] == 'source-full-slide-raster'
+    assert manifest['text_boxes'][0]['suppressed_due_background_failure'] is True
+    assert manifest['text_boxes'][0]['editable_text_added'] is False
+    assert json.loads((Path(warnings.rebuild_artifacts_dir) / 'page_001' / 'validation.json').read_text(encoding='utf-8')) == {'passed': True, 'errors': []}
+
+
 def test_text_hints_unify_same_level_font_size_in_manifest(tmp_path):
     background = tmp_path / "slide.png"
     Image.new("RGB", (300, 120), "white").save(background)
@@ -722,6 +747,31 @@ def test_asset_sheet_failure_returns_no_replacement_and_warning(tmp_path):
 
     assert assets == {}
     assert any("前景分离失败" in warning for warning in warnings.other_warnings)
+
+
+def test_asset_sheet_missing_cell_falls_back_to_original_assets(tmp_path):
+    icon_path = tmp_path / "icon.png"
+    Image.new("RGBA", (30, 30), (255, 0, 0, 255)).save(icon_path)
+    editable = EditableImageStub(str(icon_path))
+    editable.elements = [
+        EditableImageStub.Element(str(icon_path), element_id="icon", content=None, element_type="image", is_icon=True)
+    ]
+
+    class BlankProvider:
+        def generate_image(self, ref_images=None, **kwargs):
+            return Image.new("RGBA", ref_images[0].size, (0, 0, 0, 0))
+
+    warnings = ExportWarnings()
+    assets = ExportService._run_asset_sheet_separation(
+        editable_img=editable,
+        output_dir=tmp_path,
+        high_fidelity_editable=True,
+        image_editing_provider=BlankProvider(),
+        warnings=warnings,
+    )
+
+    assert assets == {}
+    assert any("元素缺失" in warning for warning in warnings.other_warnings)
 
 
 def test_asset_sheet_opaque_matte_is_converted_to_transparency(tmp_path):

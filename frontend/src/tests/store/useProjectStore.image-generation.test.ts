@@ -85,6 +85,70 @@ describe('useProjectStore image generation', () => {
     expect(useProjectStore.getState().pageGeneratingTasks).toEqual({
       'page-missing': 'image-task-restored',
     })
+    expect(api.getTaskStatus).not.toHaveBeenCalled()
+  })
+
+  it('restores only unfinished pages from an image manifest', () => {
+    const task = {
+      task_id: 'image-task-manifest',
+      task_type: 'GENERATE_IMAGES',
+      status: 'PAUSED',
+      progress: {
+        total: 2,
+        completed: 1,
+        pages: [
+          { page_id: 'page-ready', status: 'completed' },
+          { page_id: 'page-missing', status: 'queued' },
+        ],
+      },
+    } as any
+    vi.mocked(api.getTaskStatus).mockReturnValue(new Promise(() => {}))
+    useProjectStore.setState({
+      currentProject: { ...project, active_image_tasks: [task] },
+      activeImageTask: null,
+      pageGeneratingTasks: {},
+    } as any)
+
+    useProjectStore.getState().restoreImageGeneration()
+
+    expect(useProjectStore.getState().pageGeneratingTasks).toEqual({
+      'page-missing': 'image-task-manifest',
+    })
+  })
+
+  it('keeps failed unfinished pages attached to a paused image task for retry', () => {
+    const task = {
+      task_id: 'image-task-failed-paused',
+      task_type: 'GENERATE_IMAGES',
+      status: 'PAUSED',
+      progress: {
+        total: 2,
+        completed: 1,
+        pages: [
+          { page_id: 'page-ready', status: 'completed' },
+          { page_id: 'page-missing', status: 'failed' },
+        ],
+      },
+    } as any
+    vi.mocked(api.getTaskStatus).mockReturnValue(new Promise(() => {}))
+    useProjectStore.setState({
+      currentProject: {
+        ...project,
+        pages: [
+          project.pages[0],
+          { ...project.pages[1], status: 'FAILED' },
+        ],
+        active_image_tasks: [task],
+      },
+      activeImageTask: null,
+      pageGeneratingTasks: {},
+    } as any)
+
+    useProjectStore.getState().restoreImageGeneration()
+
+    expect(useProjectStore.getState().pageGeneratingTasks).toEqual({
+      'page-missing': 'image-task-failed-paused',
+    })
   })
 
   it('does not clear an active single-page task when no batch task exists', () => {

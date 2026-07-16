@@ -160,6 +160,8 @@ def create_app():
     with app.app_context():
         db.create_all()
         _ensure_desktop_sqlite_schema(app)
+        from bootstrap_settings import import_packaged_credentials
+        import_packaged_credentials(os.getenv('EASYSLIDE_BOOTSTRAP_SETTINGS_PATH'))
         _pause_interrupted_export_tasks()
         # Load settings from database and sync to app.config
         _load_settings_to_config(app)
@@ -290,6 +292,7 @@ def _ensure_desktop_sqlite_schema(app):
             'narration_text': 'TEXT',
             'native_layout': 'VARCHAR(100)',
             'native_props': 'TEXT',
+            'native_versions': 'TEXT',
         },
         'settings': {
             'text_model': 'VARCHAR(100)',

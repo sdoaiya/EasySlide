@@ -11,6 +11,7 @@ type GenerationProgress = {
   completed: number
   failed: number
   total: number
+  failedPageIds: string[]
   error?: string
 }
 
@@ -26,6 +27,7 @@ export function NativeDeckWorkspaceLoader({ generationTaskId, totalPages = 0, ..
   const [generation, setGeneration] = useState<GenerationProgress>()
   const lastProgressRef = useRef('')
   const syncProject = useProjectStore(state => state.syncProject)
+  const generationActive = generation?.status === 'PENDING' || generation?.status === 'PROCESSING' || generation?.status === 'PAUSED'
 
   useEffect(() => {
     if (!taskId) return
@@ -38,16 +40,17 @@ export function NativeDeckWorkspaceLoader({ generationTaskId, totalPages = 0, ..
         const task = (await getTaskStatus(props.projectId, taskId)).data
         if (!active || !task) return
 
-        const progress = (task.progress || {}) as Partial<{ completed: number; failed: number; total: number }>
+        const progress = (task.progress || {}) as Partial<{ completed: number; failed: number; total: number; failed_page_ids: unknown }>
         const next = {
           status: task.status || 'PENDING',
           completed: Number(progress.completed || 0),
           failed: Number(progress.failed || 0),
           total: Number(progress.total || 0),
+          failedPageIds: Array.isArray(progress.failed_page_ids) ? progress.failed_page_ids.filter((pageId): pageId is string => typeof pageId === 'string') : [],
           error: task.error_message,
         }
 
-        const signature = `${next.status}:${next.completed}:${next.failed}`
+        const signature = `${next.status}:${next.completed}:${next.failed}:${next.failedPageIds.join(',')}`
         setGeneration(next)
 
         if (signature !== lastProgressRef.current) {
@@ -68,6 +71,7 @@ export function NativeDeckWorkspaceLoader({ generationTaskId, totalPages = 0, ..
           completed: current?.completed || 0,
           failed: current?.failed || 0,
           total: current?.total || 0,
+          failedPageIds: current?.failedPageIds || [],
           error: reason instanceof Error ? reason.message : String(reason),
         }))
       }
@@ -81,7 +85,7 @@ export function NativeDeckWorkspaceLoader({ generationTaskId, totalPages = 0, ..
   }, [taskId, props.projectId, syncProject])
 
   const startGeneration = async (pageIds?: string[]) => {
-    setGeneration({ status: 'PENDING', completed: 0, failed: 0, total: pageIds?.length || totalPages })
+    setGeneration({ status: 'PENDING', completed: 0, failed: 0, total: pageIds?.length || totalPages, failedPageIds: [] })
     try {
       const task = (await generateNativeDeck(props.projectId, pageIds)).data
       const nextTaskId = task?.task_id || task?.id
@@ -94,6 +98,7 @@ export function NativeDeckWorkspaceLoader({ generationTaskId, totalPages = 0, ..
         completed: 0,
         failed: 0,
         total: pageIds?.length || totalPages,
+        failedPageIds: [],
         error: reason instanceof Error ? reason.message : String(reason),
       })
     }
@@ -117,11 +122,11 @@ export function NativeDeckWorkspaceLoader({ generationTaskId, totalPages = 0, ..
         <NativeDeckWorkspace
           {...props}
           layoutContracts={contracts}
-          pageGenerationStatus={generation ? { ...generation, onPause: generation.status === 'PENDING' || generation.status === 'PROCESSING' ? () => void pauseGeneration() : undefined, onResume: generation.status === 'FAILED' ? () => void startGeneration() : generation.status === 'PAUSED' ? () => void resumeGeneration() : undefined } : undefined}
-          pageGenerationAction={props.slides.some(slide => slide.pending) && !generation
-            ? { label: '批量生成', onClick: () => void startGeneration(props.slides.filter(slide => slide.pending).map(slide => slide.pageId)) }
+          pageGenerationStatus={generation ? { ...generation, onPause: generation.status === 'PENDING' || generation.status === 'PROCESSING' ? () => void pauseGeneration() : undefined, onResume: generation.status === 'FAILED' && generation.failedPageIds.length ? () => void startGeneration(generation.failedPageIds) : generation.status === 'PAUSED' ? () => void resumeGeneration() : undefined } : undefined}
+          pageGenerationAction={props.slides.some(slide => slide.pending) && !generationActive
+            ? { label: '批量生成页面', onClick: () => void startGeneration(props.slides.filter(slide => slide.pending).map(slide => slide.pageId)) }
             : undefined}
-          singlePageGenerationAction={generation ? undefined : { label: '生成本页', onClick: (pageId) => void startGeneration([pageId]) }}
+          singlePageGenerationAction={!generationActive ? { label: '生成本页', onClick: (pageId) => void startGeneration([pageId]) } : undefined}
         />
       </div>
     </div>

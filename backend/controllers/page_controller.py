@@ -7,6 +7,10 @@ from models import db, Project, Page, PageImageVersion, Task
 from utils import success_response, error_response, not_found, bad_request
 from services import FileService, ProjectContext
 from services.ai_service_manager import get_ai_service
+from services.image_generation_manifest import (
+    build_image_generation_manifest,
+    persist_image_generation_manifest,
+)
 from services.task_manager import (
     task_manager,
     generate_single_page_image_task,
@@ -463,12 +467,38 @@ def generate_page_image(project_id, page_id):
             task_type='GENERATE_PAGE_IMAGE',
             status='PENDING'
         )
-        task.set_progress({
+        db.session.add(task)
+        db.session.flush()
+        latest_version = page.image_versions.first()
+        manifest = build_image_generation_manifest(
+            task_id=task.id,
+            project_id=project.id,
+            pages=[{
+                'page_id': page.id,
+                'page_index': page.order_index + 1,
+                'current_version': latest_version.version_number if latest_version else 0,
+                'protected': bool(page.generated_image_path),
+            }],
+            image_options={
+                'use_template': use_template,
+                'language': language,
+                'max_workers': 1,
+            },
+            style_snapshot={
+                'template_pack_id': project.template_pack_id,
+                'template_style': project.template_style or '',
+                'extra_requirements': project.extra_requirements or '',
+                'aspect_ratio': project.image_aspect_ratio,
+                'resolution': current_app.config['DEFAULT_RESOLUTION'],
+            },
+        )
+        manifest.update({
             'total': 1,
             'completed': 0,
-            'failed': 0
+            'failed': 0,
         })
-        db.session.add(task)
+        persist_image_generation_manifest(current_app.config['UPLOAD_FOLDER'], manifest)
+        task.set_progress(manifest)
         db.session.commit()
         
         # Get app instance for background task

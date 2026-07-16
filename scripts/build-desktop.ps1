@@ -29,13 +29,19 @@ try {
 
   Copy-Item -Recurse -Force frontend\dist\* $frontendStage
   Copy-Item -Recurse -Force backend\dist\easyslide-backend\* $backendStage
+  $credentialSource = if ($env:EASLIDE_CREDENTIALS_DB) {
+    $env:EASLIDE_CREDENTIALS_DB
+  } else {
+    Join-Path $env:APPDATA 'easyslide-desktop\data\database.db'
+  }
+  & $python scripts\prepare_desktop_credentials.py --source $credentialSource --output (Join-Path $stagingRoot 'bootstrap-settings.json')
   @"
 from pathlib import Path
 from PIL import Image, ImageDraw
 
-source = Path(r"D:\Personal\Desktop\favicon.ico")
+source = Path(r"frontend\public\logo.png")
 if not source.exists():
-    source = Path(r"frontend\public\logo.png")
+    raise FileNotFoundError(f"应用图标不存在: {source}")
 png_target = Path(r"desktop\resources\icon.png")
 ico_target = Path(r"desktop\resources\icon.ico")
 image = Image.open(source).convert("RGBA")

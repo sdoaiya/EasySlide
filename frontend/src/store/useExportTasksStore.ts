@@ -160,8 +160,9 @@ export const useExportTasksStore = create<ExportTasksState>()(
               updates.progress = progressData;
               
               // Extract download URL if available
-              if (progressData.download_url) {
-                updates.downloadUrl = progressData.download_url;
+              const downloadUrl = progressData.download_url || progressData.download_url_absolute;
+              if (downloadUrl) {
+                updates.downloadUrl = downloadUrl;
               }
               if (progressData.filename) {
                 updates.filename = progressData.filename;
@@ -187,7 +188,10 @@ export const useExportTasksStore = create<ExportTasksState>()(
             }
           } catch (error: any) {
             console.error('[ExportTasksStore] Poll error:', error);
-            if (error?.code === 'ECONNABORTED') return;
+            if (error?.code === 'ECONNABORTED') {
+              pollTimers.set(id, setTimeout(poll, 2000));
+              return;
+            }
             get().updateTask(id, {
               status: 'FAILED',
               errorMessage: normalizeErrorMessage(error.message || t('exportStore.pollFailed')),

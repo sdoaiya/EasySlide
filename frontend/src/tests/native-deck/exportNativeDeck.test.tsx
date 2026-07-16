@@ -62,6 +62,56 @@ describe('native deck browser export', () => {
     }))
   })
 
+  it('records formula-like text in the native export quality report', async () => {
+    render(<NativeDeckExportSurface slides={[{ pageId: 'formula-page', layout: 'core01_cover', props: { title: '\\alpha + x^2' } }]} />)
+
+    const result = await exportNativeDeck({ title: '公式' })
+
+    expect(result.report.formula_inventory).toEqual([
+      { slideIndex: 1, text: '\\alpha + x^2', decision: 'editable-text', editable: true },
+    ])
+  })
+
+  it('records contract-safe fallback pages in the native export quality report', async () => {
+    render(<NativeDeckExportSurface slides={[{
+      pageId: 'fallback-page',
+      layout: 'core01_cover',
+      props: { title: '回退页', __design_intent: { generation_fallback: true } },
+    }]} />)
+
+    const result = await exportNativeDeck({ title: '回退导出' })
+
+    expect(result.report.warnings).toContainEqual({
+      type: 'generation-fallback',
+      scope: 'page',
+      slideIndex: 1,
+      message: '该页由可编辑回退内容生成，建议在交付前按需重试。',
+    })
+  })
+
+  it('carries Huashu page quality warnings into the PPTX report', async () => {
+    const { container } = render(<NativeDeckExportSurface slides={[{
+      pageId: 'quality-page',
+      layout: 'core01_statement',
+      props: {
+        title: '观点页',
+        points: ['依据甲', '依据乙'],
+        __design_intent: {
+          quality_report: { status: 'warning', score: 85, outline_coverage: 0.4, issues: ['low_outline_coverage'] },
+        },
+      },
+    }]} />)
+
+    expect(container.querySelector('#deck > .slide')).toHaveAttribute('data-native-quality-report')
+    const result = await exportNativeDeck({ title: '质量报告' })
+
+    expect(result.report.warnings).toContainEqual(expect.objectContaining({
+      type: 'native-quality-warning',
+      scope: 'page',
+      slideIndex: 1,
+    }))
+  })
+
   it('waits for dynamically loaded theme pages before exporting', async () => {
     document.body.innerHTML = '<div id="deck"><section class="slide"><div class="native-slide"></div></section></div>'
     const pending = exportNativeDeck({ title: '异步主题' })

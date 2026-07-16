@@ -2,7 +2,7 @@
 export type PageStatus = 'DRAFT' | 'GENERATING_DESCRIPTION' | 'DESCRIPTION_GENERATED' | 'NATIVE_GENERATED' | 'QUEUED' | 'GENERATING' | 'COMPLETED' | 'FAILED';
 
 // 项目状态
-export type ProjectStatus = 'DRAFT' | 'OUTLINE_GENERATED' | 'DESCRIPTIONS_GENERATED' | 'NATIVE_DECK_GENERATED' | 'COMPLETED';
+export type ProjectStatus = 'DRAFT' | 'OUTLINE_GENERATED' | 'DESCRIPTIONS_GENERATED' | 'GENERATING_DESCRIPTIONS' | 'GENERATING_IMAGES' | 'NATIVE_DECK_GENERATED' | 'COMPLETED';
 
 // 大纲内容
 export interface OutlineContent {
@@ -74,9 +74,18 @@ export type ExportInpaintMethod = 'generative' | 'baidu' | 'hybrid';
 export type RenderMode = 'image' | 'native';
 export type NativeImageDensity = 'sparse' | 'standard' | 'rich' | 'custom';
 export type NativeImageStyle = 'theme' | 'photo' | '3d' | 'flat' | 'tech' | 'custom';
+export type NativeImageComposition = 'auto' | 'center' | 'text-left' | 'text-right' | 'full-bleed';
+export interface ProjectDashboardStats {
+  total: number;
+  completed: number;
+  generating: number;
+  in_progress: number;
+}
+
 export interface NativeImageSettings {
   density: NativeImageDensity;
   style: NativeImageStyle;
+  composition: NativeImageComposition;
   custom_prompt: string;
   custom_counts: Record<string, number>;
 }
@@ -106,6 +115,12 @@ export interface NativeExportQualityReport {
     transition?: string;
     internal?: boolean;
     advanceAfter?: number;
+  }>;
+  formula_inventory?: Array<{
+    slideIndex: number;
+    text: string;
+    decision: 'editable-text';
+    editable: true;
   }>;
   warnings: Array<Record<string, unknown>>;
 }

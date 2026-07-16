@@ -1,3 +1,5 @@
+import threading
+import time
 from unittest.mock import patch
 
 import pytest
@@ -111,6 +113,8 @@ def test_resume_interrupted_image_generation_resubmits_only_missing_pages(client
     db.session.commit()
     task = Task(project_id=project.id, task_type="GENERATE_IMAGES", status="PAUSED")
     task.set_progress({
+        "generation_id": task.id,
+        "manifest_version": 1,
         "total": 2,
         "completed": 1,
         "failed": 0,
@@ -130,6 +134,8 @@ def test_resume_interrupted_image_generation_resubmits_only_missing_pages(client
     data = assert_success_response(response)["data"]
     db.session.refresh(task)
     assert data["status"] == "PENDING"
+    assert task.get_progress()["generation_id"] == task.id
+    assert task.get_progress()["manifest_version"] == 1
     assert task.get_progress()["page_ids"] == [pending.id]
     assert submit_task.call_args.args[-2] == [pending.id]
 
@@ -201,6 +207,167 @@ def test_image_task_failure_clears_stale_generating_page_state(app):
         assert task.status == "FAILED"
         assert page.status == "FAILED"
         assert project.status == "DESCRIPTIONS_GENERATED"
+
+
+def test_paused_image_generation_stops_before_submitting_more_pages(app, tmp_path):
+    from PIL import Image
+    from services.file_service import FileService
+    from services.task_manager import generate_images_task
+
+    class PausingImageService:
+        def flatten_outline(self, outline):
+            return outline
+
+        def extract_image_urls_from_markdown(self, _text):
+            return []
+
+        def generate_image_prompt(self, *_args, **_kwargs):
+            return "prompt"
+
+        def generate_image(self, *_args, **_kwargs):
+            task = Task.query.get("pause-after-first-task")
+            task.status = "PAUSED"
+            db.session.commit()
+            return Image.new("RGB", (640, 360), "white")
+
+    with app.app_context():
+        project = Project(
+            id="pause-before-more-pages-project",
+            creation_type="idea",
+            status="GENERATING_IMAGES",
+        )
+        first = Page(id="pause-page-1", project_id=project.id, order_index=0, status="QUEUED")
+        second = Page(id="pause-page-2", project_id=project.id, order_index=1, status="QUEUED")
+        for page in (first, second):
+            page.set_outline_content({"title": page.id, "points": []})
+            page.set_description_content({"text": page.id})
+        task = Task(id="pause-after-first-task", project_id=project.id, task_type="GENERATE_IMAGES", status="PENDING")
+        task.set_progress({
+            "generation_id": task.id,
+            "manifest_version": 1,
+            "project_id": project.id,
+            "total": 2,
+            "completed": 0,
+            "failed": 0,
+            "page_ids": [first.id, second.id],
+            "pages": [
+                {"page_id": first.id, "status": "queued", "attempt": 1},
+                {"page_id": second.id, "status": "queued", "attempt": 1},
+            ],
+        })
+        db.session.add_all([project, first, second, task])
+        db.session.commit()
+
+        generate_images_task(
+            task.id,
+            project.id,
+            PausingImageService(),
+            FileService(str(tmp_path)),
+            [
+                {"title": first.id, "points": []},
+                {"title": second.id, "points": []},
+            ],
+            use_template=False,
+            max_workers=1,
+            app=app,
+            page_ids=[first.id, second.id],
+        )
+
+        db.session.refresh(task)
+        db.session.refresh(first)
+        db.session.refresh(second)
+        assert task.status == "PAUSED"
+        assert first.generated_image_path
+        assert second.generated_image_path is None
+        assert second.status == "QUEUED"
+
+
+def test_paused_image_generation_records_already_running_pages(app, tmp_path):
+    from PIL import Image
+    from services.file_service import FileService
+    from services.task_manager import generate_images_task
+
+    page2_started = threading.Event()
+    pause_seen = threading.Event()
+
+    class TwoWorkerImageService:
+        def flatten_outline(self, outline):
+            return outline
+
+        def extract_image_urls_from_markdown(self, _text):
+            return []
+
+        def generate_image_prompt(self, _outline, page_data, *_args, **_kwargs):
+            return page_data["title"]
+
+        def generate_image(self, prompt, *_args, **_kwargs):
+            if prompt == "page-1":
+                assert page2_started.wait(2)
+                task = Task.query.get("pause-two-workers-task")
+                task.status = "PAUSED"
+                db.session.commit()
+                pause_seen.set()
+                return Image.new("RGB", (640, 360), "white")
+            page2_started.set()
+            assert pause_seen.wait(2)
+            time.sleep(0.05)
+            return Image.new("RGB", (640, 360), "white")
+
+    with app.app_context():
+        project = Project(
+            id="pause-two-workers-project",
+            creation_type="idea",
+            status="GENERATING_IMAGES",
+        )
+        first = Page(id="pause-two-workers-page-1", project_id=project.id, order_index=0, status="QUEUED")
+        second = Page(id="pause-two-workers-page-2", project_id=project.id, order_index=1, status="QUEUED")
+        third = Page(id="pause-two-workers-page-3", project_id=project.id, order_index=2, status="QUEUED")
+        for page, title in ((first, "page-1"), (second, "page-2"), (third, "page-3")):
+            page.set_outline_content({"title": title, "points": []})
+            page.set_description_content({"text": title})
+        task = Task(id="pause-two-workers-task", project_id=project.id, task_type="GENERATE_IMAGES", status="PENDING")
+        task.set_progress({
+            "generation_id": task.id,
+            "manifest_version": 1,
+            "project_id": project.id,
+            "total": 3,
+            "completed": 0,
+            "failed": 0,
+            "page_ids": [first.id, second.id, third.id],
+            "pages": [
+                {"page_id": first.id, "status": "queued", "attempt": 1},
+                {"page_id": second.id, "status": "queued", "attempt": 1},
+                {"page_id": third.id, "status": "queued", "attempt": 1},
+            ],
+        })
+        db.session.add_all([project, first, second, third, task])
+        db.session.commit()
+
+        generate_images_task(
+            task.id,
+            project.id,
+            TwoWorkerImageService(),
+            FileService(str(tmp_path)),
+            [
+                {"title": "page-1", "points": []},
+                {"title": "page-2", "points": []},
+                {"title": "page-3", "points": []},
+            ],
+            use_template=False,
+            max_workers=2,
+            app=app,
+            page_ids=[first.id, second.id, third.id],
+        )
+
+        db.session.refresh(task)
+        db.session.refresh(first)
+        db.session.refresh(second)
+        db.session.refresh(third)
+        assert task.status == "PAUSED"
+        assert task.get_progress()["completed"] == 2
+        assert first.generated_image_path
+        assert second.generated_image_path
+        assert third.generated_image_path is None
 
 
 def test_resume_interrupted_export_task_resubmits_saved_arguments(client):

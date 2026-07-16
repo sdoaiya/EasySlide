@@ -301,6 +301,125 @@
       "mediaSlots": []
     },
     {
+      "layout": "core01_statement",
+      "theme": "core01",
+      "roles": [
+        "statement",
+        "context",
+        "report",
+        "content"
+      ],
+      "copyKeys": [
+        "kicker",
+        "title",
+        "summary",
+        "points"
+      ],
+      "copyBudgets": {
+        "kicker": {
+          "maxChars": 18
+        },
+        "title": {
+          "maxChars": 28
+        },
+        "summary": {
+          "maxChars": 72
+        }
+      },
+      "propShapes": {
+        "kicker": "string",
+        "title": "string",
+        "summary": "string",
+        "points": "string[]"
+      },
+      "arrayLimits": {
+        "points": {
+          "min": 2,
+          "max": 4,
+          "itemMaxChars": 34
+        }
+      },
+      "mediaSlots": []
+    },
+    {
+      "layout": "core01_evidence",
+      "theme": "core01",
+      "roles": [
+        "data",
+        "metrics",
+        "report",
+        "breakdown",
+        "content"
+      ],
+      "copyKeys": [
+        "title",
+        "summary",
+        "metrics"
+      ],
+      "copyBudgets": {
+        "title": {
+          "maxChars": 24
+        },
+        "summary": {
+          "maxChars": 64
+        }
+      },
+      "propShapes": {
+        "title": "string",
+        "summary": "string",
+        "metrics": "string[]"
+      },
+      "arrayLimits": {
+        "metrics": {
+          "min": 2,
+          "max": 4,
+          "itemMaxChars": 36
+        }
+      },
+      "mediaSlots": []
+    },
+    {
+      "layout": "core01_narrative",
+      "theme": "core01",
+      "roles": [
+        "process",
+        "actions",
+        "breakdown",
+        "content"
+      ],
+      "copyKeys": [
+        "kicker",
+        "title",
+        "summary",
+        "steps"
+      ],
+      "copyBudgets": {
+        "kicker": {
+          "maxChars": 18
+        },
+        "title": {
+          "maxChars": 24
+        },
+        "summary": {
+          "maxChars": 54
+        }
+      },
+      "propShapes": {
+        "kicker": "string",
+        "title": "string",
+        "summary": "string",
+        "steps": "string[]"
+      },
+      "arrayLimits": {
+        "steps": {
+          "min": 3,
+          "max": 5,
+          "itemMaxChars": 30
+        }
+      },
+      "mediaSlots": []
+    },
+    {
       "layout": "core01_end",
       "theme": "core01",
       "roles": [
@@ -322,6 +441,220 @@
         "title": "string",
         "subtitle": "string"
       },
+      "mediaSlots": []
+    },
+    {
+      "layout": "core01_risk",
+      "theme": "core01",
+      "roles": ["risks", "breakdown", "context", "content"],
+      "copyKeys": ["title", "summary", "risks"],
+      "copyBudgets": {
+        "title": { "maxChars": 24 },
+        "summary": { "maxChars": 62 }
+      },
+      "propShapes": {
+        "title": "string",
+        "summary": "string",
+        "risks": "string[]"
+      },
+      "arrayLimits": {
+        "risks": { "min": 3, "max": 5, "itemMaxChars": 34 }
+      },
+      "mediaSlots": []
+    },
+    {
+      "layout": "core01_decision",
+      "theme": "core01",
+      "roles": ["comparison", "relationship", "result", "statement", "content"],
+      "copyKeys": ["kicker", "title", "recommendation", "options"],
+      "copyBudgets": {
+        "kicker": { "maxChars": 18 },
+        "title": { "maxChars": 24 },
+        "recommendation": { "maxChars": 62 }
+      },
+      "propShapes": {
+        "kicker": "string",
+        "title": "string",
+        "recommendation": "string",
+        "options": "string[]"
+      },
+      "arrayLimits": {
+        "options": { "min": 2, "max": 4, "itemMaxChars": 34 }
+      },
+      "mediaSlots": []
+    },
+    {
+      "layout": "core01_image_story",
+      "theme": "core01",
+      "roles": ["image", "case", "statement", "content"],
+      "copyKeys": ["kicker", "title", "summary", "caption"],
+      "copyBudgets": {
+        "kicker": { "maxChars": 18 },
+        "title": { "maxChars": 24 },
+        "summary": { "maxChars": 72 },
+        "caption": { "maxChars": 32 }
+      },
+      "propShapes": {
+        "kicker": "string",
+        "title": "string",
+        "summary": "string",
+        "caption": "string",
+        "image": "media"
+      },
+      "mediaSlots": [{ "key": "image", "required": false }]
+    },
+    {
+      "layout": "core01_quote",
+      "theme": "core01",
+      "roles": ["quote", "context", "report", "content"],
+      "copyKeys": ["kicker", "quote", "attribution", "summary"],
+      "copyBudgets": {
+        "kicker": { "maxChars": 18 },
+        "quote": { "maxChars": 72 },
+        "attribution": { "maxChars": 28 },
+        "summary": { "maxChars": 54 }
+      },
+      "propShapes": {
+        "kicker": "string",
+        "quote": "string",
+        "attribution": "string",
+        "summary": "string"
+      },
+      "mediaSlots": []
+    },
+    {
+      "layout": "core01_actions",
+      "theme": "core01",
+      "roles": ["actions", "result", "closing", "end", "content"],
+      "copyKeys": ["title", "summary", "actions"],
+      "copyBudgets": {
+        "title": { "maxChars": 24 },
+        "summary": { "maxChars": 58 }
+      },
+      "propShapes": {
+        "title": "string",
+        "summary": "string",
+        "actions": "string[]"
+      },
+      "arrayLimits": {
+        "actions": { "min": 3, "max": 5, "itemMaxChars": 34 }
+      },
+      "mediaSlots": []
+    },
+    {
+      "layout": "core01_matrix",
+      "theme": "core01",
+      "roles": ["relationship", "distribution", "comparison", "content"],
+      "copyKeys": ["title", "xLabel", "yLabel", "items"],
+      "copyBudgets": {
+        "title": { "maxChars": 24 },
+        "xLabel": { "maxChars": 16 },
+        "yLabel": { "maxChars": 16 }
+      },
+      "propShapes": {
+        "title": "string",
+        "xLabel": "string",
+        "yLabel": "string",
+        "items": "string[]"
+      },
+      "arrayLimits": {
+        "items": { "min": 4, "max": 4, "itemMaxChars": 24 }
+      },
+      "mediaSlots": []
+    },
+    {
+      "layout": "core01_overview",
+      "theme": "core01",
+      "roles": ["context", "report", "breakdown", "content"],
+      "copyKeys": ["kicker", "title", "summary", "sections"],
+      "copyBudgets": {
+        "kicker": { "maxChars": 18 },
+        "title": { "maxChars": 24 },
+        "summary": { "maxChars": 60 }
+      },
+      "propShapes": {
+        "kicker": "string",
+        "title": "string",
+        "summary": "string",
+        "sections": "string[]"
+      },
+      "arrayLimits": {
+        "sections": { "min": 3, "max": 5, "itemMaxChars": 30 }
+      },
+      "mediaSlots": []
+    },
+    {
+      "layout": "core01_section",
+      "theme": "core01",
+      "roles": ["section", "context", "statement", "content"],
+      "copyKeys": ["kicker", "title", "subtitle", "sectionNumber"],
+      "copyBudgets": {
+        "kicker": { "maxChars": 18 },
+        "title": { "maxChars": 22 },
+        "subtitle": { "maxChars": 48 },
+        "sectionNumber": { "maxChars": 8 }
+      },
+      "propShapes": { "kicker": "string", "title": "string", "subtitle": "string", "sectionNumber": "string" },
+      "mediaSlots": []
+    },
+    {
+      "layout": "core01_timeline",
+      "theme": "core01",
+      "roles": ["timeline", "process", "actions", "content"],
+      "copyKeys": ["title", "milestones"],
+      "copyBudgets": { "title": { "maxChars": 24 } },
+      "propShapes": { "title": "string", "milestones": "string[]" },
+      "arrayLimits": { "milestones": { "min": 3, "max": 6, "itemMaxChars": 28 } },
+      "mediaSlots": []
+    },
+    {
+      "layout": "core01_bars",
+      "theme": "core01",
+      "roles": ["data", "trend", "distribution", "metrics", "content"],
+      "copyKeys": ["title", "summary", "metrics"],
+      "copyBudgets": { "title": { "maxChars": 24 }, "summary": { "maxChars": 54 } },
+      "propShapes": { "title": "string", "summary": "string", "metrics": "string[]" },
+      "arrayLimits": { "metrics": { "min": 3, "max": 6, "itemMaxChars": 30 } },
+      "mediaSlots": []
+    },
+    {
+      "layout": "core01_table",
+      "theme": "core01",
+      "roles": ["report", "comparison", "data", "content"],
+      "copyKeys": ["title", "leftLabel", "rightLabel", "rows"],
+      "copyBudgets": { "title": { "maxChars": 24 }, "leftLabel": { "maxChars": 14 }, "rightLabel": { "maxChars": 14 } },
+      "propShapes": { "title": "string", "leftLabel": "string", "rightLabel": "string", "rows": "string[]" },
+      "arrayLimits": { "rows": { "min": 3, "max": 6, "itemMaxChars": 42 } },
+      "mediaSlots": []
+    },
+    {
+      "layout": "core01_architecture",
+      "theme": "core01",
+      "roles": ["architecture", "relationship", "breakdown", "context", "content"],
+      "copyKeys": ["kicker", "title", "summary", "layers"],
+      "copyBudgets": { "kicker": { "maxChars": 18 }, "title": { "maxChars": 24 }, "summary": { "maxChars": 54 } },
+      "propShapes": { "kicker": "string", "title": "string", "summary": "string", "layers": "string[]" },
+      "arrayLimits": { "layers": { "min": 3, "max": 5, "itemMaxChars": 30 } },
+      "mediaSlots": []
+    },
+    {
+      "layout": "core01_profile",
+      "theme": "core01",
+      "roles": ["profile", "case", "statement", "content"],
+      "copyKeys": ["kicker", "name", "role", "summary", "highlights"],
+      "copyBudgets": { "kicker": { "maxChars": 18 }, "name": { "maxChars": 18 }, "role": { "maxChars": 24 }, "summary": { "maxChars": 64 } },
+      "propShapes": { "kicker": "string", "name": "string", "role": "string", "summary": "string", "highlights": "string[]", "image": "media" },
+      "arrayLimits": { "highlights": { "min": 2, "max": 4, "itemMaxChars": 24 } },
+      "mediaSlots": [{ "key": "image", "required": false }]
+    },
+    {
+      "layout": "core01_funnel",
+      "theme": "core01",
+      "roles": ["funnel", "process", "distribution", "content"],
+      "copyKeys": ["kicker", "title", "summary", "stages"],
+      "copyBudgets": { "kicker": { "maxChars": 18 }, "title": { "maxChars": 24 }, "summary": { "maxChars": 54 } },
+      "propShapes": { "kicker": "string", "title": "string", "summary": "string", "stages": "string[]" },
+      "arrayLimits": { "stages": { "min": 3, "max": 5, "itemMaxChars": 28 } },
       "mediaSlots": []
     },
     {

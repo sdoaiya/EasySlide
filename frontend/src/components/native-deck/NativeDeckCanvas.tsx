@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
-import { ChevronLeft, ChevronRight, FilePlus2 } from 'lucide-react'
+import { useEffect, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent } from 'react'
+import { Check, ChevronLeft, ChevronRight, FilePlus2, X } from 'lucide-react'
+import { getImageUrl } from '@/api/client'
 import type { NativeSlideSpec } from '@/native-deck/types'
 import { NativeSlideRenderer } from './NativeSlideRenderer'
 
@@ -14,10 +15,30 @@ type NativeDeckCanvasProps = {
   onNext?: () => void
   presenting?: boolean
   emptyAction?: { label: string; onClick: () => void }
+  generationStatus?: { status: string; completed: number; failed: number; total: number; error?: string; onPause?: () => void; onResume?: () => void }
+  onPropsChange?: (props: Record<string, unknown>) => void
+  mediaContract?: {
+    propShapes: Record<string, unknown>
+    mediaSlots: Array<{ key: string } & Record<string, unknown>>
+    copyBudgets?: Record<string, { maxChars: number }>
+    arrayLimits?: Record<string, { itemMaxChars: number }>
+  }
+  onMediaSelect?: (key: string, index: number | undefined) => void
+  onMediaUpload?: (key: string, index: number | undefined, file: File) => void
 }
 
-export function NativeDeckCanvas({ slide, zoom = 1, pageIndex = 0, pageCount = 1, onPrevious, onNext, presenting = false, emptyAction }: NativeDeckCanvasProps) {
+type TextEditState = {
+  path: Array<string | number>
+  value: string
+  rect: { left: number; top: number; width: number; height: number }
+  textStyle?: Pick<CSSProperties, 'fontFamily' | 'fontSize' | 'fontWeight' | 'fontStyle' | 'lineHeight' | 'letterSpacing' | 'textAlign'>
+}
+type TextSelectionState = Pick<TextEditState, 'path' | 'rect'>
+
+export function NativeDeckCanvas({ slide, zoom = 1, pageIndex = 0, pageCount = 1, onPrevious, onNext, presenting = false, emptyAction, generationStatus, onPropsChange, mediaContract, onMediaSelect, onMediaUpload }: NativeDeckCanvasProps) {
   const frameRef = useRef<HTMLDivElement>(null)
+  const editorRef = useRef<HTMLTextAreaElement>(null)
+  const editorToolbarRef = useRef<HTMLDivElement>(null)
   const previousPageId = useRef<string>()
   const previousReplay = useRef<string>()
   const previousSlide = useRef<NativeSlideSpec>()
@@ -25,14 +46,39 @@ export function NativeDeckCanvas({ slide, zoom = 1, pageIndex = 0, pageCount = 1
   const [transitionClass, setTransitionClass] = useState('')
   const [fitScale, setFitScale] = useState(0.5)
   const [elementAnimationStep, setElementAnimationStep] = useState(ELEMENT_ANIMATION_RELEASED)
-  const [elementAnimationActive, setElementAnimationActive] = useState(true)
+  const [textEdit, setTextEdit] = useState<TextEditState>()
+  const [textSelection, setTextSelection] = useState<TextSelectionState>()
 
   const elementTrigger = (slide?.props.__animation as { elementTrigger?: string } | undefined)?.elementTrigger
 
   useEffect(() => {
-    setElementAnimationActive(elementTrigger !== 'click')
-    setElementAnimationStep(elementTrigger === 'click' ? 0 : ELEMENT_ANIMATION_RELEASED)
-  }, [slide?.pageId, slide?.props.__animation])
+    const waitForClick = presenting && elementTrigger === 'click'
+    setElementAnimationStep(waitForClick ? 0 : ELEMENT_ANIMATION_RELEASED)
+  }, [elementTrigger, presenting, slide?.pageId, slide?.props.__animation])
+
+  useEffect(() => {
+    setTextEdit(undefined)
+    setTextSelection(undefined)
+  }, [slide?.pageId, slide?.layout])
+
+  useEffect(() => {
+    if (!textEdit) return
+    editorRef.current?.focus()
+    editorRef.current?.select()
+  }, [textEdit])
+
+  useEffect(() => {
+    if (!textEdit) return
+    const cancelOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      setTextEdit(undefined)
+      setTextSelection(undefined)
+    }
+    window.addEventListener('keydown', cancelOnEscape, true)
+    return () => window.removeEventListener('keydown', cancelOnEscape, true)
+  }, [textEdit])
 
   useEffect(() => {
     const frame = frameRef.current
@@ -150,10 +196,102 @@ export function NativeDeckCanvas({ slide, zoom = 1, pageIndex = 0, pageCount = 1
     )
   }
   const scale = fitScale * zoom
+  const hasGenerationStatus = Boolean(generationStatus && generationStatus.status !== 'COMPLETED')
+  const generationText = !generationStatus ? ''
+    : generationStatus.status === 'FAILED' ? `生成失败：${generationStatus.error || '请稍后重试'}`
+      : generationStatus.status === 'PAUSED' ? `已暂停 ${generationStatus.completed}/${generationStatus.total}`
+        : `正在生成 ${generationStatus.completed}/${generationStatus.total}`
+  const textLimit = textEdit ? textLimitForPath(mediaContract, textEdit.path) : undefined
+  const commitTextEdit = () => {
+    if (!slide || !textEdit || !onPropsChange) return
+    onPropsChange(writeTextPath(slide.props, textEdit.path, textEdit.value))
+    setTextEdit(undefined)
+  }
+  const cancelTextEdit = () => setTextEdit(undefined)
+  const findCanvasTextTarget = (event: MouseEvent<HTMLDivElement>) => {
+    if (presenting || !slide || !onPropsChange) return
+    const target = event.target instanceof Element ? event.target : undefined
+    if (!target || target.closest('button,input,textarea,select,[contenteditable="true"]')) return
+    const text = normalizeEditableText(target.textContent || '')
+    if (!text) return
+    const path = findTextPathForCanvas(slide.props, text, target, frameRef.current)
+    if (!path) return
+    const root = frameRef.current
+    if (!root) return
+    const rootRect = root.getBoundingClientRect()
+    const targetRect = target.getBoundingClientRect()
+    return {
+      path,
+      value: text,
+      rect: {
+        left: targetRect.left - rootRect.left,
+        top: targetRect.top - rootRect.top,
+        width: Math.max(180, targetRect.width),
+        height: Math.max(44, targetRect.height),
+      },
+      textStyle: (() => {
+        const computed = window.getComputedStyle(target)
+        return {
+          fontFamily: computed.fontFamily,
+          fontSize: computed.fontSize,
+          fontWeight: computed.fontWeight,
+          fontStyle: computed.fontStyle,
+          lineHeight: computed.lineHeight,
+          letterSpacing: computed.letterSpacing,
+          textAlign: computed.textAlign as CSSProperties['textAlign'],
+        }
+      })(),
+    }
+  }
+  const selectMediaFromCanvas = (event: MouseEvent<HTMLDivElement>) => {
+    if (presenting || !slide || !mediaContract || !onMediaSelect) return false
+    const target = event.target instanceof Element ? event.target.closest('img,video') : undefined
+    const source = target instanceof HTMLImageElement
+      ? target.currentSrc || target.src
+      : target instanceof HTMLVideoElement
+        ? target.currentSrc || target.src || target.poster
+        : ''
+    if (!source) return false
+    const slot = findMediaSlotForSource(slide.props, mediaContract, source)
+    if (!slot) return false
+    event.preventDefault()
+    event.stopPropagation()
+    onMediaSelect(slot.key, slot.index)
+    return true
+  }
+  const handleCanvasClick = (event: MouseEvent<HTMLDivElement>) => {
+    if (selectMediaFromCanvas(event)) return
+    const target = findCanvasTextTarget(event)
+    if (target) setTextSelection({ path: target.path, rect: target.rect })
+    if (elementTrigger === 'click') setElementAnimationStep(ELEMENT_ANIMATION_RELEASED)
+  }
+  const handleCanvasDrop = (event: DragEvent<HTMLDivElement>) => {
+    const file = event.dataTransfer.files?.[0]
+    if (presenting || !slide || !mediaContract || !onMediaUpload || !file) return
+    const target = event.target instanceof Element ? event.target.closest('img,video') : undefined
+    const source = target instanceof HTMLImageElement
+      ? target.currentSrc || target.src
+      : target instanceof HTMLVideoElement
+        ? target.currentSrc || target.src || target.poster
+        : ''
+    const slot = source ? findMediaSlotForSource(slide.props, mediaContract, source) : undefined
+    if (!slot || (file.type && !file.type.startsWith(`${slot.kind}/`))) return
+    event.preventDefault()
+    event.stopPropagation()
+    onMediaUpload(slot.key, slot.index, file)
+  }
+  const beginTextEdit = (event: MouseEvent<HTMLDivElement>) => {
+    const target = findCanvasTextTarget(event)
+    if (!target) return
+    event.preventDefault()
+    event.stopPropagation()
+    setTextSelection({ path: target.path, rect: target.rect })
+    setTextEdit(target)
+  }
 
   return (
     <div ref={frameRef} className="relative flex h-full min-w-0 w-full items-center justify-center overflow-hidden bg-[#eef7fb] p-6 pb-20 dark:bg-background-primary">
-      <div className={`relative shrink-0 overflow-hidden rounded-xl bg-white shadow-[0_14px_38px_rgba(15,23,42,0.14)] ring-1 ring-sky-100 ${transitionClass}`} style={{ width: 1920 * scale, height: 1080 * scale }}>
+      <div className={`relative shrink-0 overflow-hidden rounded-xl bg-white shadow-[0_14px_38px_rgba(15,23,42,0.14)] ring-1 ring-sky-100/70 ${transitionClass}`} style={{ width: 1920 * scale, height: 1080 * scale }}>
         {outgoingSlide && (
           <div aria-hidden="true" className="absolute inset-0 z-0 native-page-outgoing">
             <div className="absolute left-0 top-0 origin-top-left" style={{ transform: `scale(${scale})` }}>
@@ -161,17 +299,203 @@ export function NativeDeckCanvas({ slide, zoom = 1, pageIndex = 0, pageCount = 1
             </div>
           </div>
         )}
-        <div className="absolute left-0 top-0 z-[1] origin-top-left" style={{ transform: `scale(${scale})` }} onClick={() => elementTrigger === 'click' && setElementAnimationStep(ELEMENT_ANIMATION_RELEASED)}>
-          <NativeSlideRenderer key={`${slide.pageId}:${slide.layout}`} slide={slide} elementAnimationActive={elementAnimationStep >= ELEMENT_ANIMATION_RELEASED} elementAnimationStep={elementAnimationStep} />
+        <div className="absolute left-0 top-0 z-[1] origin-top-left" style={{ transform: `scale(${scale})` }} onClick={handleCanvasClick} onDoubleClick={beginTextEdit} onDragOver={(event) => event.preventDefault()} onDrop={handleCanvasDrop}>
+          <NativeSlideRenderer key={`${slide.pageId}:${slide.layout}`} slide={slide} elementAnimationStep={elementAnimationStep} />
         </div>
       </div>
-      {pageCount > 1 && (
-        <div className="absolute bottom-5 left-1/2 flex -translate-x-1/2 items-center gap-3 rounded-xl border border-black/5 bg-white/95 px-3 py-2 text-sm shadow-lg backdrop-blur">
-          <button type="button" aria-label="上一页" title="上一页" disabled={pageIndex <= 0} onClick={onPrevious} className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-slate-100 disabled:opacity-30"><ChevronLeft size={18} /></button>
-          <span className="min-w-14 text-center font-mono text-xs font-semibold text-slate-700">{String(pageIndex + 1).padStart(2, '0')} / {String(pageCount).padStart(2, '0')}</span>
-          <button type="button" aria-label="下一页" title="下一页" disabled={pageIndex >= pageCount - 1} onClick={onNext} className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-slate-100 disabled:opacity-30"><ChevronRight size={18} /></button>
+      {textSelection && !textEdit && (
+        <div
+          data-testid="native-canvas-text-selection"
+          className="pointer-events-none absolute z-20 rounded-md border-2 border-cyan-400/90 bg-cyan-100/10"
+          style={{
+            left: textSelection.rect.left,
+            top: textSelection.rect.top,
+            width: textSelection.rect.width,
+            height: textSelection.rect.height,
+          }}
+        />
+      )}
+      {textEdit && (
+        <>
+          <textarea
+            ref={editorRef}
+            aria-label="画布文字编辑"
+            value={textEdit.value}
+            maxLength={textLimit}
+            onChange={(event) => setTextEdit({ ...textEdit, value: event.target.value })}
+            onBlur={(event) => {
+              const nextFocus = event.relatedTarget
+              if (nextFocus instanceof Node && editorToolbarRef.current?.contains(nextFocus)) return
+              commitTextEdit()
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                cancelTextEdit()
+              } else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+                event.preventDefault()
+                commitTextEdit()
+              }
+            }}
+            className="absolute z-30 box-border resize-none rounded-md border-2 border-cyan-500 bg-white/95 px-2 py-1 text-slate-900 shadow-xl outline-none ring-2 ring-cyan-200"
+            style={{
+              left: textEdit.rect.left,
+              top: textEdit.rect.top,
+              width: textEdit.rect.width,
+              minHeight: textEdit.rect.height,
+              ...textEdit.textStyle,
+            }}
+          />
+          <div
+            ref={editorToolbarRef}
+            className="absolute z-30 flex h-9 items-center gap-1 rounded-lg border border-cyan-100 bg-white/95 p-1 shadow-lg backdrop-blur"
+            style={{
+              left: textEdit.rect.left,
+              top: textEdit.rect.top + Math.max(44, textEdit.rect.height) + 8,
+            }}
+          >
+            <span className="text-[11px] tabular-nums text-slate-500" aria-label={textLimit ? `文字长度 ${textEdit.value.length}/${textLimit}` : undefined}>{textLimit ? `${textEdit.value.length}/${textLimit}` : ''}</span>
+            <span className="sr-only">Ctrl Enter 保存文字修改，Escape 取消文字修改</span>
+            <button
+              type="button"
+              aria-label="保存文字修改"
+              title="保存"
+              onPointerDown={(event) => {
+                event.preventDefault()
+              }}
+              onClick={commitTextEdit}
+              className="flex h-7 w-7 items-center justify-center rounded-md text-cyan-700 transition hover:bg-cyan-50"
+            >
+              <Check size={15} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              aria-label="取消文字修改"
+              title="取消"
+              onPointerDown={(event) => {
+                event.preventDefault()
+              }}
+              onClick={cancelTextEdit}
+              className="flex h-7 w-7 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100"
+            >
+              <X size={15} aria-hidden="true" />
+            </button>
+          </div>
+        </>
+      )}
+      {(pageCount > 1 || hasGenerationStatus) && (
+        <div data-testid="native-page-navigator" className="absolute bottom-5 left-1/2 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2 rounded-xl border border-black/5 bg-white/95 px-3 py-2 text-sm shadow-lg backdrop-blur">
+          {pageCount > 1 && <>
+            <button type="button" aria-label="上一页" title="上一页" disabled={pageIndex <= 0} onClick={onPrevious} className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-slate-100 disabled:opacity-30"><ChevronLeft size={18} /></button>
+            <span className="min-w-14 text-center font-mono text-xs font-semibold text-slate-700">{String(pageIndex + 1).padStart(2, '0')} / {String(pageCount).padStart(2, '0')}</span>
+            <button type="button" aria-label="下一页" title="下一页" disabled={pageIndex >= pageCount - 1} onClick={onNext} className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-slate-100 disabled:opacity-30"><ChevronRight size={18} /></button>
+          </>}
+          {hasGenerationStatus && generationStatus && <>
+            {pageCount > 1 && <span className="h-4 w-px bg-slate-200" aria-hidden="true" />}
+            <span role={generationStatus.status === 'FAILED' ? 'alert' : 'status'} className={`whitespace-nowrap text-xs font-semibold ${generationStatus.status === 'FAILED' ? 'text-red-600' : 'text-sky-700'}`}>{generationText}{generationStatus.failed > 0 && `，失败 ${generationStatus.failed}`}</span>
+            {generationStatus.status === 'FAILED' && generationStatus.onResume && <button type="button" onClick={generationStatus.onResume} className="rounded-md bg-cyan-600 px-2 py-1 text-xs font-semibold text-white">重试失败页</button>}
+            {generationStatus.status === 'PAUSED' && generationStatus.onResume && <button type="button" onClick={generationStatus.onResume} className="rounded-md bg-cyan-600 px-2 py-1 text-xs font-semibold text-white">继续</button>}
+            {(generationStatus.status === 'PENDING' || generationStatus.status === 'PROCESSING') && generationStatus.onPause && <button type="button" onClick={generationStatus.onPause} className="rounded-md px-2 py-1 text-xs font-semibold text-sky-700 hover:bg-sky-50">暂停</button>}
+          </>}
         </div>
       )}
     </div>
   )
+}
+
+function normalizeEditableText(value: string) {
+  return value.replace(/\s+/g, ' ').trim()
+}
+
+function findTextPathForCanvas(props: Record<string, unknown>, text: string, target: Element, root: HTMLElement | null) {
+  const matches: Array<Array<string | number>> = []
+  const visit = (value: unknown, path: Array<string | number>) => {
+    if (matches.length > 1) return
+    if (typeof value === 'string') {
+      if (!isMediaString(value) && normalizeEditableText(value) === text) matches.push(path)
+      return
+    }
+    if (Array.isArray(value)) {
+      value.forEach((item, index) => visit(item, [...path, index]))
+      return
+    }
+    if (value && typeof value === 'object') {
+      for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+        if (key.startsWith('__')) continue
+        visit(child, [...path, key])
+      }
+    }
+  }
+  visit(props, [])
+  if (matches.length === 1) return matches[0]
+  if (!root) return undefined
+  const occurrences = Array.from(root.querySelectorAll<HTMLElement>('.native-slide *'))
+    .filter((element) => element.children.length === 0 && normalizeEditableText(element.textContent || '') === text)
+  const index = occurrences.indexOf(target as HTMLElement)
+  return index >= 0 ? matches[index] : undefined
+}
+
+function writeTextPath(props: Record<string, unknown>, path: Array<string | number>, value: string): Record<string, unknown> {
+  const write = (current: unknown, cursor: number): unknown => {
+    if (cursor >= path.length) return value
+    const key = path[cursor]
+    if (typeof key === 'number') {
+      const items = Array.isArray(current) ? [...current] : []
+      items[key] = write(items[key], cursor + 1)
+      return items
+    }
+    const object = current && typeof current === 'object' && !Array.isArray(current) ? current as Record<string, unknown> : {}
+    return { ...object, [key]: write(object[key], cursor + 1) }
+  }
+  return write(props, 0) as Record<string, unknown>
+}
+
+function isMediaString(value: string) {
+  return value.startsWith('/files/') || value.startsWith('assets/') || value.startsWith('data:image/') || value.startsWith('data:video/')
+}
+
+function findMediaSlotForSource(
+  props: Record<string, unknown>,
+  contract: { propShapes: Record<string, unknown>; mediaSlots: Array<{ key: string } & Record<string, unknown>> },
+  source: string,
+) {
+  for (const slot of contract.mediaSlots) {
+    const shape = contract.propShapes[slot.key]
+    if (Array.isArray(shape)) {
+      const values = Array.isArray(props[slot.key]) ? props[slot.key] as unknown[] : []
+      const index = values.findIndex((value) => typeof value === 'string' && sameMediaSource(value, source))
+      if (index >= 0) return { key: slot.key, index, kind: mediaSlotKind(slot) }
+    } else {
+      const value = props[slot.key]
+      if (typeof value === 'string' && sameMediaSource(value, source)) return { key: slot.key, index: undefined, kind: mediaSlotKind(slot) }
+    }
+  }
+  return undefined
+}
+
+function sameMediaSource(value: string, source: string) {
+  const normalizedSource = normalizeMediaSource(source)
+  return normalizeMediaSource(value) === normalizedSource || normalizeMediaSource(getImageUrl(value)) === normalizedSource
+}
+
+function normalizeMediaSource(value: string) {
+  try {
+    const url = new URL(value, window.location.origin)
+    return `${url.origin}${url.pathname}`
+  } catch {
+    return value.split('?')[0]
+  }
+}
+
+function mediaSlotKind(slot: Record<string, unknown>) {
+  return String(slot.kind || slot.type || slot.mediaType || '').toLowerCase().includes('video') ? 'video' : 'image'
+}
+
+function textLimitForPath(
+  contract: NativeDeckCanvasProps['mediaContract'],
+  path: Array<string | number>,
+) {
+  const key = typeof path[0] === 'string' ? path[0] : ''
+  if (!key) return undefined
+  return contract?.copyBudgets?.[key]?.maxChars || contract?.arrayLimits?.[key]?.itemMaxChars
 }

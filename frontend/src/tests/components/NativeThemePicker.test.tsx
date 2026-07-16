@@ -13,11 +13,42 @@ describe('NativeThemePicker', () => {
   it('uses a desktop-safe relative URL for the selected theme preview', () => {
     render(<NativeThemePicker value="theme01" onChange={vi.fn()} />)
 
-    expect(getStaticAssetUrl).toHaveBeenCalledWith('/assets/native-theme-previews/theme01.webp')
+    expect(getStaticAssetUrl).toHaveBeenCalledWith('/assets/native-theme-previews/theme01.jpg')
     expect(screen.getByAltText('轻拟态风主题预览')).toHaveAttribute(
       'src',
-      './desktop-assets/assets/native-theme-previews/theme01.webp',
+      './desktop-assets/assets/native-theme-previews/theme01.jpg',
     )
+    expect(screen.getAllByText('真实渲染预览')).not.toHaveLength(0)
+    expect(screen.getByText('图表')).toBeInTheDocument()
+    expect(screen.getByText('分析模型')).toBeInTheDocument()
+    expect(screen.getByText('卡片')).toBeInTheDocument()
+    expect(screen.getByText('目录')).toBeInTheDocument()
+  })
+
+  it('shows theme thumbnails and design context on theme cards', () => {
+    render(<NativeThemePicker value="theme02" onChange={vi.fn()} />)
+
+    expect(screen.getByRole('img', { name: '炫光紫绿风缩略预览' })).toHaveAttribute(
+      'src',
+      './desktop-assets/assets/native-theme-previews/theme02.jpg',
+    )
+    expect(screen.getByText('高对比发光')).toBeInTheDocument()
+    expect(screen.getAllByText('科技发布、创意提案、品牌活动').length).toBeGreaterThan(0)
+  })
+
+  it('filters themes by scene and opens the selected preview', async () => {
+    const user = userEvent.setup()
+    render(<NativeThemePicker value="theme01" onChange={vi.fn()} />)
+
+    await user.click(screen.getByRole('button', { name: '金融' }))
+    expect(screen.queryByRole('radio', { name: '轻拟态风' })).not.toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: '金色指数风' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '放大 轻拟态风 主题预览' }))
+    expect(screen.getByRole('dialog', { name: '轻拟态风主题预览' })).toBeInTheDocument()
+    expect(screen.getByAltText('轻拟态风主题放大预览')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '关闭主题预览' }))
+    expect(screen.queryByRole('dialog', { name: '轻拟态风主题预览' })).not.toBeInTheDocument()
   })
 
   it('selects classic native generation without showing Dashi theme choices', async () => {
@@ -31,7 +62,7 @@ describe('NativeThemePicker', () => {
     rerender(<NativeThemePicker value="core01" onChange={onChange} />)
     expect(screen.getByRole('radio', { name: '经典原生生成' })).toHaveAttribute('aria-checked', 'true')
     expect(screen.queryByRole('radiogroup', { name: '原生主题' })).not.toBeInTheDocument()
-    expect(screen.getByText('不依赖主题模板')).toBeInTheDocument()
+    expect(screen.getByText('Huashu 内容驱动')).toBeInTheDocument()
 
     await user.click(screen.getByRole('radio', { name: '主题原生生成' }))
     expect(onChange).toHaveBeenLastCalledWith('theme03')

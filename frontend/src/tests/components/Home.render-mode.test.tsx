@@ -6,6 +6,7 @@ import { Home } from '@/pages/Home';
 import { dashiThemes } from '@/native-deck/dashiThemes';
 
 const initializeProject = vi.fn();
+const getTemplateFile = vi.hoisted(() => vi.fn());
 
 vi.mock('@/store/useProjectStore', () => ({
   useProjectStore: () => ({ initializeProject, isGlobalLoading: false }),
@@ -25,8 +26,14 @@ vi.mock('@/hooks/useTheme', () => ({
 }));
 
 vi.mock('@/components/shared/TemplateSelector', () => ({
-  TemplateSelector: () => <div data-testid="template-selector" />,
-  getTemplateFile: vi.fn(),
+  TemplateSelector: ({ onSelect }: { onSelect: (templateFile: File | null, templateId?: string) => void }) => (
+    <div data-testid="template-selector">
+      <button type="button" onClick={() => onSelect(null, 'gorden-data-viz-deck')}>
+        选择数据可视化合辑
+      </button>
+    </div>
+  ),
+  getTemplateFile,
 }));
 
 const renderHome = () => render(
@@ -40,6 +47,7 @@ const renderHome = () => render(
 describe('Home render mode selection', () => {
   beforeEach(() => {
     initializeProject.mockReset().mockResolvedValue(undefined);
+    getTemplateFile.mockReset().mockResolvedValue(null);
     localStorage.clear();
   });
 
@@ -61,10 +69,10 @@ describe('Home render mode selection', () => {
     expect(within(themeGroup).getAllByRole('radio')).toHaveLength(12);
     expect(screen.getByRole('radio', { name: '轻拟态风' })).toHaveAttribute('aria-checked', 'true');
     expect(screen.getByText(dashiThemes[0].description)).toBeInTheDocument();
-    expect(screen.getByText(dashiThemes[0].useCases)).toBeInTheDocument();
+    expect(screen.getAllByText(dashiThemes[0].useCases).length).toBeGreaterThan(0);
 
     const preview = screen.getByRole('img', { name: '轻拟态风主题预览' });
-    expect(preview).toHaveAttribute('src', '/assets/native-theme-previews/theme01.webp');
+    expect(preview).toHaveAttribute('src', '/assets/native-theme-previews/theme01.jpg');
     fireEvent.error(preview);
     expect(screen.queryByRole('img', { name: '轻拟态风主题预览' })).not.toBeInTheDocument();
     expect(screen.getAllByText('轻拟态风').some((element) => element.offsetParent !== null || element.isConnected)).toBe(true);
@@ -125,11 +133,42 @@ describe('Home render mode selection', () => {
     await user.click(screen.getByRole('radio', { name: '原生可编辑' }));
 
     expect(screen.queryByTestId('template-selector')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('checkbox', { name: '使用文字描述风格' }));
     await user.type(screen.getByPlaceholderText(/描述您想要的 PPT 风格/), '科技蓝风格');
     await user.type(screen.getByRole('textbox', { name: /生成一份关于/ }), '原生项目');
     await user.click(screen.getByRole('button', { name: '下一步' }));
 
     await waitFor(() => expect(initializeProject).toHaveBeenCalledOnce());
     expect(initializeProject.mock.calls[0][3]).toBe('科技蓝风格');
+  });
+
+  it('does not send image-mode text style when the text-style switch is off', async () => {
+    const user = userEvent.setup();
+    renderHome();
+
+    await user.click(screen.getByRole('checkbox', { name: '使用文字描述风格' }));
+    await user.type(screen.getByPlaceholderText(/描述您想要的 PPT 风格/), '科技蓝风格');
+    await user.click(screen.getByRole('checkbox', { name: '使用文字描述风格' }));
+    await user.type(screen.getByRole('textbox', { name: /生成一份关于/ }), '图片模式项目');
+    await user.click(screen.getByRole('button', { name: '下一步' }));
+
+    await waitFor(() => expect(initializeProject).toHaveBeenCalledOnce());
+    expect(initializeProject.mock.calls[0][3]).toBeUndefined();
+  });
+
+  it('creates an image-mode project with Gorden visual DNA even when the reference image is unavailable', async () => {
+    const user = userEvent.setup();
+    renderHome();
+
+    await user.click(screen.getByRole('button', { name: '选择数据可视化合辑' }));
+    await user.type(screen.getByRole('textbox', { name: /生成一份关于/ }), '经营分析');
+    await user.click(screen.getByRole('button', { name: '下一步' }));
+
+    await waitFor(() => expect(initializeProject).toHaveBeenCalledOnce());
+    const call = initializeProject.mock.calls[0];
+    expect(getTemplateFile).toHaveBeenCalledWith('gorden-data-viz-deck', expect.any(Array));
+    expect(call[2]).toBeUndefined();
+    expect(call[3]).toContain('深蓝与砖红数据视觉');
+    expect(call[8]).toBe('gorden-data-viz-deck');
   });
 });
