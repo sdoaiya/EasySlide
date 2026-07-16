@@ -860,6 +860,17 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                         page_obj = Page.query.get(page_id)
                         if not page_obj:
                             raise ValueError(f"Page {page_id} not found")
+                        if page_obj.generated_image_path:
+                            return (
+                                page_id,
+                                page_obj.generated_image_path,
+                                None,
+                                None,
+                                {
+                                    'status': 'skipped_existing',
+                                    'output_path': page_obj.generated_image_path,
+                                },
+                            )
                         
                         def mark_generating():
                             page_for_update = Page.query.get(page_id)
@@ -1033,6 +1044,7 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                 nonlocal completed, failed, resolution_mismatched
                 page_id, image_path, error, is_mismatched, manifest_update = future.result()
                 is_paused_page = manifest_update.get('status') == 'paused'
+                is_skipped_existing_page = manifest_update.get('status') == 'skipped_existing'
 
                 if is_mismatched:
                     resolution_mismatched += 1
@@ -1046,6 +1058,8 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                         if not page.generated_image_path:
                             page.status = 'QUEUED'
                             db.session.commit()
+                    elif is_skipped_existing_page:
+                        completed += 1
                     elif error:
                         page.status = 'FAILED'
                         failed += 1

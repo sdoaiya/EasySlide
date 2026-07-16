@@ -58,4 +58,31 @@ describe('ExportTasksPanel pause controls', () => {
     fireEvent.click(screen.getByRole('button', { name: '查看质量报告' }));
     expect(await screen.findByRole('dialog', { name: '导出质量报告' })).toHaveTextContent('3');
   });
+
+  it('downloads completed image-mode exports through the desktop save path with the backend filename', () => {
+    const saveDownload = vi.fn().mockResolvedValue({ success: true });
+    (window as any).electronAPI = { saveDownload };
+    act(() => useExportTasksStore.setState({
+      restoreActiveTasks: vi.fn(),
+      tasks: [{
+        id: 'pptx',
+        taskId: '',
+        projectId: 'project-a',
+        type: 'pptx',
+        status: 'COMPLETED',
+        createdAt: new Date().toISOString(),
+        downloadUrl: '/files/project-a/exports/年度经营复盘.pptx',
+        filename: '年度经营复盘.pptx',
+      }],
+    }));
+
+    render(<ExportTasksPanel projectId="project-a" />);
+
+    fireEvent.click(screen.getByRole('button', { name: /下载|Download/ }));
+
+    expect(saveDownload).toHaveBeenCalledWith(
+      '/files/project-a/exports/年度经营复盘.pptx',
+      '年度经营复盘.pptx',
+    );
+  });
 });

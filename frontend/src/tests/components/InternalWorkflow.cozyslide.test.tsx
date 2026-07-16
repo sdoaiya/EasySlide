@@ -288,6 +288,141 @@ describe('EasySlide internal workflow chrome', () => {
     expect(mocks.store.pauseImageGeneration).toHaveBeenCalledTimes(1);
   });
 
+  it('labels the image generation primary action as start generation', () => {
+    mocks.store.currentProject.pages = [{
+      id: 'page-1',
+      page_id: 'page-1',
+      order_index: 0,
+      status: 'DESCRIPTION_GENERATED',
+      outline_content: { title: 'Slide 1', points: [] },
+      description_content: { text: 'Desc 1' },
+    }];
+
+    renderAt('/project/project-1/preview', <SlidePreview />);
+
+    expect(screen.getByRole('button', { name: '开始生成 (1)' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /批量生成图片/ })).not.toBeInTheDocument();
+  });
+
+  it('uses the primary image action to pause and resume an active generation task', () => {
+    mocks.store.currentProject.pages = [{
+      id: 'page-1',
+      page_id: 'page-1',
+      order_index: 0,
+      status: 'GENERATING',
+      outline_content: { title: 'Slide 1', points: [] },
+      description_content: { text: 'Desc 1' },
+    }];
+    mocks.store.activeImageTask = {
+      task_id: 'image-task-1',
+      task_type: 'GENERATE_IMAGES',
+      status: 'PROCESSING',
+      progress: { total: 1, completed: 0, page_ids: ['page-1'] },
+    };
+
+    const { rerender } = renderAt('/project/project-1/preview', <SlidePreview />);
+
+    fireEvent.click(screen.getByRole('button', { name: '暂停生成' }));
+    expect(mocks.store.pauseImageGeneration).toHaveBeenCalledTimes(1);
+
+    mocks.store.activeImageTask = {
+      ...mocks.store.activeImageTask,
+      status: 'PAUSED',
+    };
+    rerender(
+      <MemoryRouter initialEntries={['/project/project-1/preview']}>
+        <Routes>
+          <Route path="/project/:projectId/*" element={<SlidePreview />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '继续生成' }));
+    expect(mocks.store.resumeImageGeneration).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows selecting failed pages for targeted image generation', async () => {
+    const endpoints = await import('@/api/endpoints');
+    mocks.store.currentProject.pages = [
+      {
+        id: 'page-ready',
+        page_id: 'page-ready',
+        order_index: 0,
+        status: 'COMPLETED',
+        generated_image_path: '/files/page-ready.png',
+        outline_content: { title: 'Ready Slide', points: [] },
+        description_content: { text: 'Ready desc' },
+      },
+      {
+        id: 'page-failed',
+        page_id: 'page-failed',
+        order_index: 1,
+        status: 'FAILED',
+        outline_content: { title: 'Failed Slide', points: [] },
+        description_content: { text: 'Failed desc' },
+      },
+    ];
+    vi.mocked(endpoints.getSettings).mockResolvedValueOnce({
+      data: { image_resolution: '2K' },
+    } as any);
+
+    renderAt('/project/project-1/preview', <SlidePreview />);
+
+    fireEvent.click(screen.getByRole('button', { name: '多选' }));
+    fireEvent.click(screen.getAllByRole('button', { name: '选择第 2 页' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: '生成选中页面 (1)' }));
+
+    await waitFor(() => {
+      expect(mocks.store.generateImages).toHaveBeenCalledWith(['page-failed']);
+    });
+  });
+
+  it('shows image generation progress below the main preview canvas', () => {
+    mocks.store.currentProject.pages = [{
+      id: 'page-1',
+      page_id: 'page-1',
+      order_index: 0,
+      status: 'GENERATING',
+      outline_content: { title: 'Slide 1', points: [] },
+      description_content: { text: 'Desc 1' },
+    }];
+    mocks.store.activeImageTask = {
+      task_id: 'image-task-progress',
+      task_type: 'GENERATE_IMAGES',
+      status: 'PROCESSING',
+      progress: { total: 3, completed: 1, page_ids: ['page-1', 'page-2', 'page-3'] },
+    };
+
+    renderAt('/project/project-1/preview', <SlidePreview />);
+
+    const progress = screen.getByText('正在生成 1 / 3');
+    expect(progress.closest('main')).not.toBeNull();
+  });
+
+  it('shows a retry action when the selected image page failed', async () => {
+    const endpoints = await import('@/api/endpoints');
+    mocks.store.currentProject.pages = [{
+      id: 'page-1',
+      page_id: 'page-1',
+      order_index: 0,
+      status: 'FAILED',
+      outline_content: { title: 'Slide 1', points: [] },
+      description_content: { text: 'Desc 1' },
+    }];
+    vi.mocked(endpoints.getSettings).mockResolvedValueOnce({
+      data: { image_resolution: '2K' },
+    } as any);
+
+    renderAt('/project/project-1/preview', <SlidePreview />);
+
+    expect(screen.getByText('生成失败')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '重试此页' }));
+
+    await waitFor(() => {
+      expect(mocks.store.generatePageImage).toHaveBeenCalledWith('page-1', true);
+    });
+  });
+
   it('opens the export task panel after starting a PPTX export', async () => {
     const endpoints = await import('@/api/endpoints');
     mocks.store.currentProject.pages = [{
@@ -319,6 +454,56 @@ describe('EasySlide internal workflow chrome', () => {
       type: 'pptx',
       status: 'COMPLETED',
       filename: '年度经营复盘.pptx',
+    }));
+    expect((window as any).electronAPI.saveDownload).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      label: '导出为 PDF',
+      endpoint: 'exportPDF',
+      type: 'pdf',
+      downloadUrl: '/files/project-1/exports/年度经营复盘.pdf',
+      filename: '年度经营复盘.pdf',
+    },
+    {
+      label: '导出为图片',
+      endpoint: 'exportImages',
+      type: 'images',
+      downloadUrl: '/files/project-1/exports/年度经营复盘_images.zip',
+      filename: '年度经营复盘_images.zip',
+    },
+  ])('adds a completed $type export task without downloading immediately', async ({ label, endpoint, type, downloadUrl, filename }) => {
+    const endpoints = await import('@/api/endpoints');
+    mocks.store.currentProject.pages = [{
+      id: 'page-1',
+      page_id: 'page-1',
+      order_index: 0,
+      status: 'COMPLETED',
+      generated_image_path: '/files/page-1.png',
+      outline_content: { title: 'Slide 1', points: [] },
+      description_content: { text: 'Desc 1' },
+    }];
+    vi.mocked((endpoints as any)[endpoint]).mockResolvedValueOnce({
+      data: {
+        download_url: downloadUrl,
+        filename,
+      },
+    } as any);
+
+    renderAt('/project/project-1/preview', <SlidePreview />);
+
+    fireEvent.click(screen.getByRole('button', { name: '导出 导出' }));
+    fireEvent.click(screen.getByRole('button', { name: label }));
+
+    await waitFor(() => {
+      expect(screen.getByText('导出任务面板')).toBeInTheDocument();
+    });
+    expect(mocks.addExportTask).toHaveBeenCalledWith(expect.objectContaining({
+      type,
+      status: 'COMPLETED',
+      filename,
+      downloadUrl,
     }));
     expect((window as any).electronAPI.saveDownload).not.toHaveBeenCalled();
   });

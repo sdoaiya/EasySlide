@@ -84,13 +84,13 @@ const previewI18n = {
       regenerate: "重新生成", regenerating: "生成中...",
       editMode: "编辑模式", viewMode: "查看模式", page: "第 {{num}} 页",
       projectSettings: "项目设置", changeTemplate: "更换模板", refresh: "刷新",
-      batchGenerate: "批量生成图片 ({{count}})", generateSelected: "生成选中页面 ({{count}})",
+      batchGenerate: "开始生成 ({{count}})", generateSelected: "生成选中页面 ({{count}})",
       pauseGeneration: "暂停生成", resumeGeneration: "继续生成",
       generationProgress: "{{status}} {{completed}} / {{total}}",
       generationRunning: "正在生成", generationPaused: "已暂停",
       multiSelect: "多选", cancelMultiSelect: "取消多选", pagesUnit: "页",
       noPages: "还没有页面", noPagesHint: "请先返回编辑页面添加内容", backToEdit: "返回编辑",
-      generating: "正在生成中...", queued: "排队等待生成...", notGenerated: "尚未生成图片", generateThisPage: "生成此页",
+      generating: "正在生成中...", queued: "排队等待生成...", notGenerated: "尚未生成图片", generateThisPage: "生成此页", retryThisPage: "重试此页",
       prevPage: "上一页", nextPage: "下一页", historyVersions: "历史版本",
       versions: "版本", version: "版本", current: "当前", editPage: "编辑页面",
       regionSelect: "区域选图", endRegionSelect: "结束区域选图",
@@ -206,13 +206,13 @@ const previewI18n = {
       regenerate: "Regenerate", regenerating: "Generating...",
       editMode: "Edit Mode", viewMode: "View Mode", page: "Page {{num}}",
       projectSettings: "Project Settings", changeTemplate: "Change Template", refresh: "Refresh",
-      batchGenerate: "Batch Generate Images ({{count}})", generateSelected: "Generate Selected ({{count}})",
+      batchGenerate: "Start Generation ({{count}})", generateSelected: "Generate Selected ({{count}})",
       pauseGeneration: "Pause Generation", resumeGeneration: "Resume Generation",
       generationProgress: "{{status}} {{completed}} / {{total}}",
       generationRunning: "Generating", generationPaused: "Paused",
       multiSelect: "Multi-select", cancelMultiSelect: "Cancel Multi-select", pagesUnit: " pages",
       noPages: "No pages yet", noPagesHint: "Please go back to editor to add content first", backToEdit: "Back to Editor",
-      generating: "Generating...", queued: "Queued for generation...", notGenerated: "Image not generated yet", generateThisPage: "Generate This Page",
+      generating: "Generating...", queued: "Queued for generation...", notGenerated: "Image not generated yet", generateThisPage: "Generate This Page", retryThisPage: "Retry This Page",
       prevPage: "Previous", nextPage: "Next", historyVersions: "History Versions",
       versions: "Versions", version: "Version", current: "Current", editPage: "Edit Page",
       regionSelect: "Region Select", endRegionSelect: "End Region Select",
@@ -534,6 +534,9 @@ export const SlidePreview: React.FC = () => {
   const pagesWithImages = useMemo(() => {
     return currentProject?.pages.filter(p => p.id && p.generated_image_path) || [];
   }, [currentProject?.pages]);
+  const selectablePages = useMemo(() => {
+    return currentProject?.pages.filter(p => p.id) || [];
+  }, [currentProject?.pages]);
 
   const hasImages = useMemo(
     () => currentProject?.pages?.some(p => p.generated_image_path) ?? false,
@@ -548,6 +551,9 @@ export const SlidePreview: React.FC = () => {
   const imageGenerationActive = !!activeImageTask
     && ['PENDING', 'PROCESSING', 'RUNNING', 'PAUSED'].includes(activeImageTask.status);
   const imageGenerationPaused = activeImageTask?.status === 'PAUSED';
+  const imageGenerationProgressPercent = activeImageTask?.progress?.total
+    ? Math.round(((activeImageTask.progress.completed || 0) / activeImageTask.progress.total) * 100)
+    : 0;
   const activeImageTaskRef = useRef(activeImageTask);
   const pauseImageGenerationRef = useRef(pauseImageGeneration);
 
@@ -1202,7 +1208,7 @@ export const SlidePreview: React.FC = () => {
   };
 
   const selectAllPages = () => {
-    const allPageIds = pagesWithImages.map(p => p.id!);
+    const allPageIds = selectablePages.map(p => p.id!);
     setSelectedPageIds(new Set(allPageIds));
   };
 
@@ -2305,15 +2311,6 @@ export const SlidePreview: React.FC = () => {
                   ? t('preview.generateSelected', { count: pendingBatchImageCount })
                   : t('preview.batchGenerate', { count: pendingBatchImageCount })}
             </Button>
-            {imageGenerationActive && activeImageTask?.progress && (
-              <div className="text-center text-xs text-slate-500 dark:text-foreground-tertiary">
-                {t('preview.generationProgress', {
-                  status: imageGenerationPaused ? t('preview.generationPaused') : t('preview.generationRunning'),
-                  completed: activeImageTask.progress.completed || 0,
-                  total: activeImageTask.progress.total || 0,
-                })}
-              </div>
-            )}
           </div>
           
           {/* 缩略图列表：桌面端垂直，移动端横向滚动 */}
@@ -2334,10 +2331,10 @@ export const SlidePreview: React.FC = () => {
               {isMultiSelectMode && (
                 <>
                   <button
-                    onClick={selectedPageIds.size === pagesWithImages.length ? deselectAllPages : selectAllPages}
+                    onClick={selectedPageIds.size === selectablePages.length ? deselectAllPages : selectAllPages}
                     className="text-gray-500 dark:text-foreground-tertiary hover:text-sky-600 dark:hover:text-sky-300 transition-colors"
                   >
-                    {selectedPageIds.size === pagesWithImages.length ? t('common.deselectAll') : t('common.selectAll')}
+                    {selectedPageIds.size === selectablePages.length ? t('common.deselectAll') : t('common.selectAll')}
                   </button>
                   {selectedPageIds.size > 0 && (
                     <span className="text-sky-600 font-medium">
@@ -2379,8 +2376,9 @@ export const SlidePreview: React.FC = () => {
                       )}
                     </button>
                     {/* 多选复选框（移动端） */}
-                    {isMultiSelectMode && page.id && page.generated_image_path && (
+                    {isMultiSelectMode && page.id && (
                       <button
+                        aria-label={`${selectedPageIds.has(page.id) ? '取消选择' : '选择'}第 ${index + 1} 页`}
                         onClick={(e) => {
                           e.stopPropagation();
                           togglePageSelection(page.id!);
@@ -2398,8 +2396,9 @@ export const SlidePreview: React.FC = () => {
                   {/* 桌面端：完整卡片 */}
                   <div className="hidden md:block relative">
                     {/* 多选复选框（桌面端） */}
-                    {isMultiSelectMode && page.id && page.generated_image_path && (
+                    {isMultiSelectMode && page.id && (
                       <button
+                        aria-label={`${selectedPageIds.has(page.id) ? '取消选择' : '选择'}第 ${index + 1} 页`}
                         onClick={(e) => {
                           e.stopPropagation();
                           togglePageSelection(page.id!);
@@ -2418,7 +2417,7 @@ export const SlidePreview: React.FC = () => {
                       index={index}
                       isSelected={selectedIndex === index}
                       onClick={() => {
-                        if (isMultiSelectMode && page.id && page.generated_image_path) {
+                        if (isMultiSelectMode && page.id) {
                           togglePageSelection(page.id);
                         } else {
                           setSelectedIndex(index);
@@ -2489,6 +2488,8 @@ export const SlidePreview: React.FC = () => {
                               : (selectedPage?.id && pageGeneratingTasks[selectedPage.id]) ||
                                 selectedPage?.status === 'GENERATING'
                               ? t('preview.generating')
+                              : selectedPage?.status === 'FAILED'
+                              ? t('preview.generationFailed')
                               : t('preview.notGenerated')}
                           </p>
                           {(!selectedPage?.id || !pageGeneratingTasks[selectedPage.id]) &&
@@ -2498,14 +2499,41 @@ export const SlidePreview: React.FC = () => {
                               variant="primary"
                               onClick={handleRegeneratePage}
                             >
-                              {t('preview.generateThisPage')}
+                              {selectedPage?.status === 'FAILED'
+                                ? t('preview.retryThisPage')
+                                : t('preview.generateThisPage')}
                             </Button>
                           )}
                         </div>
                       </div>
-                    )}
+                  )}
                 </div>
               </div>
+
+              {imageGenerationActive && activeImageTask?.progress && (
+                <div className="px-3 md:px-6 pb-2">
+                  <div className="max-w-5xl mx-auto rounded-lg border border-sky-100 dark:border-sky-500/20 bg-white/90 dark:bg-background-secondary px-3 py-2 shadow-sm">
+                    <div className="flex items-center justify-between gap-3 text-xs text-slate-600 dark:text-foreground-tertiary">
+                      <span>
+                        {t('preview.generationProgress', {
+                          status: imageGenerationPaused ? t('preview.generationPaused') : t('preview.generationRunning'),
+                          completed: activeImageTask.progress.completed || 0,
+                          total: activeImageTask.progress.total || 0,
+                        })}
+                      </span>
+                      <span className="font-medium text-sky-600 dark:text-sky-300">
+                        {imageGenerationProgressPercent}%
+                      </span>
+                    </div>
+                    <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-sky-100 dark:bg-sky-500/10">
+                      <div
+                        className="h-full rounded-full bg-sky-500 transition-[width] duration-300"
+                        style={{ width: `${imageGenerationProgressPercent}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* 控制栏 */}
               <div

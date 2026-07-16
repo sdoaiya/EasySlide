@@ -1052,6 +1052,12 @@ export const Home: React.FC = () => {
             </div>
           </div>
 
+          {renderMode === 'native' && (
+            <div className="mb-4">
+              <NativeThemePicker value={nativeTheme} onChange={setNativeTheme} disabled={isSubmitting || isGlobalLoading} />
+            </div>
+          )}
+
           {/* 输入区 - 带工具栏 */}
           <div className="mb-2">
             {activeTab === 'ppt_renovation' ? (
@@ -1217,12 +1223,6 @@ export const Home: React.FC = () => {
             )}
           </div>
 
-          {renderMode === 'native' && (
-            <div className="mb-4">
-              <NativeThemePicker value={nativeTheme} onChange={setNativeTheme} disabled={isSubmitting || isGlobalLoading} />
-            </div>
-          )}
-
           {/* 隐藏的文件输入 */}
           <input
             ref={fileInputRef}
@@ -1324,7 +1324,7 @@ export const Home: React.FC = () => {
                     disabled={isSubmitting || isGlobalLoading}
                     className="sr-only peer"
                   />
-                  <span className="relative h-6 w-11 rounded-full bg-gray-200 transition-colors after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-transform peer-checked:bg-cyan-500 peer-focus-visible:ring-4 peer-focus-visible:ring-cyan-300/60 dark:bg-background-hover dark:after:border-border-hover dark:after:bg-foreground-secondary" />
+                  <span className="relative h-6 w-11 rounded-full bg-gray-200 transition-colors after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-transform peer-checked:bg-cyan-500 peer-checked:after:translate-x-full peer-focus-visible:ring-4 peer-focus-visible:ring-cyan-300/60 dark:bg-background-hover dark:after:border-border-hover dark:after:bg-foreground-secondary" />
                 </label>
               </div>
               {useNativeTextStyle && <TextStyleSelector value={templateStyle} onChange={setTemplateStyle} onToast={show} />}

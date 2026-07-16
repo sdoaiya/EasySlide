@@ -125,6 +125,18 @@ describe('Home render mode selection', () => {
     expect(initializeProject.mock.calls[0].slice(6, 8)).toEqual(['native', 'core01']);
   });
 
+  it('places native generation choices before the prompt editor and keeps text style collapsed', async () => {
+    const user = userEvent.setup();
+    renderHome();
+
+    await user.click(screen.getByRole('radio', { name: '原生可编辑' }));
+
+    const themeGroup = screen.getByRole('radiogroup', { name: '原生主题' });
+    const promptEditor = screen.getByRole('textbox', { name: /生成一份关于/ });
+    expect(themeGroup.compareDocumentPosition(promptEditor) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByPlaceholderText(/描述您想要的 PPT 风格/)).not.toBeInTheDocument();
+  });
+
   it('hides image templates in native mode but keeps text style as a generation hint', async () => {
     const user = userEvent.setup();
     renderHome();

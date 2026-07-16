@@ -63,6 +63,28 @@ canvas.save(ico_target, sizes=[(256, 256), (128, 128), (64, 64), (48, 48), (32, 
   }
   npm --prefix desktop run dist:win
 
+  function Publish-DesktopDelivery {
+    param(
+      [string]$Source,
+      [string]$Target
+    )
+
+    New-Item -ItemType Directory -Force -Path $Target | Out-Null
+    Copy-Item -Recurse -Force (Join-Path $Source '*') $Target
+
+    # Do not expose Electron's unpacked/debug intermediates as delivery artifacts.
+    Remove-Item -Recurse -Force (Join-Path $Target 'win-unpacked') -ErrorAction SilentlyContinue
+    Remove-Item -Force (Join-Path $Target 'builder-debug.yml') -ErrorAction SilentlyContinue
+
+    $portableDir = Join-Path $Target 'EasySlide-0.3.0-Portable'
+    if (Test-Path $portableDir) {
+      Remove-Item -Recurse -Force $portableDir
+    }
+    Copy-Item -Recurse -Force (Join-Path $Source 'win-unpacked') $portableDir
+    New-Item -ItemType File -Force -Path (Join-Path $portableDir 'portable.flag') | Out-Null
+    Write-Host "Desktop release: $Target"
+  }
+
   # Keep the Electron builder cache separate from the user-facing delivery folder.
   # When running from a Codex worktree, deliver to the repository's main worktree.
   $mainWorktree = $null
@@ -75,21 +97,16 @@ canvas.save(ico_target, sizes=[(256, 256), (128, 128), (64, 64), (48, 48), (32, 
   }
   $deliveryRoot = if ($env:EASLIDE_RELEASE_DIR) { $env:EASLIDE_RELEASE_DIR } elseif ($mainWorktree) { $mainWorktree } else { Join-Path $PSScriptRoot '..' }
   $finalDesktopDist = Join-Path $deliveryRoot 'release'
-  if (Test-Path $finalDesktopDist) {
-    Remove-Item -Recurse -Force $finalDesktopDist
+  try {
+    if (Test-Path $finalDesktopDist) {
+      Remove-Item -Recurse -Force $finalDesktopDist
+    }
+    Publish-DesktopDelivery -Source $desktopOutput -Target $finalDesktopDist
+  } catch {
+    $fallbackDist = Join-Path $finalDesktopDist ("codex-build-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+    Write-Warning "Cannot replace release folder. Publishing to fallback path: $fallbackDist"
+    Publish-DesktopDelivery -Source $desktopOutput -Target $fallbackDist
   }
-  Copy-Item -Recurse -Force $desktopOutput $finalDesktopDist
-
-  # Do not expose Electron's unpacked/debug intermediates as delivery artifacts.
-  Remove-Item -Recurse -Force (Join-Path $finalDesktopDist 'win-unpacked') -ErrorAction SilentlyContinue
-  Remove-Item -Force (Join-Path $finalDesktopDist 'builder-debug.yml') -ErrorAction SilentlyContinue
-
-  $portableDir = Join-Path $finalDesktopDist 'EasySlide-0.3.0-Portable'
-  if (Test-Path $portableDir) {
-    Remove-Item -Recurse -Force $portableDir
-  }
-  Copy-Item -Recurse -Force (Join-Path $desktopOutput 'win-unpacked') $portableDir
-  New-Item -ItemType File -Force -Path (Join-Path $portableDir 'portable.flag') | Out-Null
 }
 finally {
   Pop-Location

@@ -89,6 +89,23 @@ def _safe_export_filename(raw_filename, fallback_filename, extension):
     return f'{safe_stem}{ext}'
 
 
+def _first_page_title(project):
+    pages = getattr(project, 'pages', None)
+    if not pages:
+        return ''
+    try:
+        ordered_pages = sorted(list(pages), key=lambda page: getattr(page, 'order_index', 0) or 0)
+    except TypeError:
+        ordered_pages = list(pages)
+    for page in ordered_pages:
+        outline = page.get_outline_content() if hasattr(page, 'get_outline_content') else None
+        if isinstance(outline, dict):
+            title = str(outline.get('title') or '').strip()
+            if title:
+                return title
+    return ''
+
+
 def _project_title_filename(project, extension, fallback_filename):
     title = (project.project_title or '').strip()
     if not title:
@@ -102,6 +119,8 @@ def _project_title_filename(project, extension, fallback_filename):
                 title = next((line.strip() for line in value.splitlines() if line.strip()), '')
                 if title:
                     break
+    if not title:
+        title = _first_page_title(project)
     if title:
         return _safe_export_filename(None, f'{title}.{extension}', extension)
     return _safe_export_filename(fallback_filename, fallback_filename, extension)

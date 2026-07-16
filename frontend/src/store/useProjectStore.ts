@@ -80,14 +80,19 @@ const t = getT(storeI18n);
 const pollingImageTaskIds = new Set<string>();
 
 const getUnfinishedImageTaskPageIds = (task: Task, project: Project): string[] => {
+  const needsImage = (pageId: string) => {
+    const page = project.pages.find(item => item.id === pageId);
+    return Boolean(page && !page.generated_image_path);
+  };
   const manifestPages = Array.isArray(task.progress?.pages) ? task.progress.pages : null;
   if (manifestPages) {
     return manifestPages
-      .filter((item: any) => typeof item?.page_id === 'string' && item.status !== 'completed')
+      .filter((item: any) => typeof item?.page_id === 'string' && item.status !== 'completed' && needsImage(item.page_id))
       .map((item: any) => item.page_id);
   }
   if (Array.isArray(task.progress?.page_ids)) {
-    return (task.progress!.page_ids as unknown[]).filter((id): id is string => typeof id === 'string');
+    return (task.progress!.page_ids as unknown[])
+      .filter((id): id is string => typeof id === 'string' && needsImage(id));
   }
   return project.pages
     .filter(page => page.status === 'QUEUED' || page.status === 'GENERATING')
@@ -1205,6 +1210,16 @@ const debouncedUpdatePage = debounce(
       return;
     }
     const savedPageIds = getUnfinishedImageTaskPageIds(task, project);
+    if (savedPageIds.length === 0) {
+      set(state => {
+        const nextTasks = { ...state.pageGeneratingTasks };
+        Object.entries(nextTasks).forEach(([pageId, taskId]) => {
+          if (taskId === task.task_id) delete nextTasks[pageId];
+        });
+        return { activeImageTask: null, pageGeneratingTasks: nextTasks };
+      });
+      return;
+    }
     const nextTasks: Record<string, string> = {};
     savedPageIds.forEach(id => {
       const page = project.pages.find(item => item.id === id);

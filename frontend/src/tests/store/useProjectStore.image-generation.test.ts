@@ -65,6 +65,30 @@ describe('useProjectStore image generation', () => {
     expect(useProjectStore.getState().activeImageTask?.status).toBe('PAUSED')
   })
 
+  it('resumes only pages that still need images from a saved page id list', async () => {
+    const task = {
+      task_id: 'image-task-resume',
+      task_type: 'GENERATE_IMAGES',
+      status: 'PAUSED',
+      progress: { total: 2, completed: 1, page_ids: ['page-ready', 'page-missing'] },
+    } as any
+    vi.mocked(api.resumeTask).mockResolvedValue({
+      data: { ...task, status: 'PROCESSING' },
+    } as any)
+    vi.mocked(api.getTaskStatus).mockReturnValue(new Promise(() => {}))
+    useProjectStore.setState({
+      activeImageTask: task,
+      pageGeneratingTasks: {},
+    } as any)
+
+    await useProjectStore.getState().resumeImageGeneration()
+
+    expect(useProjectStore.getState().pageGeneratingTasks).toEqual({
+      'page-missing': 'image-task-resume',
+    })
+    expect(api.getTaskStatus).toHaveBeenCalledWith('project-images', 'image-task-resume')
+  })
+
   it('restores a paused image task after reopening the project', () => {
     const task = {
       task_id: 'image-task-restored',
@@ -163,5 +187,26 @@ describe('useProjectStore image generation', () => {
     expect(useProjectStore.getState().pageGeneratingTasks).toEqual({
       'page-missing': 'single-page-task',
     })
+  })
+
+  it('does not restore a stale running batch when every page already has an image', () => {
+    const task = {
+      task_id: 'image-task-stale',
+      task_type: 'GENERATE_IMAGES',
+      status: 'PROCESSING',
+      progress: { total: 1, completed: 1, page_ids: ['page-ready'] },
+    } as any
+    vi.mocked(api.getTaskStatus).mockReturnValue(new Promise(() => {}))
+    useProjectStore.setState({
+      currentProject: { ...project, active_image_tasks: [task] },
+      activeImageTask: null,
+      pageGeneratingTasks: {},
+    } as any)
+
+    useProjectStore.getState().restoreImageGeneration()
+
+    expect(useProjectStore.getState().activeImageTask).toBeNull()
+    expect(useProjectStore.getState().pageGeneratingTasks).toEqual({})
+    expect(api.getTaskStatus).not.toHaveBeenCalled()
   })
 })

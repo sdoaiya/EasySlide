@@ -282,6 +282,73 @@ def test_paused_image_generation_stops_before_submitting_more_pages(app, tmp_pat
         assert second.status == "QUEUED"
 
 
+def test_image_generation_task_skips_page_that_already_has_image(app, tmp_path):
+    from services.file_service import FileService
+    from services.task_manager import generate_images_task
+
+    class ShouldNotGenerateImageService:
+        def flatten_outline(self, outline):
+            return outline
+
+        def extract_image_urls_from_markdown(self, _text):
+            return []
+
+        def generate_image_prompt(self, *_args, **_kwargs):
+            raise AssertionError("prompt should not be generated for protected pages")
+
+        def generate_image(self, *_args, **_kwargs):
+            raise AssertionError("image should not be regenerated for protected pages")
+
+    with app.app_context():
+        project = Project(
+            id="skip-existing-during-worker-project",
+            creation_type="idea",
+            status="GENERATING_IMAGES",
+        )
+        page = Page(
+            id="skip-existing-during-worker-page",
+            project_id=project.id,
+            order_index=0,
+            status="QUEUED",
+            generated_image_path="generated/user-uploaded.png",
+        )
+        page.set_outline_content({"title": page.id, "points": []})
+        page.set_description_content({"text": page.id})
+        task = Task(id="skip-existing-during-worker-task", project_id=project.id, task_type="GENERATE_IMAGES", status="PENDING")
+        task.set_progress({
+            "generation_id": task.id,
+            "manifest_version": 1,
+            "project_id": project.id,
+            "total": 1,
+            "completed": 0,
+            "failed": 0,
+            "page_ids": [page.id],
+            "pages": [
+                {"page_id": page.id, "status": "queued", "attempt": 1},
+            ],
+        })
+        db.session.add_all([project, page, task])
+        db.session.commit()
+
+        generate_images_task(
+            task.id,
+            project.id,
+            ShouldNotGenerateImageService(),
+            FileService(str(tmp_path)),
+            [{"title": page.id, "points": []}],
+            use_template=False,
+            max_workers=1,
+            app=app,
+            page_ids=[page.id],
+        )
+
+        db.session.refresh(task)
+        db.session.refresh(page)
+        assert task.status == "COMPLETED"
+        assert page.generated_image_path == "generated/user-uploaded.png"
+        assert task.get_progress()["pages"][0]["status"] == "skipped_existing"
+
+
 def test_paused_image_generation_records_already_running_pages(app, tmp_path):
     from PIL import Image
     from services.file_service import FileService
