@@ -282,6 +282,50 @@ class TestProjectList:
             'in_progress': 3,
         }
 
+    def test_project_list_pauses_stale_image_generation_tasks_before_counting(self, client):
+        from models import db, Page, Project, Task
+
+        project = Project(id='stats-stale-image-task', creation_type='idea', status='GENERATING_IMAGES')
+        page = Page(
+            id='stats-stale-image-page',
+            project_id=project.id,
+            order_index=0,
+            status='GENERATING',
+        )
+        page.set_description_content({'text': 'ready to generate'})
+        task = Task(
+            id='stats-stale-image-task-id',
+            project_id=project.id,
+            task_type='GENERATE_IMAGES',
+            status='PROCESSING',
+        )
+        task.set_progress({
+            'page_ids': [page.id],
+            'image_options': {'use_template': False},
+            'pages': [{'page_id': page.id, 'status': 'running'}],
+        })
+        db.session.add_all([project, page, task])
+        db.session.commit()
+
+        data = assert_success_response(client.get('/api/projects?limit=10&offset=0'))['data']
+
+        db.session.refresh(project)
+        db.session.refresh(page)
+        db.session.refresh(task)
+        listed_project = next(item for item in data['projects'] if item['project_id'] == project.id)
+
+        assert task.status == 'PAUSED'
+        assert task.get_progress()['status'] == 'paused'
+        assert page.status == 'DESCRIPTION_GENERATED'
+        assert project.status == 'DESCRIPTIONS_GENERATED'
+        assert listed_project['active_image_tasks'][0]['status'] == 'PAUSED'
+        assert data['stats'] == {
+            'total': 1,
+            'completed': 0,
+            'generating': 0,
+            'in_progress': 1,
+        }
+
 
 class TestImageGenerationConcurrency:
     def test_batch_image_generation_caps_workers_at_four(self):

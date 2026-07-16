@@ -44,19 +44,94 @@ ASYNC_EXPORT_TASK_TYPES = {
 }
 PAUSABLE_TASK_TYPES = ASYNC_EXPORT_TASK_TYPES | {'GENERATE_IMAGES'}
 MAX_IMAGE_GENERATION_WORKERS = 4
+ACTIVE_TASK_STATUSES = {'PENDING', 'PROCESSING', 'RUNNING'}
+ACTIVE_PAGE_STATUSES = {'GENERATING_DESCRIPTION', 'QUEUED', 'GENERATING'}
+
+
+def _page_has_image(page):
+    return bool(page.generated_image_path)
+
+
+def _reset_image_page_after_stale_task(page):
+    if page.status not in {'QUEUED', 'GENERATING'} or _page_has_image(page):
+        return False
+    page.status = 'DESCRIPTION_GENERATED' if page.description_content else 'DRAFT'
+    return True
+
+
+def _derive_image_project_status(project, pages):
+    if project.render_mode == 'native':
+        return project.status
+    if not pages:
+        return project.status
+    if all(page.status in {'COMPLETED', 'NATIVE_GENERATED'} or _page_has_image(page) for page in pages):
+        return 'COMPLETED'
+    if any(page.description_content for page in pages):
+        return 'DESCRIPTIONS_GENERATED'
+    if project.outline_text or any(page.outline_content for page in pages):
+        return 'OUTLINE_GENERATED'
+    return 'DRAFT'
+
+
+def _calibrate_stale_image_generation_state(project):
+    """Turn DB-only running image tasks into resumable paused tasks before listing."""
+    changed = False
+    pages = list(project.pages or [])
+    tasks = sorted(
+        [
+            task for task in (project.tasks or [])
+            if task.task_type == 'GENERATE_IMAGES'
+            and task.status in ACTIVE_TASK_STATUSES
+            and not task_manager.is_task_active(task.id)
+        ],
+        key=lambda task: task.created_at or datetime.min,
+        reverse=True,
+    )
+    if not tasks:
+        return False
+
+    for task in tasks:
+        progress = task.get_progress()
+        progress['status'] = 'paused'
+        progress['current_step'] = '生成任务已暂停，可继续生成未完成页面'
+        task.set_progress(progress)
+        task.status = 'PAUSED'
+        task.error_message = task.error_message or '任务未在当前进程中运行，已自动暂停'
+        changed = True
+
+    for page in pages:
+        changed = _reset_image_page_after_stale_task(page) or changed
+
+    next_status = _derive_image_project_status(project, pages)
+    if project.status in {'GENERATING_IMAGES'} and project.status != next_status:
+        project.status = next_status
+        changed = True
+
+    return changed
+
+
+def _calibrate_projects_for_listing(projects):
+    changed = False
+    for project in projects:
+        changed = _calibrate_stale_image_generation_state(project) or changed
+    if changed:
+        db.session.commit()
+    return changed
 
 
 def _get_project_dashboard_stats():
     """Calculate project counters across the full project set, not one page."""
-    all_projects = Project.query.options(joinedload(Project.pages)).all()
+    all_projects = Project.query.options(
+        joinedload(Project.pages),
+        joinedload(Project.tasks),
+    ).all()
+    _calibrate_projects_for_listing(all_projects)
     completed = 0
     generating = 0
 
     for project in all_projects:
         pages = list(project.pages or [])
-        has_active_pages = any(page.status in {
-            'GENERATING_DESCRIPTION', 'QUEUED', 'GENERATING',
-        } for page in pages)
+        has_active_pages = any(page.status in ACTIVE_PAGE_STATUSES for page in pages)
         if project.status in {'GENERATING_DESCRIPTIONS', 'GENERATING_IMAGES'} or has_active_pages:
             generating += 1
             continue
@@ -340,7 +415,7 @@ def list_projects():
         total = stats['total']
 
         projects = Project.query\
-            .options(joinedload(Project.pages))\
+            .options(joinedload(Project.pages), joinedload(Project.tasks))\
             .order_by(desc(Project.updated_at))\
             .limit(limit)\
             .offset(offset)\
@@ -451,7 +526,7 @@ def get_project(project_id):
     try:
         # Use eager loading to load project and related pages
         project = Project.query\
-            .options(joinedload(Project.pages))\
+            .options(joinedload(Project.pages), joinedload(Project.tasks))\
             .filter(Project.id == project_id)\
             .first()
         
