@@ -77,7 +77,11 @@ export function downloadFile(blob: Blob, filename: string) {
   window.URL.revokeObjectURL(url);
 }
 
-export function downloadFromUrl(url: string, filename?: string) {
+export async function downloadFromUrl(url: string, filename?: string) {
+  if (window.electronAPI?.saveDownload) {
+    await window.electronAPI.saveDownload(url, filename);
+    return;
+  }
   const link = document.createElement('a');
   link.href = url;
   if (filename) {

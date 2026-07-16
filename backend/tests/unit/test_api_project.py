@@ -2,6 +2,9 @@
 项目管理API单元测试
 """
 
+import json
+from pathlib import Path
+
 import pytest
 import threading
 import time
@@ -152,6 +155,7 @@ class TestProjectCreate:
             'native_image_settings': {
                 'density': 'custom',
                 'style': 'custom',
+                'composition': 'text-right',
                 'custom_prompt': '水彩质感，留出标题空间',
                 'custom_counts': {'page-1': 2},
             },
@@ -161,6 +165,7 @@ class TestProjectCreate:
         assert settings == {
             'density': 'custom',
             'style': 'custom',
+            'composition': 'text-right',
             'custom_prompt': '水彩质感，留出标题空间',
             'custom_counts': {'page-1': 2},
         }
@@ -215,6 +220,69 @@ class TestProjectGet:
         assert response.status_code in [400, 404]
 
 
+class TestProjectList:
+    def test_project_stats_cover_all_projects_not_only_current_page(self, client):
+        from models import db, Page, Project
+
+        completed = Project(id='stats-completed', creation_type='idea', status='COMPLETED')
+        completed_page = Page(
+            id='stats-completed-page',
+            project_id=completed.id,
+            order_index=0,
+            status='COMPLETED',
+            generated_image_path='generated/completed.png',
+        )
+        generating = Project(id='stats-generating', creation_type='idea', status='GENERATING_IMAGES')
+        generating_page = Page(
+            id='stats-generating-page',
+            project_id=generating.id,
+            order_index=0,
+            status='QUEUED',
+        )
+        draft = Project(id='stats-draft', creation_type='idea', status='DRAFT')
+        draft_page = Page(id='stats-draft-page', project_id=draft.id, order_index=0, status='DRAFT')
+        described = Project(id='stats-described', creation_type='idea', status='DESCRIPTIONS_GENERATED')
+        described_page = Page(
+            id='stats-described-page',
+            project_id=described.id,
+            order_index=0,
+            status='DESCRIPTION_GENERATED',
+        )
+        partial = Project(id='stats-partial', creation_type='idea', status='DESCRIPTIONS_GENERATED')
+        partial_page_with_image = Page(
+            id='stats-partial-image-page',
+            project_id=partial.id,
+            order_index=0,
+            status='COMPLETED',
+            generated_image_path='generated/partial.png',
+        )
+        partial_page_without_image = Page(
+            id='stats-partial-pending-page',
+            project_id=partial.id,
+            order_index=1,
+            status='DESCRIPTION_GENERATED',
+        )
+        db.session.add_all([
+            completed, completed_page,
+            generating, generating_page,
+            draft, draft_page,
+            described, described_page,
+            partial, partial_page_with_image, partial_page_without_image,
+        ])
+        db.session.commit()
+
+        data = assert_success_response(client.get('/api/projects?limit=1&offset=0'))['data']
+
+        assert len(data['projects']) == 1
+        assert data['total'] == 5
+        assert data['stats'] == {
+            'total': 5,
+            'completed': 1,
+            'generating': 1,
+            'in_progress': 3,
+        }
+
+
 class TestImageGenerationConcurrency:
     def test_batch_image_generation_caps_workers_at_four(self):
         from controllers.project_controller import _resolve_image_generation_workers
@@ -267,7 +335,22 @@ class TestImageGenerationConcurrency:
             db.session.refresh(pending_page)
 
             assert data['total_pages'] == 1
-            assert task.get_progress()['page_ids'] == [pending_page.id]
+            progress = task.get_progress()
+            assert progress['page_ids'] == [pending_page.id]
+            assert progress['generation_id'] == task.id
+            assert progress['manifest_version'] == 1
+            assert progress['style_snapshot']['template_style'] == 'clean'
+            assert progress['pages'] == [
+                {
+                    'page_id': pending_page.id,
+                    'page_index': 2,
+                    'status': 'queued',
+                    'attempt': 1,
+                    'current_version': 0,
+                    'protected': False,
+                }
+            ]
+            assert progress['manifest_path'].endswith(f'{task.id}/manifest.json')
             assert completed_page.generated_image_path == 'generated/existing.png'
             assert completed_page.status == 'COMPLETED'
             assert pending_page.status == 'QUEUED'
@@ -280,6 +363,8 @@ class TestImageGenerationConcurrency:
         from services import task_manager as task_manager_module
 
         class BatchAIService:
+            prompt_requirements = []
+
             def flatten_outline(self, outline):
                 return outline
 
@@ -287,6 +372,7 @@ class TestImageGenerationConcurrency:
                 return []
 
             def generate_image_prompt(self, *args, **kwargs):
+                self.prompt_requirements.append(kwargs.get('extra_requirements') or '')
                 return 'prompt'
 
             def generate_image(self, *args, **kwargs):
@@ -298,6 +384,7 @@ class TestImageGenerationConcurrency:
                 creation_type='idea',
                 idea_prompt='test',
                 template_style='clean',
+                template_pack_id='gorden-data-viz-deck',
                 image_aspect_ratio='16:9',
                 status='DESCRIPTIONS_GENERATED',
             )
@@ -337,6 +424,18 @@ class TestImageGenerationConcurrency:
                 assert task['status'] == 'COMPLETED'
                 assert task['progress']['completed'] == 1
                 assert task['progress']['failed'] == 0
+                assert task['progress']['status'] == 'completed'
+                page_manifest = task['progress']['pages'][0]
+                assert page_manifest['status'] == 'completed'
+                assert page_manifest['version_number'] == 1
+                assert page_manifest['output_path'] == f'generated/{page.id}.png'
+                assert len(page_manifest['prompt_hash']) == 64
+                assert page_manifest['prompt_path'].endswith(f'{page.id}_attempt-1.txt')
+                manifest_path = Path(app.config['UPLOAD_FOLDER']) / task['progress']['manifest_path']
+                persisted_manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+                assert persisted_manifest['pages'][0]['status'] == 'completed'
+                assert any('模板视觉DNA' in item for item in BatchAIService.prompt_requirements)
+                assert any('数据仪表盘' in item for item in BatchAIService.prompt_requirements)
 
 
 class TestResourceConcurrency:
@@ -467,6 +566,14 @@ class TestResourceConcurrency:
                     time.sleep(0.05)
 
                 assert all(status == 'COMPLETED' for status in statuses)
+                first_task = client.get(
+                    f'/api/projects/{project.id}/tasks/{task_ids[0]}'
+                ).get_json()['data']
+                assert first_task['progress']['generation_id'] == task_ids[0]
+                assert first_task['progress']['status'] == 'completed'
+                assert first_task['progress']['pages'][0]['status'] == 'completed'
+                assert first_task['progress']['pages'][0]['version_number'] == 1
+                assert len(first_task['progress']['pages'][0]['prompt_hash']) == 64
 
 
 class TestProjectOutlineStream:

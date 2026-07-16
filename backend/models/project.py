@@ -10,11 +10,13 @@ from . import db
 DEFAULT_NATIVE_IMAGE_SETTINGS = {
     'density': 'standard',
     'style': 'theme',
+    'composition': 'auto',
     'custom_prompt': '',
     'custom_counts': {},
 }
 NATIVE_IMAGE_DENSITIES = {'sparse', 'standard', 'rich', 'custom'}
 NATIVE_IMAGE_STYLES = {'theme', 'photo', '3d', 'flat', 'tech', 'custom'}
+NATIVE_IMAGE_COMPOSITIONS = {'auto', 'center', 'text-left', 'text-right', 'full-bleed'}
 
 
 def normalize_native_image_settings(value):
@@ -30,6 +32,8 @@ def normalize_native_image_settings(value):
         raise ValueError('Invalid native image density')
     if settings['style'] not in NATIVE_IMAGE_STYLES:
         raise ValueError('Invalid native image style')
+    if settings['composition'] not in NATIVE_IMAGE_COMPOSITIONS:
+        raise ValueError('Invalid native image composition')
     if not isinstance(settings['custom_prompt'], str) or len(settings['custom_prompt']) > 2000:
         raise ValueError('native image custom_prompt must be text within 2000 characters')
     if not isinstance(settings['custom_counts'], dict) or any(

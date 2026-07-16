@@ -77,6 +77,9 @@ function startBackend() {
     UPLOAD_FOLDER: dirs.uploadsDir,
     EXPORT_FOLDER: exportDir,
     CORS_ORIGINS: `http://127.0.0.1:${BACKEND_PORT}`,
+    EASYSLIDE_BOOTSTRAP_SETTINGS_PATH: app.isPackaged
+      ? path.join(process.resourcesPath, 'bootstrap-settings.json')
+      : '',
   };
 
   backendProcess = spawn(python, args, {

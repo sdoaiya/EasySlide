@@ -132,6 +132,10 @@ body {
   contain: inline-size;
 }
 
+.workspace-shell[data-inspector-layout="drawer"] > aside[aria-label="属性栏"][data-collapsed="false"] {
+  visibility: visible !important;
+}
+
 .workspace-shell[data-presenting="true"] {
   grid-template-rows: minmax(0, 1fr);
   grid-template-columns: minmax(0, 1fr) !important;

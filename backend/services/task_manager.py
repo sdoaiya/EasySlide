@@ -6,7 +6,7 @@ import logging
 import os
 import shutil
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
 from contextlib import contextmanager
 from typing import Callable, List, Dict, Any, Optional
 from datetime import datetime
@@ -16,6 +16,11 @@ from sqlalchemy import func
 from sqlalchemy.exc import OperationalError
 from PIL import Image, ImageDraw, ImageFilter
 from models import db, Task, Page, Project, Material, PageImageVersion, Settings
+from services.image_generation_manifest import (
+    persist_image_generation_manifest,
+    update_manifest_page,
+    write_prompt_snapshot,
+)
 from utils import get_filtered_pages
 from utils.image_utils import check_image_resolution
 
@@ -40,17 +45,29 @@ def _wait_if_task_paused(task_id: str):
         time.sleep(0.25)
 
 
+def _is_task_paused(task_id: str) -> bool:
+    db.session.expire_all()
+    task = Task.query.get(task_id)
+    return bool(task and task.status == 'PAUSED')
+
+
 def _wait_if_export_task_paused(task_id: str):
     _wait_if_task_paused(task_id)
 
 
-def _set_image_task_progress(task: Task, progress: dict):
+def _set_image_task_progress(task: Task, progress: dict, upload_folder=None):
     """Keep restart metadata while updating live image-generation progress."""
     current = task.get_progress()
-    for key in ('page_ids', 'image_options'):
-        if key in current:
+    for key in (
+        'generation_id', 'manifest_version', 'manifest_path', 'project_id',
+        'created_at', 'requested_page_ids', 'page_ids', 'image_options',
+        'style_snapshot', 'pages',
+    ):
+        if key not in progress and key in current:
             progress[key] = current[key]
     task.set_progress(progress)
+    if upload_folder and progress.get('generation_id') and progress.get('project_id'):
+        persist_image_generation_manifest(upload_folder, progress)
 
 
 def get_image_prompt_field_names() -> set:
@@ -414,20 +431,34 @@ def generate_native_deck_task(task_id: str, project_id: str, ai_service, page_id
             if project.render_mode != 'native':
                 raise ValueError('只有原生可编辑项目可以生成原生页面')
 
-            pages_query = Page.query.filter_by(project_id=project_id)
-            total_page_count = pages_query.count()
-            if page_ids:
-                pages_query = pages_query.filter(Page.id.in_(page_ids))
-            pages = pages_query.order_by(Page.order_index).all()
+            all_pages = Page.query.filter_by(project_id=project_id).order_by(Page.order_index).all()
+            total_page_count = len(all_pages)
+            selected_page_ids = set(page_ids or [])
+            pages = [page for page in all_pages if not selected_page_ids or page.id in selected_page_ids]
             service = NativeDeckService()
+            theme = service.resolve_theme(project.native_theme, [page.native_layout for page in all_pages])
+            project.native_theme = theme
+            deck_plan = service.build_deck_design_plan(
+                outlines=[page.get_outline_content() for page in all_pages],
+                theme=theme,
+                style_hint=project.template_style,
+                project_topic=project.idea_prompt,
+            )
             task.status = 'PROCESSING'
-            task.set_progress({'total': len(pages), 'completed': 0, 'failed': 0, 'warnings': []})
+            task.set_progress({'total': len(pages), 'completed': 0, 'failed': 0, 'failed_page_ids': [], 'warnings': [], 'quality_warnings': []})
             db.session.commit()
 
             completed = 0
             failed = 0
+            failed_page_ids = []
             warnings = []
+            quality_warnings = []
             used_layouts = set()
+            first_order = pages[0].order_index if pages else 0
+            layout_history = [
+                page.native_layout for page in all_pages
+                if page.order_index < first_order and page.native_layout
+            ][-3:]
             for index, page in enumerate(pages):
                 _wait_if_export_task_paused(task_id)
                 db.session.expire_all()
@@ -435,36 +466,130 @@ def generate_native_deck_task(task_id: str, project_id: str, ai_service, page_id
                 if not task or task.status in {'FAILED', 'CANCELLED'}:
                     return
                 role = 'cover' if page.order_index == 0 else 'end' if page.order_index == total_page_count - 1 else 'content'
-                theme = project.native_theme or 'theme01'
-                themed = service.list_layouts(role=role, theme=theme) or service.list_layouts(theme=theme)
-                candidates = [item for item in themed if item['layout'] not in used_layouts] or themed
-                candidates = candidates[:8]
                 try:
-                    prompt = get_native_slide_prompt(page.get_outline_content(), candidates, project.template_style)
+                    outline = page.get_outline_content()
+                    candidates = service.select_layout_candidates(
+                        theme=theme,
+                        role=role,
+                        outline=outline,
+                        used_layouts=used_layouts,
+                        recent_layouts=layout_history,
+                        limit=8,
+                    )
+                    design_intent = service.build_design_intent(
+                        outline=outline,
+                        theme=theme,
+                        role=role,
+                        style_hint=project.template_style,
+                        project_topic=project.idea_prompt,
+                        layout_candidates=candidates,
+                        deck_plan=deck_plan,
+                        page_index=page.order_index,
+                        recent_layouts=layout_history,
+                    )
+                    prompt = get_native_slide_prompt(
+                        outline,
+                        candidates,
+                        project.template_style,
+                        design_intent=design_intent,
+                    )
                     with text_resource_limiter.slot(f'native-deck project={project_id} page={page.id}'):
                         result = ai_service.generate_json(prompt)
                     if not isinstance(result, dict) or set(result) != {'layout', 'props'}:
                         raise ValueError('模型必须返回 layout 和 props')
                     if result['layout'] not in {item['layout'] for item in candidates}:
                         raise ValueError('模型返回了候选范围外的布局')
-                    fitted_props = service.fit_copy_budgets(result['layout'], result['props'])
+                    merged_props = service.fill_outline_props(result['layout'], result['props'], outline)
+                    fitted_props = service.fit_copy_budgets(result['layout'], merged_props)
+                    design_intent['quality_report'] = service.evaluate_slide_quality(
+                        layout=result['layout'],
+                        props=fitted_props,
+                        outline=outline,
+                        recent_layouts=layout_history,
+                    )
+                    if design_intent['quality_report']['status'] == 'warning':
+                        quality_warnings.append({
+                            'page_id': page.id,
+                            'page_number': page.order_index + 1,
+                            'score': design_intent['quality_report']['score'],
+                            'issues': design_intent['quality_report']['issues'],
+                        })
+                    fitted_props['__design_intent'] = design_intent
                     slide = service.normalize_slide(result['layout'], fitted_props)
+                    page.snapshot_native_version()
                     page.native_layout = slide['layout']
                     page.set_native_props(slide['props'])
                     page.status = 'NATIVE_GENERATED'
                     used_layouts.add(slide['layout'])
+                    layout_history.append(slide['layout'])
                     completed += 1
                 except Exception as exc:
                     failed += 1
+                    failed_page_ids.append(page.id)
                     warnings.append(f'第 {index + 1} 页: {exc}')
-                    if not project.export_allow_partial:
-                        raise
+                    existing_props = page.get_native_props()
+                    if page.native_layout and existing_props:
+                        # A failed retry must never replace an already editable page.
+                        used_layouts.add(page.native_layout)
+                        layout_history.append(page.native_layout)
+                        completed += 1
+                        task.set_progress({
+                            'total': len(pages),
+                            'completed': completed,
+                            'failed': failed,
+                            'failed_page_ids': failed_page_ids,
+                            'warnings': warnings,
+                            'quality_warnings': quality_warnings,
+                        })
+                        db.session.commit()
+                        continue
+                    try:
+                        fallback = service.build_fallback_slide(
+                            outline=page.get_outline_content(),
+                            layout_candidates=service.select_layout_candidates(
+                                theme=theme,
+                                role=role,
+                                outline=page.get_outline_content(),
+                                used_layouts=used_layouts,
+                                recent_layouts=layout_history,
+                                limit=8,
+                            ),
+                            design_intent=service.build_design_intent(
+                                outline=page.get_outline_content(),
+                                theme=theme,
+                                role=role,
+                                style_hint=project.template_style,
+                                project_topic=project.idea_prompt,
+                                deck_plan=deck_plan,
+                                page_index=page.order_index,
+                                recent_layouts=layout_history,
+                            ),
+                        )
+                    except Exception:
+                        if not project.export_allow_partial:
+                            raise
+                    else:
+                        page.snapshot_native_version()
+                        page.native_layout = fallback['layout']
+                        page.set_native_props(fallback['props'])
+                        page.status = 'NATIVE_GENERATED'
+                        used_layouts.add(fallback['layout'])
+                        layout_history.append(fallback['layout'])
+                        quality_warnings.append({
+                            'page_id': page.id,
+                            'page_number': page.order_index + 1,
+                            'score': 70,
+                            'issues': ['generation_fallback'],
+                        })
+                        completed += 1
 
                 task.set_progress({
                     'total': len(pages),
                     'completed': completed,
                     'failed': failed,
+                    'failed_page_ids': failed_page_ids,
                     'warnings': warnings,
+                    'quality_warnings': quality_warnings,
                 })
                 db.session.commit()
 
@@ -664,7 +789,12 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
     
     with app.app_context():
         try:
-            from services.image_template_profiles import append_image_page_role_hint, infer_image_page_role, resolve_template_reference_path
+            from services.image_template_profiles import (
+                append_image_page_role_hint,
+                append_template_visual_profile_hint,
+                infer_image_page_role,
+                resolve_template_reference_path,
+            )
             # Update task status to PROCESSING
             task = Task.query.get(task_id)
             if not task:
@@ -699,8 +829,9 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
             _set_image_task_progress(task, {
                 "total": len(pages),
                 "completed": 0,
-                "failed": 0
-            })
+                "failed": 0,
+                "status": "processing",
+            }, file_service.upload_folder)
             db.session.commit()
             
             # Generate images in parallel
@@ -716,7 +847,14 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                 # 关键修复：在子线程中也需要应用上下文
                 with app.app_context():
                     try:
-                        _wait_if_task_paused(task_id)
+                        if _is_task_paused(task_id):
+                            return (
+                                page_id,
+                                None,
+                                None,
+                                None,
+                                {'status': 'paused'},
+                            )
                         logger.debug(f"Starting image generation for page {page_id}, index {page_index}")
                         # Get page from database in this thread
                         page_obj = Page.query.get(page_id)
@@ -734,7 +872,14 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                             f"project={project_id} page={page_id}",
                             on_acquire=mark_generating,
                         ):
-                            _wait_if_task_paused(task_id)
+                            if _is_task_paused(task_id):
+                                return (
+                                    page_id,
+                                    None,
+                                    None,
+                                    None,
+                                    {'status': 'paused'},
+                                )
                             # Get description content
                             desc_content = page_obj.get_description_content()
                             if not desc_content:
@@ -774,10 +919,10 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                                 page_data,
                                 page_obj.part,
                             )
+                            project_obj = Project.query.get(project_id)
                             page_ref_image_path = None
                             if use_template:
                                 page_ref_image_path = file_service.get_template_path(project_id)
-                                project_obj = Project.query.get(project_id)
                                 page_ref_image_path = resolve_template_reference_path(
                                     getattr(project_obj, 'template_pack_id', None),
                                     role,
@@ -787,17 +932,47 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                                 # 这个检查已经在 controller 层完成，这里不再检查
                             
                             # Generate image prompt
+                            page_extra_requirements = append_image_page_role_hint(extra_requirements, role)
+                            page_extra_requirements = append_template_visual_profile_hint(
+                                page_extra_requirements,
+                                getattr(project_obj, 'template_pack_id', None) if use_template else None,
+                            )
+
                             prompt = ai_service.generate_image_prompt(
                                 outline, page_data, desc_text, page_index,
                                 has_material_images=has_material_images,
-                                extra_requirements=append_image_page_role_hint(extra_requirements, role),
+                                extra_requirements=page_extra_requirements,
                                 language=language,
                                 has_template=use_template,
                                 aspect_ratio=aspect_ratio
                             )
+                            task_progress = Task.query.get(task_id).get_progress()
+                            page_manifest = next(
+                                (
+                                    item for item in task_progress.get('pages', [])
+                                    if item.get('page_id') == page_id
+                                ),
+                                {},
+                            )
+                            prompt_snapshot = write_prompt_snapshot(
+                                file_service.upload_folder,
+                                project_id,
+                                task_progress.get('generation_id', task_id),
+                                page_id,
+                                page_manifest.get('attempt', 1),
+                                prompt,
+                            )
                             logger.debug(f"Generated image prompt for page {page_id}")
                             
                             # Generate image
+                            if _is_task_paused(task_id):
+                                return (
+                                    page_id,
+                                    None,
+                                    None,
+                                    None,
+                                    {'status': 'paused'},
+                                )
                             logger.info(f"🎨 Calling AI service to generate image for page {page_index}/{len(pages)}...")
                             image = ai_service.generate_image(
                                 prompt, page_ref_image_path, aspect_ratio, resolution,
@@ -819,65 +994,144 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                             image, project_id, page_id, file_service, page_obj=page_obj
                         )
                         
-                        return (page_id, image_path, None, not is_match)
+                        return (
+                            page_id,
+                            image_path,
+                            None,
+                            not is_match,
+                            {
+                                'status': 'completed',
+                                'version_number': next_version,
+                                'current_version': next_version,
+                                'output_path': image_path,
+                                'prompt_path': prompt_snapshot['path'],
+                                'prompt_hash': prompt_snapshot['sha256'],
+                                'qa': {
+                                    'status': 'passed' if is_match else 'warning',
+                                    'width': image.width,
+                                    'height': image.height,
+                                    'resolution_matches': bool(is_match),
+                                },
+                            },
+                        )
                         
                     except Exception as e:
                         import traceback
                         error_detail = traceback.format_exc()
                         logger.error(f"Failed to generate image for page {page_id}: {error_detail}")
-                        return (page_id, None, str(e), None)
+                        return (
+                            page_id,
+                            None,
+                            str(e),
+                            None,
+                            {'status': 'failed', 'error': str(e)},
+                        )
             
-            # Use ThreadPoolExecutor for parallel generation
-            # 关键：提前提取 page.id，不要传递 ORM 对象到子线程
+            paused = False
+
+            def handle_image_result(future):
+                nonlocal completed, failed, resolution_mismatched
+                page_id, image_path, error, is_mismatched, manifest_update = future.result()
+                is_paused_page = manifest_update.get('status') == 'paused'
+
+                if is_mismatched:
+                    resolution_mismatched += 1
+
+                db.session.expire_all()
+
+                # Update page in database (主要是为了更新失败状态)
+                page = Page.query.get(page_id)
+                if page:
+                    if is_paused_page:
+                        if not page.generated_image_path:
+                            page.status = 'QUEUED'
+                            db.session.commit()
+                    elif error:
+                        page.status = 'FAILED'
+                        failed += 1
+                        db.session.commit()
+                    else:
+                        # 图片已在子线程中保存并创建版本记录，这里只需要更新计数
+                        completed += 1
+                        # 刷新页面对象以获取最新状态
+                        db.session.refresh(page)
+
+                # Update task progress
+                task = Task.query.get(task_id)
+                if task:
+                    progress = task.get_progress()
+                    progress['completed'] = completed
+                    progress['failed'] = failed
+                    update_manifest_page(
+                        progress,
+                        page_id,
+                        **({'status': 'queued'} if is_paused_page else manifest_update),
+                    )
+                    # 第一次检测到不匹配时设置警告
+                    if resolution_mismatched > 0 and 'warning_message' not in progress:
+                        progress['warning_message'] = "图片返回分辨率与设置不符，建议使用gemini格式以避免此问题"
+                    _set_image_task_progress(task, progress, file_service.upload_folder)
+                    db.session.commit()
+                    logger.info(f"Image Progress: {completed}/{len(pages)} pages completed")
+
+            # Use ThreadPoolExecutor for parallel generation. Submit lazily so pause
+            # can stop new pages from entering the queue.
+            page_iter = iter(enumerate(pages, 1))
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = [
-                    executor.submit(
+                running = set()
+
+                def submit_next_page():
+                    if _is_task_paused(task_id):
+                        return False
+                    try:
+                        i, page = next(page_iter)
+                    except StopIteration:
+                        return False
+                    running.add(executor.submit(
                         generate_single_image, page.id,
                         pages_data_by_index.get(page.order_index, {}), i
-                    )
-                    for i, page in enumerate(pages, 1)
-                ]
-                
-                # Process results as they complete
-                for future in as_completed(futures):
-                    page_id, image_path, error, is_mismatched = future.result()
-                    
-                    if is_mismatched:
-                        resolution_mismatched += 1
-                    
-                    db.session.expire_all()
-                    
-                    # Update page in database (主要是为了更新失败状态)
-                    page = Page.query.get(page_id)
-                    if page:
-                        if error:
-                            page.status = 'FAILED'
-                            failed += 1
-                            db.session.commit()
-                        else:
-                            # 图片已在子线程中保存并创建版本记录，这里只需要更新计数
-                            completed += 1
-                            # 刷新页面对象以获取最新状态
-                            db.session.refresh(page)
-                    
-                    # Update task progress
-                    task = Task.query.get(task_id)
-                    if task:
-                        progress = task.get_progress()
-                        progress['completed'] = completed
-                        progress['failed'] = failed
-                        # 第一次检测到不匹配时设置警告
-                        if resolution_mismatched > 0 and 'warning_message' not in progress:
-                            progress['warning_message'] = "图片返回分辨率与设置不符，建议使用gemini格式以避免此问题"
-                        task.set_progress(progress)
-                        db.session.commit()
-                        logger.info(f"Image Progress: {completed}/{len(pages)} pages completed")
+                    ))
+                    return True
+
+                for _ in range(max_workers):
+                    if not submit_next_page():
+                        break
+
+                while running:
+                    done, running = wait(running, return_when=FIRST_COMPLETED)
+                    for future in done:
+                        handle_image_result(future)
+
+                    if _is_task_paused(task_id):
+                        paused = True
+                        for future in running:
+                            future.cancel()
+                        for future in as_completed(running):
+                            if not future.cancelled():
+                                handle_image_result(future)
+                        break
+
+                    while len(running) < max_workers and submit_next_page():
+                        pass
+
+            if paused:
+                task = Task.query.get(task_id)
+                if task:
+                    progress = task.get_progress()
+                    progress['status'] = 'paused'
+                    _set_image_task_progress(task, progress, file_service.upload_folder)
+                    db.session.commit()
+                    logger.info(f"Task {task_id} PAUSED - {completed} images generated, {failed} failed")
+                return
             
             # Mark task as completed
             task = Task.query.get(task_id)
             if task:
                 task.status = 'COMPLETED'
                 task.completed_at = datetime.utcnow()
+                progress = task.get_progress()
+                progress['status'] = 'completed' if failed == 0 else 'completed_with_errors'
+                _set_image_task_progress(task, progress, file_service.upload_folder)
                 if resolution_mismatched > 0:
                     logger.warning(f"Task {task_id} has {resolution_mismatched} resolution mismatches")
                 db.session.commit()
@@ -926,7 +1180,12 @@ def generate_single_page_image_task(task_id: str, project_id: str, page_id: str,
     
     with app.app_context():
         try:
-            from services.image_template_profiles import append_image_page_role_hint, infer_image_page_role, resolve_template_reference_path
+            from services.image_template_profiles import (
+                append_image_page_role_hint,
+                append_template_visual_profile_hint,
+                infer_image_page_role,
+                resolve_template_reference_path,
+            )
             # Update task status to PROCESSING
             task = Task.query.get(task_id)
             if not task:
@@ -999,19 +1258,44 @@ def generate_single_page_image_task(task_id: str, project_id: str, page_id: str,
                 ref_image_path,
             )
 
+            page_extra_requirements = append_image_page_role_hint(extra_requirements, role)
+            page_extra_requirements = append_template_visual_profile_hint(
+                page_extra_requirements,
+                getattr(project, 'template_pack_id', None) if use_template else None,
+            )
+
             prompt = ai_service.generate_image_prompt(
                 outline, page_data, desc_text, page.order_index + 1,
                 has_material_images=has_material_images,
-                extra_requirements=append_image_page_role_hint(extra_requirements, role),
+                extra_requirements=page_extra_requirements,
                 language=language,
                 has_template=use_template,
                 aspect_ratio=aspect_ratio
+            )
+            task_progress = task.get_progress()
+            page_manifest = next(
+                (
+                    item for item in task_progress.get('pages', [])
+                    if item.get('page_id') == page_id
+                ),
+                {},
+            )
+            prompt_snapshot = write_prompt_snapshot(
+                file_service.upload_folder,
+                project_id,
+                task_progress.get('generation_id', task_id),
+                page_id,
+                page_manifest.get('attempt', 1),
+                prompt,
             )
 
             def mark_generating():
                 task_obj = Task.query.get(task_id)
                 if task_obj:
                     task_obj.status = 'PROCESSING'
+                    progress = task_obj.get_progress()
+                    progress['status'] = 'processing'
+                    _set_image_task_progress(task_obj, progress, file_service.upload_folder)
                     db.session.commit()
                 page_obj = Page.query.get(page_id)
                 if page_obj:
@@ -1040,11 +1324,29 @@ def generate_single_page_image_task(task_id: str, project_id: str, page_id: str,
             # Mark task as completed
             task.status = 'COMPLETED'
             task.completed_at = datetime.utcnow()
-            task.set_progress({
+            progress = task.get_progress()
+            progress.update({
                 "total": 1,
                 "completed": 1,
-                "failed": 0
+                "failed": 0,
+                "status": "completed",
             })
+            update_manifest_page(
+                progress,
+                page_id,
+                status='completed',
+                version_number=next_version,
+                current_version=next_version,
+                output_path=image_path,
+                prompt_path=prompt_snapshot['path'],
+                prompt_hash=prompt_snapshot['sha256'],
+                qa={
+                    'status': 'passed',
+                    'width': image.width,
+                    'height': image.height,
+                },
+            )
+            _set_image_task_progress(task, progress, file_service.upload_folder)
             db.session.commit()
             
             logger.info(f"✅ Task {task_id} COMPLETED - Page {page_id} image generated")
@@ -1060,6 +1362,17 @@ def generate_single_page_image_task(task_id: str, project_id: str, page_id: str,
                 task.status = 'FAILED'
                 task.error_message = str(e)
                 task.completed_at = datetime.utcnow()
+                progress = task.get_progress()
+                progress['status'] = 'failed'
+                for page_manifest in progress.get('pages', []):
+                    if page_manifest.get('status') not in {'completed', 'failed'}:
+                        page_manifest['status'] = 'failed'
+                        page_manifest['error'] = str(e)
+                _set_image_task_progress(
+                    task,
+                    progress,
+                    getattr(file_service, 'upload_folder', None),
+                )
                 db.session.commit()
             
             # Update page status
@@ -1174,6 +1487,17 @@ def edit_page_image_task(task_id: str, project_id: str, page_id: str,
                 task.status = 'FAILED'
                 task.error_message = str(e)
                 task.completed_at = datetime.utcnow()
+                progress = task.get_progress()
+                progress.update({'failed': 1, 'status': 'failed'})
+                try:
+                    update_manifest_page(progress, page_id, status='failed', error=str(e))
+                except KeyError:
+                    pass
+                _set_image_task_progress(
+                    task,
+                    progress,
+                    getattr(file_service, 'upload_folder', None),
+                )
                 db.session.commit()
             
             # Update page status

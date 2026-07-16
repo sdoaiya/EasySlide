@@ -53,6 +53,33 @@ def save_native_page(project_id, page_id):
     return success_response(page.to_dict())
 
 
+@native_deck_bp.get('/projects/<project_id>/pages/<page_id>/native/versions')
+def list_native_page_versions(project_id, page_id):
+    project = db.session.get(Project, project_id)
+    if not project:
+        return not_found('Project')
+    page = Page.query.filter_by(id=page_id, project_id=project_id).first()
+    if not page:
+        return not_found('Page')
+    return success_response({'versions': page.native_version_list()})
+
+
+@native_deck_bp.put('/projects/<project_id>/pages/<page_id>/native/versions/<version_id>')
+def restore_native_page_version(project_id, page_id, version_id):
+    project = db.session.get(Project, project_id)
+    if not project:
+        return not_found('Project')
+    if project.render_mode != 'native':
+        return bad_request('只有原生可编辑项目可以切换页面版本')
+    page = Page.query.filter_by(id=page_id, project_id=project_id).first()
+    if not page:
+        return not_found('Page')
+    if not page.restore_native_version(version_id):
+        return not_found('Native page version')
+    db.session.commit()
+    return success_response(page.to_dict())
+
+
 @native_deck_bp.post('/projects/<project_id>/generate/native-deck')
 def generate_native_deck(project_id):
     project = db.session.get(Project, project_id)

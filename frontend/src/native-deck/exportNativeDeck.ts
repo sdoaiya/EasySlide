@@ -42,6 +42,8 @@ export async function exportNativeDeck(options: NativeExportOptions) {
     waitIfPaused: options.waitIfPaused,
   })
   assertReportHasNoFullSlideFallback(result.report)
+  result.report.warnings.push(...collectGenerationFallbackWarnings())
+  result.report.warnings.push(...collectNativeQualityWarnings())
   const transitions = Array.from(document.querySelectorAll<HTMLElement>('#deck > .slide')).map((slide) => slide.dataset.nativeTransition as NativeTransition | undefined)
   const speeds = Array.from(document.querySelectorAll<HTMLElement>('#deck > .slide')).map((slide) => slide.dataset.nativeTransitionSpeed as NativeTransitionSpeed | undefined)
   const directions = Array.from(document.querySelectorAll<HTMLElement>('#deck > .slide')).map((slide) => slide.dataset.nativeTransitionDirection as NativeTransitionDirection | undefined)
@@ -85,7 +87,57 @@ export async function exportNativeDeck(options: NativeExportOptions) {
       advanceAfter: advances[index] || 0,
     }
   })
+  result.report.formula_inventory = collectNativeFormulaInventory()
   return result
+}
+
+function collectNativeQualityWarnings() {
+  return Array.from(document.querySelectorAll<HTMLElement>('#deck > .slide')).flatMap((slide, index) => {
+    if (!slide.dataset.nativeQualityReport) return []
+    try {
+      const report = JSON.parse(slide.dataset.nativeQualityReport) as { status?: string; score?: number; issues?: string[] }
+      if (report.status !== 'warning') return []
+      return [{
+        type: 'native-quality-warning',
+        scope: 'page',
+        slideIndex: index + 1,
+        message: `页面生成质量 ${Number(report.score || 0)} 分：${(report.issues || []).join(', ')}`,
+      }]
+    } catch {
+      return []
+    }
+  })
+}
+
+function collectGenerationFallbackWarnings() {
+  return Array.from(document.querySelectorAll<HTMLElement>('#deck > .slide'))
+    .flatMap((slide, index) => slide.dataset.nativeGenerationFallback === 'true'
+      ? [{
+          type: 'generation-fallback',
+          scope: 'page',
+          slideIndex: index + 1,
+          message: '该页由可编辑回退内容生成，建议在交付前按需重试。',
+        }]
+      : [])
+}
+
+function collectNativeFormulaInventory() {
+  return Array.from(document.querySelectorAll<HTMLElement>('#deck > .slide')).flatMap((slide, slideIndex) => {
+    const seen = new Set<string>()
+    const walker = document.createTreeWalker(slide, NodeFilter.SHOW_TEXT)
+    const formulas: Array<{ slideIndex: number; text: string; decision: 'editable-text'; editable: true }> = []
+    while (walker.nextNode()) {
+      const text = walker.currentNode.textContent?.replace(/\s+/g, ' ').trim() || ''
+      if (!looksLikeNativeFormula(text) || seen.has(text)) continue
+      seen.add(text)
+      formulas.push({ slideIndex: slideIndex + 1, text, decision: 'editable-text', editable: true })
+    }
+    return formulas
+  })
+}
+
+function looksLikeNativeFormula(text: string) {
+  return /\\[A-Za-z]+|\$[^$]+\$|[A-Za-z0-9]}]\s*[\^_]\s*(?:[A-Za-z0-9{])/.test(text)
 }
 
 function mapPageEnterToElementEnter(value: unknown) {

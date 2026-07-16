@@ -84,10 +84,23 @@ describe('WorkspaceShell', () => {
     const shell = screen.getByRole('main').parentElement;
     expect(shell).toHaveAttribute('data-presenting', 'true');
     expect(shell).toHaveStyle({ gridTemplateColumns: 'minmax(0, 1fr)' });
+    expect(shell).toHaveStyle({ gridTemplateAreas: '"canvas"' });
     expect(screen.getByRole('main')).toBeVisible();
     expect(shell?.querySelector('header')).toHaveStyle({ display: 'none' });
     expect(shell?.querySelector('[aria-label="页面栏"]')).toHaveStyle({ display: 'none' });
     expect(shell?.querySelector('footer')).toHaveStyle({ display: 'none' });
+  });
+
+  it('can hide only the page-rail toggle while keeping the inspector toggle available', () => {
+    render(
+      <WorkspaceShell toolbar="命令栏" sidebar="页面栏" inspector="属性栏" hideSidebarToggle>
+        画布
+      </WorkspaceShell>
+    );
+
+    expect(screen.queryByRole('button', { name: '收起页面栏' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '收起属性栏' }));
+    expect(screen.getByRole('complementary', { name: '属性栏' })).toHaveAttribute('data-collapsed', 'true');
   });
 
   it('uses a closed overlay inspector without shrinking the canvas at narrow desktop widths', () => {
@@ -113,6 +126,23 @@ describe('WorkspaceShell', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '打开属性栏' }));
     expect(inspector).toHaveAttribute('data-collapsed', 'false');
+    expect(inspector).toHaveStyle({ visibility: 'visible' });
     expect(inspector).toHaveTextContent('属性栏');
+  });
+
+  it('uses soft shadows instead of hard panel borders when requested', () => {
+    render(
+      <WorkspaceShell toolbar="命令栏" sidebar="页面栏" inspector="属性栏" softBorders>
+        画布
+      </WorkspaceShell>
+    );
+
+    const sidebar = screen.getByRole('complementary', { name: '页面栏' });
+    const inspector = screen.getByRole('complementary', { name: '属性栏' });
+
+    expect(sidebar).not.toHaveClass('border-r');
+    expect(inspector).not.toHaveClass('border-l');
+    expect(sidebar.className).toContain('shadow-[inset_-1px_0_0_rgba(148,163,184,0.16)]');
+    expect(inspector.className).toContain('shadow-[inset_1px_0_0_rgba(148,163,184,0.16)]');
   });
 });

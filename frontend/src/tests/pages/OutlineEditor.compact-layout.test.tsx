@@ -114,8 +114,11 @@ describe('OutlineEditor compact layout', () => {
     expect(root).toHaveClass('h-full', 'min-h-0', 'overflow-hidden');
     expect(scrollRegion).toHaveClass('flex-1', 'min-h-0', 'overflow-y-auto');
     expect(scrollRegion).not.toContainElement(footer);
-    expect(footer).toHaveClass('fixed', 'inset-x-0', 'bottom-0', 'z-40');
-    expect(footer).toContainElement(screen.getByRole('button', { name: '上一步' }));
-    expect(footer).toContainElement(screen.getByRole('button', { name: '下一步' }));
+    expect(scrollRegion).toHaveClass('pb-24');
+    expect(footer).toHaveClass('fixed', 'bottom-5', 'left-1/2', '-translate-x-1/2', 'z-50', 'pointer-events-none', 'max-w-xl');
+    const footerBar = screen.getByTestId('outline-editor-footer-bar');
+    expect(footerBar).toHaveClass('pointer-events-auto', 'rounded-2xl', 'shadow-[0_16px_45px_rgba(15,23,42,0.18)]');
+    expect(footerBar).toContainElement(screen.getByRole('button', { name: '上一步' }));
+    expect(footerBar).toContainElement(screen.getByRole('button', { name: '下一步' }));
   });
 });

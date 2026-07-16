@@ -54,6 +54,17 @@ export function NativeImageSettingsDialog({ open, settings, pages, saving = fals
           </label>
 
           <label className="block space-y-2 text-sm">
+            <span className="font-medium text-foreground-primary">主体构图</span>
+            <select aria-label="图片主体构图" value={draft.composition} onChange={(event) => setDraft({ ...draft, composition: event.target.value as NativeImageSettings['composition'] })} className="h-10 w-full rounded-md border border-border-primary bg-background-elevated px-3">
+              <option value="auto">自动：根据页面版式决定</option>
+              <option value="center">主体居中</option>
+              <option value="text-left">主体靠右，左侧留白</option>
+              <option value="text-right">主体靠左，右侧留白</option>
+              <option value="full-bleed">全画面铺满</option>
+            </select>
+          </label>
+
+          <label className="block space-y-2 text-sm">
             <span className="font-medium text-foreground-primary">补充生成要求</span>
             <textarea aria-label="补充生成要求" rows={3} maxLength={2000} value={draft.custom_prompt} onChange={(event) => setDraft({ ...draft, custom_prompt: event.target.value })} placeholder="例如：主体靠右，左侧为标题留白，不生成文字或水印" className="w-full resize-y rounded-md border border-border-primary bg-background-elevated px-3 py-2" />
           </label>

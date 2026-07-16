@@ -4,10 +4,10 @@ import { useProjectStore } from '@/store/useProjectStore'
 import { useNativeDeckStore } from '@/store/useNativeDeckStore'
 import type { NativeImageSettings } from '@/types'
 import type { NativeSlideSpec } from '@/native-deck/types'
-import { buildNativeMediaPrompt, collectNativeMediaSlots, getNativeMediaValue, runNativeMediaQueue, setNativeMediaValue, type NativeMediaSlot } from '@/native-deck/nativeMedia'
+import { buildNativeMediaPrompt, collectNativeMediaSlots, compressNativeMediaUpload, createNativeMediaSlot, getNativeMediaValue, runNativeMediaQueue, setNativeMediaValue, type NativeMediaSlot } from '@/native-deck/nativeMedia'
 import type { NativeLayoutContract } from './NativeDeckPropertyPanel'
 
-const DEFAULT_SETTINGS: NativeImageSettings = { density: 'standard', style: 'theme', custom_prompt: '', custom_counts: {} }
+const DEFAULT_SETTINGS: NativeImageSettings = { density: 'standard', style: 'theme', composition: 'auto', custom_prompt: '', custom_counts: {} }
 
 export function useNativeMediaGeneration({ projectId, slides, contracts, onSlideUpdate }: {
   projectId: string
@@ -44,7 +44,13 @@ export function useNativeMediaGeneration({ projectId, slides, contracts, onSlide
     if (!current || (!overwrite && getNativeMediaValue(current.props, slot.key, slot.index))) return
     setBusy((state) => ({ ...state, [slot.id]: '生成中...' }))
     try {
-      const created = await generateMaterialImage(projectId, buildNativeMediaPrompt(current, generationSettings, prompt), null, undefined, currentProject?.image_aspect_ratio)
+      const created = await generateMaterialImage(
+        projectId,
+        buildNativeMediaPrompt(current, generationSettings, prompt, slot),
+        null,
+        undefined,
+        slot.aspectRatio || currentProject?.image_aspect_ratio,
+      )
       const taskId = created.data?.task_id
       if (!taskId) throw new Error('未返回图片任务 ID')
       const imageUrl = await waitForImage(projectId, taskId)
@@ -85,10 +91,10 @@ export function useNativeMediaGeneration({ projectId, slides, contracts, onSlide
   }
 
   const upload = async (key: string, index: number | undefined, file: File) => {
-    const slot = makeSlot(useNativeDeckStore.getState().selectedPageId || '', key, index)
+    const slot = resolveSlot(useNativeDeckStore.getState().selectedPageId || '', key, index)
     setBusy((state) => ({ ...state, [slot.id]: '上传中...' }))
     try {
-      const response = await uploadMaterial(file, projectId)
+      const response = await uploadMaterial(await compressNativeMediaUpload(file), projectId)
       if (response.data?.url) apply(slot, response.data.url)
       setBusy((state) => ({ ...state, [slot.id]: '' }))
     } catch (error) {
@@ -98,9 +104,14 @@ export function useNativeMediaGeneration({ projectId, slides, contracts, onSlide
 
   const mediaActions = {
     busy,
-    onGenerate: (key: string, index: number | undefined, prompt: string, edit: boolean) => void generate(makeSlot(useNativeDeckStore.getState().selectedPageId || '', key, index), prompt, edit),
+    onGenerate: (key: string, index: number | undefined, prompt: string, edit: boolean) => void generate(resolveSlot(useNativeDeckStore.getState().selectedPageId || '', key, index), prompt, edit),
     onUpload: (key: string, index: number | undefined, file: File) => void upload(key, index, file),
     onSelect: (key: string, index: number | undefined) => setSelectedSlot(makeSlot(useNativeDeckStore.getState().selectedPageId || '', key, index)),
+  }
+
+  function resolveSlot(pageId: string, key: string, index?: number) {
+    const slide = useNativeDeckStore.getState().slides.find((item) => item.pageId === pageId)
+    return slide ? createNativeMediaSlot(slide, key, index) : makeSlot(pageId, key, index)
   }
 
   return {

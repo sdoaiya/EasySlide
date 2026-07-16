@@ -95,7 +95,6 @@ describe('DashiAI theme runtime', () => {
           layout: 'theme01_page040',
           props: { title: '单击动效', __animation: { elementEnter: 'fade', elementTrigger: 'click' } },
         }}
-        elementAnimationActive={false}
         elementAnimationStep={0}
       />,
     )
@@ -121,5 +120,30 @@ describe('DashiAI theme runtime', () => {
     const frame = document.querySelector('.native-slide')
     expect(frame).toHaveAttribute('data-element-animation', 'rotate-in')
     expect(frame).toHaveStyle('--native-element-duration: 520ms')
+  })
+
+  it('ignores unsupported animation values instead of passing them to the slide DOM', () => {
+    const { container } = render(
+      <NativeSlideRenderer
+        slide={{
+          pageId: 'page-invalid-motion',
+          layout: 'core01_cover',
+          props: {
+            title: '异常动效',
+            __animation: {
+              enter: 'explode',
+              elementEnter: 'vanish',
+              elementTrigger: 'manual',
+              duration: Number.NaN,
+              elementDuration: -100,
+            },
+          },
+        }}
+      />,
+    )
+
+    const frame = container.querySelector('.native-slide')
+    expect(frame).not.toHaveAttribute('data-element-animation')
+    expect(container.querySelector('[class*="native-enter-explode"]')).not.toBeInTheDocument()
   })
 })

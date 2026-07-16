@@ -7,22 +7,16 @@ type NativeDeckHtmlOptions = {
   root?: ParentNode
 }
 
-export function exportNativeDeckHtml({ title, slides, root = document }: NativeDeckHtmlOptions) {
-  const projectMedia = findProjectMedia(slides)
-  if (projectMedia) throw new Error(`离线 HTML 无法包含项目素材路径：${projectMedia}。请先转换为 data URL。`)
-
+export async function exportNativeDeckHtml({ title, slides, root = document }: NativeDeckHtmlOptions) {
   const pages = Array.from(root.querySelectorAll<HTMLElement>('#deck > .slide'))
   if (!pages.length) throw new Error('没有可导出的原生页面')
-  const externalMedia = pages
-    .flatMap((page) => Array.from(page.querySelectorAll<HTMLElement>('[src],[href]')))
-    .map((element) => element.getAttribute('src') || element.getAttribute('href') || '')
-    .find((value) => value && !value.startsWith('data:') && !value.startsWith('#'))
-  if (externalMedia) throw new Error(`离线 HTML 无法包含外部资源：${externalMedia}。请先转换为 data URL。`)
   const externalCss = nativeDeckCss.match(/url\(\s*["']?((?!data:|#)[^)"']+)/i)?.[1]
   if (externalCss) throw new Error(`离线 HTML 无法包含外部样式资源：${externalCss}。请先转换为 data URL。`)
 
-  const renderedPages = pages.map((page, index) => {
+  const mediaMap = new Map<string, string>()
+  const renderedPages = (await Promise.all(pages.map(async (page, index) => {
     const clone = page.cloneNode(true) as HTMLElement
+    await inlinePageMedia(clone, mediaMap)
     clone.removeAttribute('aria-hidden')
     clone.removeAttribute('style')
     const animation = slides[index]?.props.__animation && typeof slides[index].props.__animation === 'object'
@@ -42,8 +36,8 @@ export function exportNativeDeckHtml({ title, slides, root = document }: NativeD
     clone.dataset.pageIndex = String(index)
     clone.dataset.nativeInternal = animation.internal === false ? '0' : '1'
     return clone.outerHTML
-  }).join('\n') + `<script>(()=>{addEventListener('DOMContentLoaded',()=>{const deck=document.getElementById('deck');if(!deck)return;let timer;const schedule=()=>{clearTimeout(timer);const active=deck.querySelector('.slide.active');const seconds=Number(active?.dataset.nativeAdvanceAfter||0);if(!active||seconds<=0||active===deck.lastElementChild)return;if(active.dataset.elementTrigger==='click'&&Number(active.dataset.elementStep||0)<1)return;timer=setTimeout(()=>{if(active===deck.querySelector('.slide.active'))document.getElementById('next')?.click()},seconds*1000)};new MutationObserver(schedule).observe(deck,{attributes:true,subtree:true,attributeFilter:['class','data-element-step']});schedule()})})()</script>`
-  const data = JSON.stringify(slides).replace(/[<>&]/g, (character) => ({ '<': '\\u003c', '>': '\\u003e', '&': '\\u0026' })[character]!)
+  }))).join('\n') + `<script>(()=>{addEventListener('DOMContentLoaded',()=>{const deck=document.getElementById('deck');if(!deck)return;let timer;const schedule=()=>{clearTimeout(timer);const active=deck.querySelector('.slide.active');const seconds=Number(active?.dataset.nativeAdvanceAfter||0);if(!active||seconds<=0||active===deck.lastElementChild)return;if(active.dataset.elementTrigger==='click'&&Number(active.dataset.elementStep||0)<1)return;timer=setTimeout(()=>{if(active===deck.querySelector('.slide.active'))document.getElementById('next')?.click()},seconds*1000)};new MutationObserver(schedule).observe(deck,{attributes:true,subtree:true,attributeFilter:['class','data-element-step']});schedule()})})()</script>`
+  const data = JSON.stringify(replaceMediaValues(slides, mediaMap)).replace(/[<>&]/g, (character) => ({ '<': '\\u003c', '>': '\\u003e', '&': '\\u0026' })[character]!)
 
   return new Blob([`<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -65,10 +59,43 @@ function mapPageEnterToElementEnter(value: unknown) {
   return undefined
 }
 
-function findProjectMedia(value: unknown): string | undefined {
-  if (typeof value === 'string') return value.startsWith('/files/') ? value : undefined
-  if (Array.isArray(value)) return value.map(findProjectMedia).find(Boolean)
-  if (value && typeof value === 'object') return Object.values(value).map(findProjectMedia).find(Boolean)
+async function inlinePageMedia(page: HTMLElement, mediaMap: Map<string, string>) {
+  const attributes: Array<[HTMLElement, 'src' | 'poster' | 'href']> = [
+    ...Array.from(page.querySelectorAll<HTMLElement>('img[src],video[src],source[src]')).map((element) => [element, 'src'] as const),
+    ...Array.from(page.querySelectorAll<HTMLElement>('video[poster]')).map((element) => [element, 'poster'] as const),
+    ...Array.from(page.querySelectorAll<HTMLElement>('image[href]')).map((element) => [element, 'href'] as const),
+  ]
+  await Promise.all(attributes.map(async ([element, attribute]) => {
+    const value = element.getAttribute(attribute) || ''
+    if (!value || value.startsWith('data:') || value.startsWith('#')) return
+    const absolute = new URL(value, location.href).href
+    let dataUrl = mediaMap.get(value) || mediaMap.get(absolute)
+    if (!dataUrl) {
+      const response = await fetch(absolute, { credentials: new URL(absolute).origin === location.origin ? 'same-origin' : 'omit' })
+      if (!response.ok) throw new Error(`离线 HTML 素材读取失败：${value}`)
+      dataUrl = await blobToDataUrl(await response.blob())
+      mediaMap.set(value, dataUrl)
+      mediaMap.set(absolute, dataUrl)
+      try { mediaMap.set(new URL(absolute).pathname, dataUrl) } catch {}
+    }
+    element.setAttribute(attribute, dataUrl)
+  }))
+}
+
+function replaceMediaValues(value: unknown, mediaMap: Map<string, string>): unknown {
+  if (typeof value === 'string') return mediaMap.get(value) || value
+  if (Array.isArray(value)) return value.map((item) => replaceMediaValues(item, mediaMap))
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, replaceMediaValues(child, mediaMap)]))
+  return value
+}
+
+function blobToDataUrl(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(reader.error)
+    reader.onload = () => resolve(String(reader.result))
+    reader.readAsDataURL(blob)
+  })
 }
 
 function escapeHtml(value: string) {

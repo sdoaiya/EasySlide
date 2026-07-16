@@ -7,6 +7,8 @@ export type NativeMediaSlot = {
   pageId: string
   key: string
   index?: number
+  aspectRatio?: string
+  composition?: NativeImageSettings['composition']
 }
 
 export function collectNativeMediaSlots(
@@ -26,10 +28,10 @@ export function collectNativeMediaSlots(
       if (Array.isArray(shape)) {
         const values = Array.isArray(slide.props[slot.key]) ? slide.props[slot.key] as unknown[] : []
         for (let index = 0; index < target; index += 1) {
-          if (!mediaValue(values[index])) slots.push({ id: `${slide.pageId}:${slot.key}:${index}`, pageId: slide.pageId, key: slot.key, index })
+          if (!mediaValue(values[index])) slots.push(createNativeMediaSlot(slide, slot.key, index))
         }
       } else if (target > 0 && !mediaValue(slide.props[slot.key])) {
-        slots.push({ id: `${slide.pageId}:${slot.key}`, pageId: slide.pageId, key: slot.key })
+        slots.push(createNativeMediaSlot(slide, slot.key))
       }
     }
   }
@@ -49,6 +51,25 @@ export function getNativeMediaValue(props: Record<string, unknown>, key: string,
   return mediaValue(value)
 }
 
+export async function compressNativeMediaUpload(file: File) {
+  if (!file.type.startsWith('image/') || file.type === 'image/png' || typeof createImageBitmap !== 'function') return file
+  try {
+    const bitmap = await createImageBitmap(file)
+    const maxSide = 1920
+    const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale))
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale))
+    canvas.getContext('2d')?.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+    bitmap.close?.()
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/webp', 0.85))
+    if (!blob || blob.size >= file.size) return file
+    return new File([blob], file.name.replace(/\.[^.]+$/, '') + '.webp', { type: 'image/webp', lastModified: file.lastModified })
+  } catch {
+    return file
+  }
+}
+
 export async function runNativeMediaQueue<T>(
   jobs: readonly T[],
   worker: (job: T) => Promise<void>,
@@ -66,7 +87,7 @@ export async function runNativeMediaQueue<T>(
   await Promise.all(Array.from({ length: concurrency }, run))
 }
 
-export function buildNativeMediaPrompt(slide: NativeSlideSpec, settings: NativeImageSettings, slotPrompt = '') {
+export function buildNativeMediaPrompt(slide: NativeSlideSpec, settings: NativeImageSettings, slotPrompt = '', slot?: NativeMediaSlot) {
   const content = collectText(slide.props).slice(0, 8).join('；')
   const style = {
     theme: '视觉风格与当前 PPT 页面主题保持一致',
@@ -76,9 +97,50 @@ export function buildNativeMediaPrompt(slide: NativeSlideSpec, settings: NativeI
     tech: '科技概念视觉，具有未来感但不添加文字',
     custom: settings.custom_prompt,
   }[settings.style]
-  return [`为 PPT 页面生成一张不含文字的主体配图。页面内容：${content || '通用主题'}`, style, settings.custom_prompt, slotPrompt]
+  const intent = slide.props.__design_intent && typeof slide.props.__design_intent === 'object'
+    ? slide.props.__design_intent as Record<string, unknown>
+    : {}
+  const pagePlan = intent.page_plan && typeof intent.page_plan === 'object' ? intent.page_plan as Record<string, unknown> : {}
+  const composition = settings.composition === 'auto' ? slot?.composition || 'center' : settings.composition
+  const compositionText = {
+    center: '主体居中，四周保留安全裁剪空间',
+    'text-left': '主体放在画面右侧，左侧保留干净留白',
+    'text-right': '主体放在画面左侧，右侧保留干净留白',
+    'full-bleed': '画面铺满，主体清晰，边缘可安全裁剪',
+    auto: '根据页面内容安排主体位置',
+  }[composition]
+  return [
+    `为 PPT 页面生成一张不含文字的主体配图。页面内容：${content || '通用主题'}`,
+    style,
+    compositionText,
+    slot?.aspectRatio ? `画面比例 ${slot.aspectRatio}` : '',
+    pagePlan.media_direction ? `媒体角色：${String(pagePlan.media_direction)}` : '',
+    typeof intent.media_strategy === 'string' ? intent.media_strategy : '',
+    '不要生成文字、数字、Logo、水印、边框或无意义装饰',
+    settings.custom_prompt,
+    slotPrompt,
+  ]
     .filter(Boolean)
     .join('。')
+}
+
+export function createNativeMediaSlot(slide: NativeSlideSpec, key: string, index?: number): NativeMediaSlot {
+  const path = index == null ? key : `${key}[${index}]`
+  const rule = MEDIA_LAYOUT_RULES[slide.layout]
+  return {
+    id: `${slide.pageId}:${path}`,
+    pageId: slide.pageId,
+    key,
+    index,
+    aspectRatio: rule?.aspectRatio,
+    composition: rule?.composition || 'center',
+  }
+}
+
+const MEDIA_LAYOUT_RULES: Record<string, { aspectRatio: string; composition: NativeImageSettings['composition'] }> = {
+  core01_case: { aspectRatio: '4:5', composition: 'center' },
+  core01_image_story: { aspectRatio: '4:3', composition: 'center' },
+  core01_profile: { aspectRatio: '4:5', composition: 'center' },
 }
 
 function targetCount(slide: NativeSlideSpec, contract: NativeLayoutContract, settings: NativeImageSettings, max: number) {

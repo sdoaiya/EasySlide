@@ -1,5 +1,5 @@
 import { apiClient, getApiBaseUrl } from './client';
-import type { Project, Task, ApiResponse, CreateProjectRequest, Page, Material, NativeExportQualityReport } from '@/types';
+import type { Project, Task, ApiResponse, CreateProjectRequest, Page, Material, NativeExportQualityReport, ProjectDashboardStats } from '@/types';
 import type { Settings } from '../types/index';
 
 export type { Material };
@@ -64,7 +64,7 @@ export const uploadTemplate = async (
 /**
  * 获取项目列表（历史项目）
  */
-export const listProjects = async (limit?: number, offset?: number): Promise<ApiResponse<{ projects: Project[]; total: number }>> => {
+export const listProjects = async (limit?: number, offset?: number): Promise<ApiResponse<{ projects: Project[]; total: number; stats?: ProjectDashboardStats }>> => {
   const params = new URLSearchParams();
   if (limit !== undefined) params.append('limit', limit.toString());
   if (offset !== undefined) params.append('offset', offset.toString());
@@ -698,14 +698,14 @@ export const exportPPTX = async (
     transitionEnabled?: boolean;
     transitionEffects?: string[];
   }
-): Promise<ApiResponse<{ download_url: string; download_url_absolute?: string }>> => {
+): Promise<ApiResponse<{ download_url: string; download_url_absolute?: string; filename?: string }>> => {
   const url = `/api/projects/${projectId}/export/pptx${buildExportQuery({
     page_ids: pageIds,
     transition_enabled: options?.transitionEnabled ? true : undefined,
     transition_effects: options?.transitionEnabled ? options.transitionEffects : undefined,
   })}`;
   const response = await apiClient.get<
-    ApiResponse<{ download_url: string; download_url_absolute?: string }>
+    ApiResponse<{ download_url: string; download_url_absolute?: string; filename?: string }>
   >(url);
   return response.data;
 };
@@ -718,10 +718,10 @@ export const exportPPTX = async (
 export const exportPDF = async (
   projectId: string,
   pageIds?: string[]
-): Promise<ApiResponse<{ download_url: string; download_url_absolute?: string }>> => {
+): Promise<ApiResponse<{ download_url: string; download_url_absolute?: string; filename?: string }>> => {
   const url = `/api/projects/${projectId}/export/pdf${buildPageIdsQuery(pageIds)}`;
   const response = await apiClient.get<
-    ApiResponse<{ download_url: string; download_url_absolute?: string }>
+    ApiResponse<{ download_url: string; download_url_absolute?: string; filename?: string }>
   >(url);
   return response.data;
 };
@@ -732,10 +732,10 @@ export const exportPDF = async (
 export const exportImages = async (
   projectId: string,
   pageIds?: string[]
-): Promise<ApiResponse<{ download_url: string; download_url_absolute?: string }>> => {
+): Promise<ApiResponse<{ download_url: string; download_url_absolute?: string; filename?: string }>> => {
   const url = `/api/projects/${projectId}/export/images${buildPageIdsQuery(pageIds)}`;
   const response = await apiClient.get<
-    ApiResponse<{ download_url: string; download_url_absolute?: string }>
+    ApiResponse<{ download_url: string; download_url_absolute?: string; filename?: string }>
   >(url);
   return response.data;
 };
@@ -1395,6 +1395,25 @@ export const createNativePptxExport = async (
 
 export const generateNativeDeck = async (projectId: string, pageIds?: string[]): Promise<ApiResponse<Task>> => {
   const response = await apiClient.post<ApiResponse<Task>>(`/api/projects/${projectId}/generate/native-deck`, pageIds?.length ? { page_ids: pageIds } : {});
+  return response.data;
+};
+
+export type NativePageVersion = {
+  version_id: string;
+  version_number: number;
+  is_current: boolean;
+  layout: string;
+  props: Record<string, unknown>;
+  created_at?: string | null;
+};
+
+export const getNativePageVersions = async (projectId: string, pageId: string): Promise<ApiResponse<{ versions: NativePageVersion[] }>> => {
+  const response = await apiClient.get<ApiResponse<{ versions: NativePageVersion[] }>>(`/api/projects/${projectId}/pages/${pageId}/native/versions`);
+  return response.data;
+};
+
+export const restoreNativePageVersion = async (projectId: string, pageId: string, versionId: string): Promise<ApiResponse> => {
+  const response = await apiClient.put<ApiResponse>(`/api/projects/${projectId}/pages/${pageId}/native/versions/${versionId}`);
   return response.data;
 };
 

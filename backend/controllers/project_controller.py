@@ -19,6 +19,10 @@ from werkzeug.utils import secure_filename
 from models import db, Project, Page, Task, ReferenceFile
 from services import ProjectContext, FileService
 from services.ai_service_manager import get_ai_service
+from services.image_generation_manifest import (
+    build_image_generation_manifest,
+    persist_image_generation_manifest,
+)
 from services.task_manager import (
     task_manager,
     generate_descriptions_task,
@@ -40,6 +44,41 @@ ASYNC_EXPORT_TASK_TYPES = {
 }
 PAUSABLE_TASK_TYPES = ASYNC_EXPORT_TASK_TYPES | {'GENERATE_IMAGES'}
 MAX_IMAGE_GENERATION_WORKERS = 4
+
+
+def _get_project_dashboard_stats():
+    """Calculate project counters across the full project set, not one page."""
+    all_projects = Project.query.options(joinedload(Project.pages)).all()
+    completed = 0
+    generating = 0
+
+    for project in all_projects:
+        pages = list(project.pages or [])
+        has_active_pages = any(page.status in {
+            'GENERATING_DESCRIPTION', 'QUEUED', 'GENERATING',
+        } for page in pages)
+        if project.status in {'GENERATING_DESCRIPTIONS', 'GENERATING_IMAGES'} or has_active_pages:
+            generating += 1
+            continue
+
+        if project.status in {'COMPLETED', 'NATIVE_DECK_GENERATED'}:
+            completed += 1
+            continue
+
+        if pages and all(
+            page.status in {'COMPLETED', 'NATIVE_GENERATED'}
+            or bool(page.generated_image_path)
+            for page in pages
+        ):
+            completed += 1
+
+    total = len(all_projects)
+    return {
+        'total': total,
+        'completed': completed,
+        'generating': generating,
+        'in_progress': max(total - completed - generating, 0),
+    }
 
 
 def _resolve_image_generation_workers(requested, configured):
@@ -67,17 +106,44 @@ def _submit_image_generation_task(task, project, pages, options=None):
     )
     language = options.get('language', current_app.config.get('OUTPUT_LANGUAGE', 'zh'))
     page_ids = [page.id for page in pages]
-    task.set_progress({
-        'total': len(pages),
-        'completed': 0,
-        'failed': 0,
-        'page_ids': page_ids,
-        'image_options': {
+    existing_progress = task.get_progress()
+    manifest = build_image_generation_manifest(
+        task_id=task.id,
+        project_id=project.id,
+        pages=[
+            {
+                'page_id': page.id,
+                'page_index': page.order_index + 1,
+                'current_version': (
+                    page.image_versions.first().version_number
+                    if page.image_versions.first()
+                    else 0
+                ),
+                'protected': bool(page.generated_image_path),
+            }
+            for page in pages
+        ],
+        image_options={
             'use_template': use_template,
             'language': language,
             'max_workers': max_workers,
         },
+        style_snapshot={
+            'template_pack_id': project.template_pack_id,
+            'template_style': project.template_style or '',
+            'extra_requirements': project.extra_requirements or '',
+            'aspect_ratio': project.image_aspect_ratio,
+            'resolution': current_app.config['DEFAULT_RESOLUTION'],
+        },
+        existing=existing_progress,
+    )
+    manifest.update({
+        'total': len(pages),
+        'completed': 0,
+        'failed': 0,
     })
+    persist_image_generation_manifest(current_app.config['UPLOAD_FOLDER'], manifest)
+    task.set_progress(manifest)
     task.status = 'PENDING'
     task.error_message = None
     task.completed_at = None
@@ -269,8 +335,9 @@ def list_projects():
         limit = min(max(1, limit), 100)  # Between 1-100
         offset = max(0, offset)  # Non-negative
 
-        # Get total count for pagination
-        total = Project.query.count()
+        # Get counters from the full dataset, independent of pagination.
+        stats = _get_project_dashboard_stats()
+        total = stats['total']
 
         projects = Project.query\
             .options(joinedload(Project.pages))\
@@ -282,6 +349,7 @@ def list_projects():
         return success_response({
             'projects': [project.to_dict(include_pages=True) for project in projects],
             'total': total,
+            'stats': stats,
             'limit': limit,
             'offset': offset
         })

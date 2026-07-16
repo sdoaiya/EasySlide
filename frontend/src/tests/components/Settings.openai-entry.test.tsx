@@ -88,18 +88,20 @@ describe('Settings OpenAI entry', () => {
     expect(screen.queryByText(/Current Version|当前版本|Official Website|官方网站|Check for Updates|检查更新/i)).not.toBeInTheDocument();
   });
 
-  it('keeps Baidu key only for inpaint while Paddle OCR is built in', async () => {
+  it('hides optional parsing, repair, OCR, and TTS settings from the frontend', async () => {
     render(
       <MemoryRouter>
         <SettingsPage />
       </MemoryRouter>
     );
 
-    expect(await screen.findByText(/Baidu Inpaint Configuration|百度 Inpaint 配置/i)).toBeInTheDocument();
-    expect(await screen.findByText(/Baidu Inpaint Service Key|百度 Inpaint 服务 Key/i)).toBeInTheDocument();
-    expect(await screen.findByText(/OCR uses built-in PaddleOCR-VL|OCR 已内置 PaddleOCR-VL/i)).toBeInTheDocument();
-    expect(screen.queryByText(/Paddle OCR Token/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/百度 OCR|Baidu OCR/i)).not.toBeInTheDocument();
+    await screen.findByText(/AI Provider & OpenAI|AI 提供商与 OpenAI/i);
+
+    expect(screen.queryByText(/MinerU Configuration|MinerU 配置/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Baidu Inpaint Configuration|百度 Inpaint 配置/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/ElevenLabs Text-to-Speech|ElevenLabs 语音合成/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^OCR Service$|^OCR 服务$/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Paddle PDF Parsing|Paddle PDF 解析/i)).not.toBeInTheDocument();
   });
 
   it('uses the local workspace navigation without recreating login entry points', async () => {

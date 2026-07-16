@@ -260,6 +260,7 @@ export const Home: React.FC = () => {
   const [previewFileId, setPreviewFileId] = useState<string | null>(null);
 
   const [useTemplateStyle, setUseTemplateStyle] = useState(false);
+  const [useNativeTextStyle, setUseNativeTextStyle] = useState(false);
   const [templateStyle, setTemplateStyle] = useState('');
   const [isExtractingStyle, setIsExtractingStyle] = useState(false);
   const [aspectRatio, setAspectRatio] = useState('16:9');
@@ -566,10 +567,8 @@ export const Home: React.FC = () => {
   };
 
   const handleTemplateSelect = async (templateFile: File | null, templateId?: string) => {
-    // 总是设置文件（如果提供）
-    if (templateFile) {
-      setSelectedTemplate(templateFile);
-    }
+    // 总是同步当前文件选择；切换到视觉模板时清掉旧上传文件，避免旧文件残留参与生成。
+    setSelectedTemplate(templateFile);
     
     // 处理模板 ID
     if (templateId) {
@@ -673,29 +672,41 @@ export const Home: React.FC = () => {
         return;
       }
 
-      // 如果有模板ID但没有File，按需加载
+      // 模板风格与文字风格是互斥入口：文字风格只有开关开启时才参与生成。
+      const selectedGordenTemplate = renderMode === 'image' && !useTemplateStyle
+        ? findGordenTemplatePack(selectedTemplateId)
+        : undefined;
+
+      // 如果有模板ID但没有File，按需加载。Gorden 视觉模板以 template_pack_id/style 为主，
+      // 参考图只是增强提示，加载失败不能阻断项目创建。
       let templateFile = selectedTemplate;
       if (!templateFile && (selectedTemplateId || selectedPresetTemplateId)) {
         const templateId = selectedTemplateId || selectedPresetTemplateId;
         if (templateId) {
-          templateFile = await getTemplateFile(templateId, userTemplates);
-          if (!templateFile) {
+          const loadedTemplateFile = await getTemplateFile(templateId, userTemplates);
+          if (loadedTemplateFile) {
+            templateFile = loadedTemplateFile;
+          } else if (!selectedGordenTemplate) {
             show({ message: t('home.messages.loadTemplateFailed'), type: 'error' });
             return;
           }
         }
       }
       
-      // 传递风格描述（只要有内容就传递，不管开关状态）
-      const gordenStyle = findGordenTemplatePack(selectedTemplateId)?.style;
-      const styleDesc = [gordenStyle, templateStyle.trim()].filter(Boolean).join('\n') || undefined;
+      const imageTextStyleDesc = renderMode === 'image' && useTemplateStyle ? templateStyle.trim() : '';
+      const nativeTextStyleDesc = renderMode === 'native' && useNativeTextStyle ? templateStyle.trim() : '';
+      const styleDesc = [
+        selectedGordenTemplate?.style,
+        imageTextStyleDesc,
+        nativeTextStyleDesc,
+      ].filter(Boolean).join('\n') || undefined;
 
       // 传递参考文件ID列表，确保 AI 生成时能读取参考文件内容
       const refFileIds = referenceFiles
         .filter(f => f.parse_status === 'completed')
         .map(f => f.id);
 
-      await initializeProject(activeTab as 'idea' | 'outline' | 'description', content, templateFile || undefined, styleDesc, refFileIds.length > 0 ? refFileIds : undefined, aspectRatio, renderMode, nativeTheme, findGordenTemplatePack(selectedTemplateId)?.id);
+      await initializeProject(activeTab as 'idea' | 'outline' | 'description', content, templateFile || undefined, styleDesc, refFileIds.length > 0 ? refFileIds : undefined, aspectRatio, renderMode, nativeTheme, selectedGordenTemplate?.id);
       
       // 根据类型跳转到不同页面
       const projectId = localStorage.getItem('currentProjectId');
@@ -1020,7 +1031,6 @@ export const Home: React.FC = () => {
                     );
                   })}
                 </div>
-                {renderMode === 'native' && <NativeThemePicker value={nativeTheme} onChange={setNativeTheme} disabled={isSubmitting || isGlobalLoading} />}
               </div>
             )}
 
@@ -1207,6 +1217,12 @@ export const Home: React.FC = () => {
             )}
           </div>
 
+          {renderMode === 'native' && (
+            <div className="mb-4">
+              <NativeThemePicker value={nativeTheme} onChange={setNativeTheme} disabled={isSubmitting || isGlobalLoading} />
+            </div>
+          )}
+
           {/* 隐藏的文件输入 */}
           <input
             ref={fileInputRef}
@@ -1294,11 +1310,24 @@ export const Home: React.FC = () => {
             )}
           </div> : (
             <div className="mb-6 md:mb-8 pt-4 border-t border-gray-100 dark:border-border-primary">
-              <div className="mb-3 flex items-center gap-2">
-                <Palette size={18} className="text-cyan-600 dark:text-cyan-300 flex-shrink-0" />
-                <h3 className="text-base md:text-lg font-semibold text-gray-900 dark:text-white">文字描述风格</h3>
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Palette size={18} className="text-cyan-600 dark:text-cyan-300 flex-shrink-0" />
+                  <h3 className="text-base md:text-lg font-semibold text-gray-900 dark:text-white">文字描述风格</h3>
+                </div>
+                <label className="flex cursor-pointer items-center gap-2">
+                  <span className="text-sm text-gray-600 dark:text-foreground-tertiary">使用文字描述风格</span>
+                  <input
+                    type="checkbox"
+                    checked={useNativeTextStyle}
+                    onChange={(event) => setUseNativeTextStyle(event.target.checked)}
+                    disabled={isSubmitting || isGlobalLoading}
+                    className="sr-only peer"
+                  />
+                  <span className="relative h-6 w-11 rounded-full bg-gray-200 transition-colors after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-transform peer-checked:bg-cyan-500 peer-focus-visible:ring-4 peer-focus-visible:ring-cyan-300/60 dark:bg-background-hover dark:after:border-border-hover dark:after:bg-foreground-secondary" />
+                </label>
               </div>
-              <TextStyleSelector value={templateStyle} onChange={setTemplateStyle} onToast={show} />
+              {useNativeTextStyle && <TextStyleSelector value={templateStyle} onChange={setTemplateStyle} onToast={show} />}
             </div>
           )}
 

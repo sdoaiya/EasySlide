@@ -1,6 +1,6 @@
 import { NativeSlideRenderer } from './NativeSlideRenderer'
 import type { NativeSlideSpec } from '@/native-deck/types'
-import { ArrowDown, ArrowUp, Copy, Plus, Sparkles, Trash2 } from 'lucide-react'
+import { AlertTriangle, ArrowDown, ArrowUp, Copy, Plus, Sparkles, Trash2 } from 'lucide-react'
 
 type NativeDeckPageRailProps = {
   slides: NativeSlideSpec[]
@@ -11,7 +11,6 @@ type NativeDeckPageRailProps = {
   onDelete: (pageId: string) => void
   onMove: (pageId: string, direction: -1 | 1) => void
   pageAction?: { label: string; onClick: () => void }
-  imageAction?: { label: string; disabled?: boolean; onClick: () => void }
   pageGenerationAction?: { label: string; disabled?: boolean; onClick: (pageId: string) => void }
 }
 
@@ -20,17 +19,12 @@ function slideTitle(slide: NativeSlideSpec, index: number) {
   return typeof title === 'string' && title ? title : `第 ${index + 1} 页`
 }
 
-export function NativeDeckPageRail({ slides, selectedPageId, onSelect, onAdd, onDuplicate, onDelete, onMove, pageAction, imageAction, pageGenerationAction }: NativeDeckPageRailProps) {
+export function NativeDeckPageRail({ slides, selectedPageId, onSelect, onAdd, onDuplicate, onDelete, onMove, pageAction, pageGenerationAction }: NativeDeckPageRailProps) {
   return (
     <nav className="h-full space-y-3 overflow-y-auto bg-white p-4 dark:bg-background-secondary" aria-label="原生页面">
       {pageAction && (
         <button type="button" aria-label={pageAction.label} title={pageAction.label} onClick={pageAction.onClick} className="mb-1 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-sky-500 to-emerald-400 text-sm font-semibold text-white shadow-md shadow-sky-200/60 transition hover:brightness-105">
           <Sparkles size={18} aria-hidden="true" />{pageAction.label}
-        </button>
-      )}
-      {imageAction && (
-          <button type="button" aria-label={imageAction.label} title={imageAction.label} disabled={imageAction.disabled} onClick={imageAction.onClick} className="mb-1 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-sky-500 to-emerald-400 text-sm font-semibold text-white shadow-md shadow-sky-200/60 transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60">
-          <Sparkles size={18} aria-hidden="true" />{imageAction.label}
         </button>
       )}
       <button type="button" aria-label="添加页面" title="添加页面" onClick={onAdd} className="flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white text-sm font-medium text-slate-600 hover:border-sky-200 hover:bg-sky-50 dark:border-border-primary dark:bg-background-secondary dark:text-foreground-secondary dark:hover:bg-background-hover">
@@ -39,11 +33,12 @@ export function NativeDeckPageRail({ slides, selectedPageId, onSelect, onAdd, on
       {slides.map((slide, index) => {
         const title = slideTitle(slide, index)
         const selected = slide.pageId === selectedPageId
+        const qualityWarning = hasQualityWarning(slide)
         return (
-          <div key={slide.pageId} className={`rounded-xl border bg-white p-2 transition-shadow dark:bg-background-secondary ${selected ? 'border-cyan-400 shadow-sm ring-2 ring-cyan-400/20' : 'border-slate-200 hover:border-sky-200 hover:shadow-sm dark:border-border-primary'}`}>
+          <div key={slide.pageId} className={`rounded-xl border bg-white p-2 transition-shadow dark:bg-background-secondary ${selected ? 'border-cyan-400 shadow-sm ring-2 ring-cyan-400/20' : qualityWarning ? 'border-amber-300 hover:border-amber-400' : 'border-slate-200 hover:border-sky-200 hover:shadow-sm dark:border-border-primary'}`}>
             <button
               type="button"
-              aria-label={`第 ${index + 1} 页：${title}`}
+              aria-label={`第 ${index + 1} 页：${title}${qualityWarning ? '，存在质量警告' : ''}`}
               aria-current={selected ? 'page' : undefined}
               onClick={() => onSelect(slide.pageId)}
               className="w-full text-left"
@@ -53,6 +48,7 @@ export function NativeDeckPageRail({ slides, selectedPageId, onSelect, onAdd, on
                 <span className="absolute left-0 top-0 block origin-top-left" style={{ transform: 'scale(0.1)' }}>
                     <NativeSlideRenderer key={`${slide.pageId}:${slide.layout}`} slide={slide} initializeEffects={false} animate={false} />
                 </span>
+                {qualityWarning && <span className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-amber-500 text-white shadow"><AlertTriangle size={13} /></span>}
               </span>
             </button>
             {selected && (
@@ -73,4 +69,11 @@ export function NativeDeckPageRail({ slides, selectedPageId, onSelect, onAdd, on
 
 function PageAction({ label, disabled, onClick, children }: { label: string; disabled?: boolean; onClick: () => void; children: React.ReactNode }) {
   return <button type="button" aria-label={label} title={label} disabled={disabled} onClick={onClick} className="flex h-9 items-center justify-center rounded-md hover:bg-background-hover disabled:opacity-35">{children}</button>
+}
+
+function hasQualityWarning(slide: NativeSlideSpec) {
+  const intent = slide.props.__design_intent
+  if (!intent || typeof intent !== 'object' || Array.isArray(intent)) return false
+  const report = (intent as Record<string, unknown>).quality_report
+  return Boolean(report && typeof report === 'object' && !Array.isArray(report) && (report as Record<string, unknown>).status === 'warning')
 }

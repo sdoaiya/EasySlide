@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Home, Key, Image, Zap, Save, RotateCcw, Globe, FileText, Brain, ArrowUp, HelpCircle, Link2, ChevronDown, Volume2, Info, Settings as SettingsIcon, Sparkles, LayoutDashboard, FolderOpen, Box, ImagePlus, List } from 'lucide-react';
+import { Home, Key, Image, Zap, Save, RotateCcw, Globe, FileText, Brain, ArrowUp, HelpCircle, Link2, ChevronDown, Info, Settings as SettingsIcon, Sparkles, LayoutDashboard, FolderOpen, Box, ImagePlus, List } from 'lucide-react';
 import { useT } from '@/hooks/useT';
 import { getStaticAssetUrl } from '@/api/client';
 
@@ -93,7 +93,7 @@ const settingsI18n = {
         mineruApiBase: "MinerU API Base", mineruApiBasePlaceholder: "留空使用环境变量配置 (如: https://mineru.net)",
         mineruApiBaseDesc: "MinerU 服务地址，用于解析参考文件",
         mineruToken: "MinerU Token", mineruTokenPlaceholder: "输入新的 MinerU Token",
-        mineruTokenDesc: "留空则保持当前设置不变，输入新值则更新",
+        mineruTokenDesc: "使用本机加密凭据保存；留空则保持当前设置不变，输入新值则更新",
         imageResolution: "图像清晰度（某些OpenAI格式中转调整该值无效）",
         imageResolutionDesc: "更高的清晰度会生成更详细的图像，但需要更长时间",
         descriptionGenerationMode: "描述生成模式", descriptionGenerationModeDesc: "流式模式通过一次 AI 调用逐页生成，体验更流畅；并行模式为每页独立调用 AI，速度更快",
@@ -106,11 +106,11 @@ const settingsI18n = {
         enableImageReasoning: "启用图像推理", enableImageReasoningDesc: "开启后，图像生成会使用思考链模式，可能获得更好的构图效果",
         imageThinkingBudget: "图像思考负载", imageThinkingBudgetDesc: "图像推理的思考 token 预算 (1-8192)，数值越大推理越深入",
         baiduOcrApiKey: "百度 Inpaint 服务 Key", baiduOcrApiKeyPlaceholder: "输入百度 Inpaint API Key",
-        baiduOcrApiKeyDesc: "仅用于可编辑 PPTX 导出的百度图像修复 / Inpaint 服务；OCR 已内置 PaddleOCR-VL，无需填写 OCR Key",
+        baiduOcrApiKeyDesc: "使用本机加密凭据保存；仅用于可编辑 PPTX 导出的百度图像修复 / Inpaint 服务。OCR 已内置 PaddleOCR-VL，无需填写 OCR Key",
         elevenLabsEnabled: "启用 ElevenLabs 语音合成",
         elevenLabsEnabledDesc: "开启后，视频导出将使用 ElevenLabs 代替 edge-tts 生成旁白音频，音质更自然",
         elevenLabsApiKey: "ElevenLabs API Key", elevenLabsApiKeyPlaceholder: "输入 ElevenLabs API Key",
-        elevenLabsApiKeyDesc: "留空则保持当前设置不变，API Key 可在 ElevenLabs 控制台获取",
+        elevenLabsApiKeyDesc: "使用本机加密凭据保存；留空则保持当前设置不变，API Key 可在 ElevenLabs 控制台获取",
         applyLink: "，请点击此处申请",
         textModelSource: "文本模型提供商格式", textModelSourceDesc: "选择文本生成使用的提供商格式", textModelSourcePlaceholder: "-- 请选择 --",
         imageModelSource: "图片模型提供商格式", imageModelSourceDesc: "选择图片生成使用的提供商格式", imageModelSourcePlaceholder: "-- 请选择 --",
@@ -264,7 +264,7 @@ const settingsI18n = {
         mineruApiBase: "MinerU API Base", mineruApiBasePlaceholder: "Leave empty to use env config (e.g., https://mineru.net)",
         mineruApiBaseDesc: "MinerU service address for parsing reference files",
         mineruToken: "MinerU Token", mineruTokenPlaceholder: "Enter new MinerU Token",
-        mineruTokenDesc: "Leave empty to keep current setting, enter new value to update",
+        mineruTokenDesc: "Saved with locally encrypted credentials. Leave empty to keep the current setting, or enter a new value to update it.",
         imageResolution: "Image Resolution (may not work with some OpenAI format proxies)",
         imageResolutionDesc: "Higher resolution generates more detailed images but takes longer",
         descriptionGenerationMode: "Description Generation Mode", descriptionGenerationModeDesc: "Streaming mode generates all pages in a single AI call for a smoother experience; Parallel mode calls AI independently per page for faster speed",
@@ -277,11 +277,11 @@ const settingsI18n = {
         enableImageReasoning: "Enable Image Reasoning", enableImageReasoningDesc: "When enabled, image generation uses chain-of-thought mode for better composition",
         imageThinkingBudget: "Image Thinking Budget", imageThinkingBudgetDesc: "Token budget for image reasoning (1-8192), higher values enable deeper reasoning",
         baiduOcrApiKey: "Baidu Inpaint Service Key", baiduOcrApiKeyPlaceholder: "Enter Baidu Inpaint API Key",
-        baiduOcrApiKeyDesc: "Only used for Baidu image repair / inpaint in editable PPTX export. OCR uses built-in PaddleOCR-VL and needs no OCR key.",
+        baiduOcrApiKeyDesc: "Saved with locally encrypted credentials. Only used for Baidu image repair / inpaint in editable PPTX export. OCR uses built-in PaddleOCR-VL and needs no OCR key.",
         elevenLabsEnabled: "Enable ElevenLabs Text-to-Speech",
         elevenLabsEnabledDesc: "When enabled, video export uses ElevenLabs instead of edge-tts for narration audio, providing more natural voice quality",
         elevenLabsApiKey: "ElevenLabs API Key", elevenLabsApiKeyPlaceholder: "Enter ElevenLabs API Key",
-        elevenLabsApiKeyDesc: "Leave empty to keep current setting. Get your API key from the ElevenLabs dashboard",
+        elevenLabsApiKeyDesc: "Saved with locally encrypted credentials. Leave empty to keep the current setting. Get your API key from the ElevenLabs dashboard.",
         applyLink: ", click here to apply",
         textModelSource: "Text Model Provider Format", textModelSourceDesc: "Select the provider format for text generation", textModelSourcePlaceholder: "-- Select --",
         imageModelSource: "Image Model Provider Format", imageModelSourceDesc: "Select the provider format for image generation", imageModelSourcePlaceholder: "-- Select --",
@@ -807,29 +807,6 @@ export const Settings: React.FC = () => {
   const settingsSections: SectionConfig[] = [
     // Global API config & Model config are rendered separately above
     {
-      title: t('settings.sections.mineruConfig'),
-      icon: <FileText size={20} />,
-      fields: [
-        {
-          key: 'mineru_api_base',
-          label: t('settings.fields.mineruApiBase'),
-          type: 'text',
-          placeholder: t('settings.fields.mineruApiBasePlaceholder'),
-          description: t('settings.fields.mineruApiBaseDesc'),
-        },
-        {
-          key: 'mineru_token',
-          label: t('settings.fields.mineruToken'),
-          type: 'password',
-          placeholder: t('settings.fields.mineruTokenPlaceholder'),
-          sensitiveField: true,
-          lengthKey: 'mineru_token_length',
-          description: t('settings.fields.mineruTokenDesc'),
-          link: 'https://mineru.net/apiManage/token',
-        },
-      ],
-    },
-    {
       title: t('settings.sections.imageConfig'),
       icon: <Image size={20} />,
       fields: [
@@ -918,38 +895,6 @@ export const Settings: React.FC = () => {
           min: 1,
           max: 8192,
           description: t('settings.fields.imageThinkingBudgetDesc'),
-        },
-      ],
-    },
-    {
-      title: t('settings.sections.baiduOcr'),
-      icon: <FileText size={20} />,
-      fields: [
-        {
-          key: 'baidu_api_key',
-          label: t('settings.fields.baiduOcrApiKey'),
-          type: 'password',
-          placeholder: t('settings.fields.baiduOcrApiKeyPlaceholder'),
-          sensitiveField: true,
-          lengthKey: 'baidu_api_key_length',
-          description: t('settings.fields.baiduOcrApiKeyDesc'),
-          link: 'https://cloud.baidu.com/',
-        },
-      ],
-    },
-    {
-      title: t('settings.sections.elevenlabs'),
-      icon: <Volume2 size={20} />,
-      fields: [
-        {
-          key: 'elevenlabs_api_key',
-          label: t('settings.fields.elevenLabsApiKey'),
-          type: 'password',
-          placeholder: t('settings.fields.elevenLabsApiKeyPlaceholder'),
-          sensitiveField: true,
-          lengthKey: 'elevenlabs_api_key_length',
-          description: t('settings.fields.elevenLabsApiKeyDesc'),
-          link: 'https://elevenlabs.io/app/settings/api-keys',
         },
       ],
     },
@@ -2021,14 +1966,6 @@ export const Settings: React.FC = () => {
           <div className="space-y-5">
             {[
               {
-                key: 'baidu-ocr',
-                titleKey: 'settings.serviceTest.tests.baiduOcr.title',
-                descriptionKey: 'settings.serviceTest.tests.baiduOcr.description',
-                resultKey: 'settings.serviceTest.results.recognizedText',
-                action: api.testBaiduOcr,
-                formatDetail: (data: any) => (data?.recognized_text ? t('settings.serviceTest.results.recognizedText', { text: data.recognized_text }) : ''),
-              },
-              {
                 key: 'text-model',
                 titleKey: 'settings.serviceTest.tests.textModel.title',
                 descriptionKey: 'settings.serviceTest.tests.textModel.description',
@@ -2045,28 +1982,12 @@ export const Settings: React.FC = () => {
                 formatDetail: (data: any) => (data?.caption ? t('settings.serviceTest.results.captionDesc', { caption: data.caption }) : ''),
               },
               {
-                key: 'baidu-inpaint',
-                titleKey: 'settings.serviceTest.tests.baiduInpaint.title',
-                descriptionKey: 'settings.serviceTest.tests.baiduInpaint.description',
-                resultKey: 'settings.serviceTest.results.imageSize',
-                action: api.testBaiduInpaint,
-                formatDetail: (data: any) => (data?.image_size ? t('settings.serviceTest.results.imageSize', { width: data.image_size[0], height: data.image_size[1] }) : ''),
-              },
-              {
                 key: 'image-model',
                 titleKey: 'settings.serviceTest.tests.imageModel.title',
                 descriptionKey: 'settings.serviceTest.tests.imageModel.description',
                 resultKey: 'settings.serviceTest.results.imageSize',
                 action: api.testImageModel,
                 formatDetail: (data: any) => (data?.image_size ? t('settings.serviceTest.results.imageSize', { width: data.image_size[0], height: data.image_size[1] }) : ''),
-              },
-              {
-                key: 'mineru-pdf',
-                titleKey: 'settings.serviceTest.tests.mineruPdf.title',
-                descriptionKey: 'settings.serviceTest.tests.mineruPdf.description',
-                resultKey: 'settings.serviceTest.results.parsePreview',
-                action: api.testMineruPdf,
-                formatDetail: (data: any) => (data?.content_preview ? t('settings.serviceTest.results.parsePreview', { preview: data.content_preview }) : data?.message || ''),
               },
             ].map((item) => {
               const testState = serviceTestStates[item.key] || { status: 'idle' as TestStatus };

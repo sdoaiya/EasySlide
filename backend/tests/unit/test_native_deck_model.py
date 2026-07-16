@@ -31,6 +31,7 @@ def test_existing_project_defaults_to_image_mode(client):
         assert project.to_dict()['native_image_settings'] == {
             'density': 'standard',
             'style': 'theme',
+            'composition': 'auto',
             'custom_prompt': '',
             'custom_counts': {},
         }
@@ -42,6 +43,7 @@ def test_native_image_settings_round_trip(client):
         project.set_native_image_settings({
             'density': 'rich',
             'style': '3d',
+            'composition': 'text-left',
             'custom_prompt': '主体居中，背景简洁',
             'custom_counts': {'page-1': 2},
         })
@@ -51,6 +53,7 @@ def test_native_image_settings_round_trip(client):
         assert project.to_dict()['native_image_settings'] == {
             'density': 'rich',
             'style': '3d',
+            'composition': 'text-left',
             'custom_prompt': '主体居中，背景简洁',
             'custom_counts': {'page-1': 2},
         }

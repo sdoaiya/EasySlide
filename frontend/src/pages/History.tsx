@@ -11,7 +11,7 @@ import * as api from '@/api/endpoints';
 import { getStaticAssetUrl } from '@/api/client';
 import { normalizeProject } from '@/utils';
 import { getProjectTitle, getProjectRoute } from '@/utils/projectUtils';
-import type { Project } from '@/types';
+import type { Project, ProjectDashboardStats } from '@/types';
 
 // 页面特有翻译 - AI 可以直接看到所有文案
 const historyI18n = {
@@ -101,6 +101,7 @@ export const History: React.FC = () => {
 
   const [projects, setProjects] = useState<Project[]>([]);
   const [totalProjects, setTotalProjects] = useState(0);
+  const [projectStats, setProjectStats] = useState<ProjectDashboardStats | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(() => {
     const saved = localStorage.getItem(PAGE_SIZE_KEY);
@@ -119,14 +120,16 @@ export const History: React.FC = () => {
 
   const totalPages = Math.ceil(totalProjects / pageSize);
   const safeTotalPages = Math.max(totalPages, 1);
-  const completedCount = projects.filter((project) =>
+  const completedCount = projectStats?.completed ?? projects.filter((project) =>
     project.status === 'COMPLETED' ||
-    project.pages?.some((page) => page.status === 'COMPLETED' || page.generated_image_path || page.generated_image_url)
+    Boolean(project.pages?.length) && project.pages!.every((page) => page.status === 'COMPLETED' || page.generated_image_path || page.generated_image_url)
   ).length;
-  const generatingCount = projects.filter((project) =>
-    project.pages?.some((page) => page.status === 'GENERATING' || page.status === 'QUEUED')
+  const generatingCount = projectStats?.generating ?? projects.filter((project) =>
+    project.status === 'GENERATING_DESCRIPTIONS' || project.status === 'GENERATING_IMAGES' || project.pages?.some((page) =>
+      page.status === 'GENERATING_DESCRIPTION' || page.status === 'GENERATING' || page.status === 'QUEUED'
+    )
   ).length;
-  const inProgressCount = Math.max(totalProjects - completedCount - generatingCount, 0);
+  const inProgressCount = projectStats?.in_progress ?? Math.max(totalProjects - completedCount - generatingCount, 0);
 
   const loadProjects = useCallback(async (page: number) => {
     setIsLoading(true);
@@ -138,6 +141,7 @@ export const History: React.FC = () => {
         const normalizedProjects = response.data.projects.map(normalizeProject);
         setProjects(normalizedProjects);
         setTotalProjects(response.data.total ?? 0);
+        setProjectStats(response.data.stats ?? null);
       }
     } catch (err: any) {
       console.error('加载项目失败:', err);

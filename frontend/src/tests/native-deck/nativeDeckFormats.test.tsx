@@ -35,8 +35,8 @@ const slides: NativeSlideSpec[] = [
 
 function installDeckDom() {
   document.body.innerHTML = `<div id="deck">
-    <section class="slide"><div class="native-slide"><h1>第一页</h1></div></section>
-    <section class="slide"><div class="native-slide"><h1>第二页</h1></div></section>
+    <section class="slide"><div class="native-slide" data-native-layout-ready="true"><h1>第一页</h1></div></section>
+    <section class="slide"><div class="native-slide" data-native-layout-ready="true"><h1>第二页</h1></div></section>
   </div>`
 }
 
@@ -88,7 +88,7 @@ describe('native deck offline HTML export', () => {
   it('embeds layout CSS, rendered pages, page JSON and browser navigation in one file', async () => {
     installDeckDom()
 
-    const html = await readBlob(exportNativeDeckHtml({ title: '离线演示', slides }))
+    const html = await readBlob(await exportNativeDeckHtml({ title: '离线演示', slides }))
 
     expect(html).toContain('<style>')
     expect(html).toContain('.native-slide')
@@ -100,22 +100,30 @@ describe('native deck offline HTML export', () => {
     expect(html).not.toMatch(/<(?:script|link|img)[^>]+(?:src|href)=["']https?:/i)
   })
 
-  it('rejects project file media instead of producing a broken offline file', () => {
+  it('embeds project file media instead of producing a broken offline file', async () => {
     installDeckDom()
+    document.querySelector('.native-slide')?.insertAdjacentHTML('beforeend', '<img src="/files/project/image.png">')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, blob: async () => new Blob(['image'], { type: 'image/png' }) }))
     const withProjectMedia: NativeSlideSpec[] = [{
       pageId: 'page-1',
       layout: 'core01_case',
       props: { title: '案例', image: '/files/project/image.png' },
     }]
 
-    expect(() => exportNativeDeckHtml({ title: '离线演示', slides: withProjectMedia })).toThrow('/files/project/image.png')
+    const html = await readBlob(await exportNativeDeckHtml({ title: '离线演示', slides: withProjectMedia }))
+
+    expect(html).toContain('data:image/png;base64')
+    expect(html).not.toContain('/files/project/image.png')
+    vi.unstubAllGlobals()
   })
 
-  it('rejects remote DOM resources instead of depending on a network connection', () => {
+  it('reports a precise error when an external DOM resource cannot be embedded', async () => {
     installDeckDom()
     document.querySelector('.native-slide')?.insertAdjacentHTML('beforeend', '<img src="https://example.com/image.png">')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false }))
 
-    expect(() => exportNativeDeckHtml({ title: '离线演示', slides })).toThrow('https://example.com/image.png')
+    await expect(exportNativeDeckHtml({ title: '离线演示', slides })).rejects.toThrow('https://example.com/image.png')
+    vi.unstubAllGlobals()
   })
 
   it('preserves optional auto-advance metadata in offline HTML', async () => {
@@ -124,7 +132,7 @@ describe('native deck offline HTML export', () => {
       ...slide,
       props: { ...slide.props, __animation: { advanceAfter: index === 0 ? 5 : 0, elementEnter: 'fade', elementTrigger: 'click', elementEasing: 'ease-in-out' } },
     }))
-    const html = await readBlob(exportNativeDeckHtml({ title: '自动演示', slides: autoSlides }))
+    const html = await readBlob(await exportNativeDeckHtml({ title: '自动演示', slides: autoSlides }))
 
     expect(html).toContain('DOMContentLoaded')
     expect(html).toContain('advanceElement')
@@ -146,10 +154,22 @@ describe('native deck offline HTML export', () => {
       ...slide,
       props: { ...slide.props, __animation: { internal: false } },
     }))
-    const html = await readBlob(exportNativeDeckHtml({ title: '静态演示', slides: staticSlides }))
+    const html = await readBlob(await exportNativeDeckHtml({ title: '静态演示', slides: staticSlides }))
 
     expect(html).toContain('data-native-internal="0"')
     expect(html).toContain('.slide[data-native-internal="0"] *{animation:none!important}')
+  })
+
+  it('preserves Huashu visual-system attributes in offline HTML', async () => {
+    installDeckDom()
+    const native = document.querySelector('.native-slide')!
+    native.setAttribute('data-design-engine', 'huashu_native')
+    native.setAttribute('data-visual-system', 'signal')
+
+    const html = await readBlob(await exportNativeDeckHtml({ title: 'Huashu 演示', slides }))
+
+    expect(html).toContain('data-design-engine="huashu_native"')
+    expect(html).toContain('data-visual-system="signal"')
   })
 })
 

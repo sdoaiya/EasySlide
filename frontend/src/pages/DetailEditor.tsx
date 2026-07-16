@@ -988,28 +988,30 @@ export const DetailEditor: React.FC = () => {
           )}
         </div>
       </main>
-      <footer data-testid="detail-editor-footer" className="fixed inset-x-0 bottom-0 z-40 flex min-h-[68px] items-center justify-between border-t border-sky-100 bg-white/95 px-4 py-2 shadow-[0_-8px_24px_rgba(15,23,42,0.12)] backdrop-blur-sm dark:border-border-primary dark:bg-background-secondary/95 dark:shadow-none">
-        <Button
-          variant="secondary"
-          size="sm"
-          icon={<ArrowLeft size={16} />}
-          onClick={() => navigate(`/project/${projectId}/outline`)}
-          disabled={isRenovationProcessing}
-        >
-          {t('common.previous')}
-        </Button>
-        <Button
-          variant="primary"
-          size="sm"
-          icon={<ArrowRight size={16} />}
-          onClick={() => void handleNext()}
-          disabled={!hasAllDescriptions || isRenovationProcessing}
-          title={!hasAllDescriptions && !isRenovationProcessing ? t('detail.disabledNextTip', { count: missingDescCount }) : undefined}
-        >
-          {currentProject.render_mode === 'native'
-            ? t('detail.generateNative')
-            : t('detail.generateImages')}
-        </Button>
+      <footer data-testid="detail-editor-footer" className="pointer-events-none fixed bottom-5 left-1/2 z-50 w-[calc(100vw-32px)] max-w-xl -translate-x-1/2">
+        <div data-testid="detail-editor-footer-bar" className="pointer-events-auto flex min-h-[56px] items-center justify-between gap-3 rounded-2xl border border-sky-100/80 bg-white/95 px-3 py-2 shadow-[0_16px_45px_rgba(15,23,42,0.18)] backdrop-blur-xl dark:border-border-primary dark:bg-background-secondary/95 dark:shadow-none">
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<ArrowLeft size={16} />}
+            onClick={() => navigate(`/project/${projectId}/outline`)}
+            disabled={isRenovationProcessing}
+          >
+            {t('common.previous')}
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            icon={<ArrowRight size={16} />}
+            onClick={() => void handleNext()}
+            disabled={!hasAllDescriptions || isRenovationProcessing}
+            title={!hasAllDescriptions && !isRenovationProcessing ? t('detail.disabledNextTip', { count: missingDescCount }) : undefined}
+          >
+            {currentProject.render_mode === 'native'
+              ? t('detail.generateNative')
+              : t('detail.generateImages')}
+          </Button>
+        </div>
       </footer>
       <ToastContainer />
       {ConfirmDialog}

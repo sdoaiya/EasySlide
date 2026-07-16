@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
-import { ArrowLeft, Download, Home, ListTodo, Maximize2, MonitorPlay, Redo2, RefreshCw, Settings2, Sparkles, Undo2, ZoomIn, ZoomOut } from 'lucide-react'
+import { ArrowLeft, Download, Home, ListTodo, Maximize2, MonitorPlay, Redo2, RefreshCw, Settings2, Sparkles, Undo2, X, ZoomIn, ZoomOut } from 'lucide-react'
 import type { NativeSlideSpec } from '@/native-deck/types'
 import { useNativeDeckStore } from '@/store/useNativeDeckStore'
 import { useProjectStore } from '@/store/useProjectStore'
@@ -14,7 +14,7 @@ import { exportNativeDeckPdf } from '@/native-deck/exportNativeDeckPdf'
 import { captureNativeDeckFrames } from '@/native-deck/exportNativeDeckFrames'
 import { migrateNativeProps } from '@/native-deck/nativeLayoutMigration'
 import { useExportTasksStore, type ExportTask } from '@/store/useExportTasksStore'
-import { addPage, completeNativePptxExport, createNativePptxExport, deletePage, exportNativeVideo, getTaskStatus, updateNativePptxProgress, updatePagesOrder } from '@/api/endpoints'
+import { addPage, completeNativePptxExport, createNativePptxExport, deletePage, exportNativeVideo, getNativePageVersions, getTaskStatus, restoreNativePageVersion, type NativePageVersion, updateNativePptxProgress, updatePagesOrder } from '@/api/endpoints'
 import { ExportTasksPanel } from '@/components/shared/ExportTasksPanel'
 import { MaterialSelector } from '@/components/shared/MaterialSelector'
 import { NativeImageSettingsDialog } from './NativeImageSettingsDialog'
@@ -55,8 +55,9 @@ function validate(slide: NativeSlideSpec, contract: NativeLayoutContract | undef
 
 export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutContracts, pageGenerationAction, pageGenerationStatus, singlePageGenerationAction, autoSaveDelay = 800, onBack, onHome }: NativeDeckWorkspaceProps) {
   const { slides, selectedPageId, dirtyPageIds, savePage } = useNativeDeckStore()
-  const { currentProject } = useProjectStore()
+  const { currentProject, syncProject } = useProjectStore()
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
+  const saveAttempts = useRef(new Map<string, number>())
   const historyPast = useRef<NativeSlideSpec[][]>([])
   const historyFuture = useRef<NativeSlideSpec[][]>([])
   const historyGroup = useRef<{ pageId: string; at: number }>({ pageId: '', at: 0 })
@@ -70,6 +71,7 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
   const [exportError, setExportError] = useState('')
   const [zoom, setZoom] = useState(1)
   const [presenting, setPresenting] = useState(false)
+  const [pageVersions, setPageVersions] = useState<NativePageVersion[]>([])
   const { addTask, updateTask, pollTask, tasks } = useExportTasksStore()
   const hydratedInitialSlides = useMemo(() => initialSlides.map((slide) => {
     const contract = layoutContracts.find((item) => item.layout === slide.layout)
@@ -78,25 +80,11 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
   const sourceKey = JSON.stringify(hydratedInitialSlides)
 
   useEffect(() => {
-    const syncFullscreen = () => setPresenting(Boolean(document.fullscreenElement))
-    document.addEventListener('fullscreenchange', syncFullscreen)
-    return () => document.removeEventListener('fullscreenchange', syncFullscreen)
-  }, [])
-
-  const togglePresentation = async () => {
-    try {
-      if (document.fullscreenElement) await document.exitFullscreen()
-      else await document.documentElement.requestFullscreen?.()
-    } catch {
-      setPresenting(false)
-    }
-  }
-
-  useEffect(() => {
     if (activeProjectId.current !== projectId) {
       activeProjectId.current = projectId
       timers.current.forEach(clearTimeout)
       timers.current.clear()
+      saveAttempts.current.clear()
       useNativeDeckStore.setState({ slides: hydratedInitialSlides, selectedPageId: hydratedInitialSlides[0]?.pageId ?? null, dirtyPageIds: new Set() })
       setSaveError('')
       return
@@ -123,6 +111,80 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
   const errors = useMemo(() => selectedSlide ? validate(selectedSlide, contract) : {}, [contract, selectedSlide])
 
   const selectPage = (pageId: string) => useNativeDeckStore.setState({ selectedPageId: pageId })
+  const loadPageVersions = async (pageId: string) => {
+    const response = await getNativePageVersions(projectId, pageId)
+    setPageVersions(response.data?.versions || [])
+  }
+
+  useEffect(() => {
+    if (!selectedPageId) {
+      setPageVersions([])
+      return
+    }
+    void loadPageVersions(selectedPageId).catch(() => setPageVersions([]))
+  }, [projectId, selectedPageId, sourceKey])
+
+  const restorePageVersion = async (versionId: string) => {
+    if (!selectedSlide || versionId === 'current') return
+    try {
+      const response = await restoreNativePageVersion(projectId, selectedSlide.pageId, versionId)
+      const responseData = response.data as unknown as { native_layout?: string; native_props?: Record<string, unknown>; data?: { native_layout?: string; native_props?: Record<string, unknown> } }
+      const page = responseData?.native_layout && responseData?.native_props ? responseData : responseData?.data
+      if (!page?.native_layout || !page.native_props) throw new Error('版本恢复响应无效')
+
+      // Sync the project first, then apply the returned page locally. This prevents
+      // a stale project snapshot from overwriting the restored version.
+      await syncProject(projectId)
+      useNativeDeckStore.setState((state) => ({
+        slides: state.slides.map((slide) => slide.pageId === selectedSlide.pageId ? { ...slide, layout: page.native_layout!, props: page.native_props!, pending: false } : slide),
+        dirtyPageIds: new Set([...state.dirtyPageIds].filter((pageId) => pageId !== selectedSlide.pageId)),
+      }))
+      await loadPageVersions(selectedSlide.pageId)
+      setSaveError('')
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : '版本切换失败，请重试')
+    }
+  }
+
+  const startPresentation = async () => {
+    setPresenting(true)
+    try {
+      if (!document.fullscreenElement) await document.documentElement.requestFullscreen?.()
+    } catch {
+      // The in-app presentation layer remains available when system fullscreen is unavailable.
+    }
+  }
+
+  const stopPresentation = async () => {
+    setPresenting(false)
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen?.()
+    } catch {
+      // The in-app presentation layer has already been closed.
+    }
+  }
+  const scheduleSave = (pageId: string, delay = autoSaveDelay) => {
+    const pending = timers.current.get(pageId)
+    if (pending) clearTimeout(pending)
+    timers.current.set(pageId, setTimeout(() => {
+      timers.current.delete(pageId)
+      void savePage(projectId, pageId)
+        .then(() => {
+          saveAttempts.current.delete(pageId)
+          setSaveError('')
+        })
+        .catch(() => {
+          const attempt = (saveAttempts.current.get(pageId) || 0) + 1
+          if (attempt >= 3) {
+            saveAttempts.current.delete(pageId)
+            setSaveError('自动保存失败，请检查网络后重试')
+            return
+          }
+          saveAttempts.current.set(pageId, attempt)
+          scheduleSave(pageId, attempt * 1000)
+        })
+    }, delay))
+  }
   const queueSlideUpdate = (updated: NativeSlideSpec, recordHistory = true) => {
     const now = Date.now()
     const mergeHistory = recordHistory
@@ -142,13 +204,9 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
     }))
     setSaveError('')
 
-    const pending = timers.current.get(updated.pageId)
-    if (pending) clearTimeout(pending)
+    saveAttempts.current.delete(updated.pageId)
     if (Object.keys(nextErrors).length) return
-    timers.current.set(updated.pageId, setTimeout(() => {
-      timers.current.delete(updated.pageId)
-      void savePage(projectId, updated.pageId).catch(() => setSaveError('自动保存失败，请检查网络后重试'))
-    }, autoSaveDelay))
+    scheduleSave(updated.pageId)
   }
   const updateProps = (props: Record<string, unknown>) => {
     if (selectedSlide) queueSlideUpdate({ ...selectedSlide, props })
@@ -295,7 +353,7 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
       if (format !== 'pptx') {
         const blob = format === 'pdf'
           ? await exportNativeDeckPdf({ title: exportTitle })
-          : exportNativeDeckHtml({ title: exportTitle, slides })
+          : await exportNativeDeckHtml({ title: exportTitle, slides })
         const report = {
           slideCount: slides.length,
           textObjects: 0,
@@ -403,7 +461,7 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
 
   return (
     <WorkspaceShell
-      hidePanelToggles
+      hideSidebarToggle
       hideStatusBar
       softBorders
       sidebarWidth="264px"
@@ -425,14 +483,16 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
             <button type="button" aria-label="重做" title="重做" disabled={!historyFuture.current.length} onClick={redo} className="hidden h-10 w-9 items-center justify-center rounded-lg hover:bg-background-hover disabled:opacity-30 md:inline-flex"><Redo2 size={17} aria-hidden="true" /></button>
             <button type="button" onClick={() => media.setSettingsOpen(true)} className="hidden h-10 items-center gap-2 rounded-lg px-3 text-sm font-semibold hover:bg-background-hover lg:inline-flex"><Settings2 size={17} />项目设置</button>
             {media.pages.length > 0 && (
-              <button type="button" aria-label={media.running ? (media.paused ? '继续生成' : '暂停生成') : '批量生成'} title={media.remaining > 0 ? `批量生成 ${media.remaining} 张图片` : '没有待生成图片'} disabled={!media.running && media.remaining === 0} onClick={media.running ? (media.paused ? media.resume : media.pause) : media.start} className="hidden h-10 items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 text-sm font-semibold text-sky-700 hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-45 lg:inline-flex"><Sparkles size={17} />{media.running ? (media.paused ? '继续生成' : '暂停生成') : '批量生成'}</button>
+              <button type="button" aria-label={media.running ? (media.paused ? '继续生成图片' : '暂停生成图片') : '批量生成图片'} title={media.remaining > 0 ? `批量生成 ${media.remaining} 张图片` : '没有待生成图片'} disabled={!media.running && media.remaining === 0} onClick={media.running ? (media.paused ? media.resume : media.pause) : media.start} className="hidden h-10 items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 text-sm font-semibold text-sky-700 hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-45 lg:inline-flex"><Sparkles size={17} />{media.running ? (media.paused ? '继续生成图片' : '暂停生成图片') : '批量生成图片'}</button>
             )}
-            {pageGenerationAction && <button type="button" onClick={pageGenerationAction.onClick} className="hidden h-10 items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 text-sm font-semibold text-sky-700 hover:bg-sky-100 lg:inline-flex"><Sparkles size={17} />{pageGenerationAction.label}</button>}
             <button type="button" onClick={() => window.location.reload()} className="hidden h-10 items-center gap-2 rounded-lg px-3 text-sm font-semibold hover:bg-background-hover md:inline-flex"><RefreshCw size={17} />刷新</button>
-            <button type="button" aria-label={presenting ? '退出演示模式' : '演示模式'} title={presenting ? '退出演示模式' : '演示模式'} onClick={() => void togglePresentation()} className="hidden h-10 items-center gap-2 rounded-lg px-3 text-sm font-semibold hover:bg-background-hover md:inline-flex"><MonitorPlay size={17} />{presenting ? '退出演示' : '演示'}</button>
-            <button type="button" aria-label="导出任务" title="导出任务" onClick={() => setShowTasks((value) => !value)} className="relative flex h-10 items-center gap-1 rounded-lg px-2 text-sm font-semibold hover:bg-background-hover">
-              <ListTodo size={17} aria-hidden="true" />{tasks.filter((task) => task.projectId === projectId).length || 0}
-            </button>
+            <button type="button" aria-label={presenting ? '退出演示模式' : '演示模式'} title={presenting ? '退出演示模式' : '演示模式'} onClick={() => void (presenting ? stopPresentation() : startPresentation())} className="hidden h-10 items-center gap-2 rounded-lg px-3 text-sm font-semibold hover:bg-background-hover md:inline-flex"><MonitorPlay size={17} />{presenting ? '退出演示' : '演示'}</button>
+            <div className="relative">
+              <button type="button" aria-label="导出任务" title="导出任务" onClick={() => setShowTasks((value) => !value)} className="relative flex h-10 items-center gap-1 rounded-lg px-2 text-sm font-semibold hover:bg-background-hover">
+                <ListTodo size={17} aria-hidden="true" />{tasks.filter((task) => task.projectId === projectId).length || 0}
+              </button>
+              {showTasks && <div className="absolute right-0 top-full z-50 mt-2 w-[min(380px,calc(100vw-2rem))]"><ExportTasksPanel projectId={projectId} onRetry={(task) => void retryExport(task)} /></div>}
+            </div>
             <div className="hidden items-center gap-1 rounded-lg border border-slate-200 bg-white px-1 dark:border-border-primary dark:bg-background-secondary md:flex">
               <button type="button" aria-label="缩小画布" title="缩小画布" disabled={zoom <= 0.5} onClick={() => setZoom((value) => Math.max(0.5, value - 0.1))} className="flex h-8 w-8 items-center justify-center rounded hover:bg-background-hover disabled:opacity-35"><ZoomOut size={15} /></button>
               <span className="w-12 text-center text-xs text-foreground-secondary">{Math.round(zoom * 100)}%</span>
@@ -448,13 +508,11 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
           </div>
         </div>
       )}
-      sidebar={<NativeDeckPageRail slides={slides} selectedPageId={selectedPageId} onSelect={selectPage} onAdd={() => void createSlide()} onDuplicate={(pageId) => void createSlide(slides.find((slide) => slide.pageId === pageId))} onDelete={(pageId) => void removeSlide(pageId)} onMove={(pageId, direction) => void moveSlide(pageId, direction)} pageAction={pageGenerationAction} pageGenerationAction={singlePageGenerationAction || (media.pages.length > 0 ? { label: '生成本页', disabled: media.running, onClick: media.runPage } : undefined)} imageAction={media.pages.length > 0 ? { label: media.running ? (media.paused ? '继续生成' : '暂停生成') : '批量生成', disabled: !media.running && media.remaining === 0, onClick: media.running ? (media.paused ? media.resume : media.pause) : media.start } : undefined} />}
-      inspector={<NativeDeckPropertyPanel slide={selectedSlide} contract={contract} contracts={layoutContracts} errors={errors} onChange={updateProps} onLayoutChange={changeLayout} onApplyAnimation={applyAnimationToAll} mediaActions={media.mediaActions} />}
-      presenting={presenting}
+      sidebar={<NativeDeckPageRail slides={slides} selectedPageId={selectedPageId} onSelect={selectPage} onAdd={() => void createSlide()} onDuplicate={(pageId) => void createSlide(slides.find((slide) => slide.pageId === pageId))} onDelete={(pageId) => void removeSlide(pageId)} onMove={(pageId, direction) => void moveSlide(pageId, direction)} pageAction={pageGenerationAction} pageGenerationAction={singlePageGenerationAction || (media.pages.length > 0 ? { label: '生成本页', disabled: media.running, onClick: media.runPage } : undefined)} />}
+      inspector={<NativeDeckPropertyPanel slide={selectedSlide} contract={contract} contracts={layoutContracts} errors={errors} onChange={updateProps} onLayoutChange={changeLayout} onRegenerate={selectedSlide && singlePageGenerationAction ? () => singlePageGenerationAction.onClick(selectedSlide.pageId) : undefined} versions={pageVersions} onRestoreVersion={(versionId) => void restorePageVersion(versionId)} onApplyAnimation={applyAnimationToAll} mediaActions={media.mediaActions} />}
     >
       <div className="relative flex h-full min-w-0 flex-col">
-        {saveError && <div className="absolute bottom-4 left-1/2 z-20 -translate-x-1/2 rounded-lg border border-red-200 bg-red-50/95 px-3 py-2 text-xs text-red-700 shadow-sm" role="alert">{saveError}</div>}
-        <span className="sr-only" aria-live="polite">{saveStatus}</span>
+        <span className="sr-only" role="status" aria-live="polite">{saveStatus}</span>
         <div className="min-h-0 flex-1">
           <NativeDeckCanvas
             slide={selectedSlide}
@@ -463,19 +521,21 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
             pageCount={slides.length}
             onPrevious={() => slides[selectedIndex - 1] && selectPage(slides[selectedIndex - 1].pageId)}
             onNext={() => slides[selectedIndex + 1] && selectPage(slides[selectedIndex + 1].pageId)}
-            presenting={presenting}
+            presenting={false}
             emptyAction={pageGenerationAction}
+            generationStatus={pageGenerationStatus}
+            onPropsChange={updateProps}
+            mediaContract={contract}
+            onMediaSelect={media.mediaActions.onSelect}
+            onMediaUpload={media.mediaActions.onUpload}
           />
         </div>
-        {pageGenerationStatus && pageGenerationStatus.status !== 'COMPLETED' && <div className={`flex shrink-0 items-center justify-center gap-3 border-t px-4 py-2 text-sm ${pageGenerationStatus.status === 'FAILED' ? 'border-red-200 bg-red-50 text-red-700' : 'border-sky-100 bg-white/90 text-sky-700'}`} role={pageGenerationStatus.status === 'FAILED' ? 'alert' : 'status'}>
-          <span>{pageGenerationStatus.status === 'FAILED' ? `页面生成失败：${pageGenerationStatus.error || '请稍后重试'}` : pageGenerationStatus.status === 'PAUSED' ? `生成已暂停 ${pageGenerationStatus.completed}/${pageGenerationStatus.total}` : `正在生成页面 ${pageGenerationStatus.completed}/${pageGenerationStatus.total}`}{pageGenerationStatus.failed > 0 && `，失败 ${pageGenerationStatus.failed}`}</span>
-          {pageGenerationStatus.status === 'FAILED' && pageGenerationStatus.onResume && <button type="button" onClick={pageGenerationStatus.onResume} className="rounded-md bg-cyan-600 px-3 py-1 text-xs font-medium text-white">重新生成</button>}
-          {pageGenerationStatus.status === 'PAUSED' && pageGenerationStatus.onResume && <button type="button" onClick={pageGenerationStatus.onResume} className="rounded-md bg-cyan-600 px-3 py-1 text-xs font-medium text-white">继续生成</button>}
-          {(pageGenerationStatus.status === 'PENDING' || pageGenerationStatus.status === 'PROCESSING') && pageGenerationStatus.onPause && <button type="button" onClick={pageGenerationStatus.onPause} className="rounded-md border border-sky-200 bg-white px-3 py-1 text-xs font-medium text-sky-700">暂停</button>}
-        </div>}
       </div>
       {exportSurfaceVisible && <NativeDeckExportSurface slides={slides} />}
-      {showTasks && <div className="fixed right-4 top-24 z-50 w-[min(380px,calc(100vw-2rem))]"><ExportTasksPanel projectId={projectId} onRetry={(task) => void retryExport(task)} /></div>}
+      {presenting && selectedSlide && <div role="dialog" aria-label="演示模式" className="fixed inset-0 z-[100] bg-[#eef7fb]">
+        <button type="button" aria-label="退出演示模式" title="退出演示" onClick={() => void stopPresentation()} className="absolute right-5 top-5 z-10 flex h-10 w-10 items-center justify-center rounded-lg bg-black/50 text-white hover:bg-black/70"><X size={20} /></button>
+        <NativeDeckCanvas slide={selectedSlide} pageIndex={selectedIndex} pageCount={slides.length} onPrevious={() => slides[selectedIndex - 1] && selectPage(slides[selectedIndex - 1].pageId)} onNext={() => slides[selectedIndex + 1] && selectPage(slides[selectedIndex + 1].pageId)} presenting mediaContract={contract} />
+      </div>}
       <NativeImageSettingsDialog open={media.settingsOpen} settings={media.settings} pages={media.pages} saving={media.savingSettings} onClose={() => media.setSettingsOpen(false)} onSave={(settings) => void media.saveSettings(settings)} />
       <MaterialSelector projectId={projectId} isOpen={Boolean(media.selectedSlot)} multiple={false} maxSelection={1} onClose={media.closeSelector} onSelect={(materials) => { if (materials[0]) media.useSelectedMaterial(materials[0].url) }} />
     </WorkspaceShell>

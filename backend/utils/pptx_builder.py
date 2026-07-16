@@ -356,11 +356,16 @@ class PPTXBuilder:
             return
         font.name = font_family
         r_pr = font._rPr
-        east_asian = r_pr.find(qn('a:ea'))
-        if east_asian is None:
-            east_asian = OxmlElement('a:ea')
-            r_pr.get_or_add_latin().addnext(east_asian)
-        east_asian.set('typeface', font_family)
+        latin = r_pr.find(qn('a:latin'))
+        if latin is None:
+            latin = r_pr.get_or_add_latin()
+        latin.set('typeface', font_family)
+        for tag in ('a:ea', 'a:cs'):
+            run_font = r_pr.find(qn(tag))
+            if run_font is None:
+                run_font = OxmlElement(tag)
+                r_pr.append(run_font)
+            run_font.set('typeface', font_family)
 
     @staticmethod
     def _apply_font_effects(font, font_effects: Any, character_spacing_pt: Any = None):
