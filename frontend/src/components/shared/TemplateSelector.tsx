@@ -71,6 +71,18 @@ const presetTemplateAssets = [
   { id: '8', key: 'fireTraining', file: 'template_tuku_fireTraining.png' },
 ];
 
+const gordenTemplateCategories = [
+  { id: 'all', label: '全部', keywords: [] },
+  { id: 'business', label: '商务汇报', keywords: ['商务', '汇报', '工作总结', '战略', '咨询', '商业', '大厂'] },
+  { id: 'data', label: '数据图表', keywords: ['数据', '图表', '业绩', '可视化', '经营', 'KPI'] },
+  { id: 'education', label: '教学培训', keywords: ['教学', '课件', '培训', '少儿'] },
+  { id: 'party', label: '党政红色', keywords: ['党政', '红色', '爱国', '青年', '主题教育'] },
+  { id: 'academic', label: '论文答辩', keywords: ['开题', '学术', '论文', '答辩', '名校'] },
+  { id: 'tech', label: '技术架构', keywords: ['架构', '技术', '系统', '拓扑'] },
+  { id: 'operations', label: '运营产品', keywords: ['运营', '产品', '互联网', '私域'] },
+  { id: 'competition', label: '竞聘述职', keywords: ['竞聘', '述职', '晋升'] },
+];
+
 interface TemplateSelectorProps {
   onSelect: (templateFile: File | null, templateId?: string) => void;
   selectedTemplateId?: string | null;
@@ -94,6 +106,7 @@ export const TemplateSelector: React.FC<TemplateSelectorProps> = ({
   const [isMaterialSelectorOpen, setIsMaterialSelectorOpen] = useState(false);
   const [deletingTemplateId, setDeletingTemplateId] = useState<string | null>(null);
   const [saveToLibrary, setSaveToLibrary] = useState(true);
+  const [selectedGordenCategory, setSelectedGordenCategory] = useState('all');
   const { show, ToastContainer } = useToast();
 
   const presetTemplates = presetTemplateAssets.map((template) => ({
@@ -104,10 +117,20 @@ export const TemplateSelector: React.FC<TemplateSelectorProps> = ({
   }));
 
   const gordenTemplates = GORDEN_TEMPLATE_PACKS;
+  const selectedGordenTemplate = findGordenTemplatePack(selectedTemplateId);
+  const activeGordenCategory = gordenTemplateCategories.find((category) => category.id === selectedGordenCategory) || gordenTemplateCategories[0];
+  const visibleGordenTemplates = activeGordenCategory.id === 'all'
+    ? gordenTemplates
+    : gordenTemplates.filter((template) => {
+      const searchable = [template.name, template.style, ...template.tags].join(' ');
+      return activeGordenCategory.keywords.some((keyword) => searchable.includes(keyword));
+    });
 
   useEffect(() => {
-    loadUserTemplates();
-  }, []);
+    if (mode === 'all' || mode === 'mine') {
+      loadUserTemplates();
+    }
+  }, [mode]);
 
   const loadUserTemplates = async () => {
     setIsLoadingTemplates(true);
@@ -275,8 +298,61 @@ export const TemplateSelector: React.FC<TemplateSelectorProps> = ({
                 <p className="mt-0.5 text-xs text-gray-500 dark:text-foreground-tertiary">21 套中文场景模板，按视觉风格作为图片生成参考</p>
               </div>
             </div>
+
+            <div className="mb-3 flex flex-wrap gap-2">
+              {gordenTemplateCategories.map((category) => {
+                const selected = selectedGordenCategory === category.id;
+                return (
+                  <button
+                    key={category.id}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => setSelectedGordenCategory(category.id)}
+                    className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                      selected
+                        ? 'border-cyan-500 bg-cyan-50 text-cyan-700 dark:bg-cyan-500/15 dark:text-cyan-200'
+                        : 'border-gray-200 bg-white text-gray-600 hover:border-cyan-300 hover:text-cyan-700 dark:border-border-primary dark:bg-background-secondary dark:text-foreground-secondary'
+                    }`}
+                  >
+                    {category.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {selectedGordenTemplate && (
+              <div
+                role="region"
+                aria-label="已选 Gorden 模板"
+                className="mb-3 rounded-lg border border-cyan-200 bg-cyan-50/70 p-3 dark:border-cyan-500/30 dark:bg-cyan-500/10"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded bg-cyan-600 px-2 py-0.5 text-[11px] font-semibold text-white">已选模板</span>
+                  <span className="text-sm font-semibold text-gray-900 dark:text-white">{selectedGordenTemplate.name}</span>
+                  <span className="text-xs text-gray-500 dark:text-foreground-tertiary">{selectedGordenTemplate.pageCount} 页</span>
+                  <span className="text-xs text-gray-500 dark:text-foreground-tertiary">{selectedGordenTemplate.aspectRatio}</span>
+                </div>
+                <p className="mt-2 text-xs leading-relaxed text-gray-600 dark:text-foreground-secondary">{selectedGordenTemplate.style}</p>
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  {selectedGordenTemplate.colors.map((color) => (
+                    <span
+                      key={color}
+                      className="h-4 w-4 rounded-full border border-white shadow-sm ring-1 ring-black/10"
+                      style={{ backgroundColor: color }}
+                      title={color}
+                    />
+                  ))}
+                  {selectedGordenTemplate.tags.map((tag) => (
+                    <span key={tag} className="rounded-full bg-white/80 px-2 py-0.5 text-[11px] text-gray-600 dark:bg-white/10 dark:text-foreground-secondary">
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              {gordenTemplates.map((template) => (
+              {visibleGordenTemplates.map((template) => (
                 <button
                   type="button"
                   key={template.id}
