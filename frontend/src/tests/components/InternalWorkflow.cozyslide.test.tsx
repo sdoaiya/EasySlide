@@ -320,6 +320,7 @@ describe('EasySlide internal workflow chrome', () => {
       status: 'COMPLETED',
       filename: '年度经营复盘.pptx',
     }));
+    expect((window as any).electronAPI.saveDownload).not.toHaveBeenCalled();
   });
 
   it('shows backend ElevenLabs voice errors when enabling TTS fails', async () => {

@@ -1267,16 +1267,6 @@ export const SlidePreview: React.FC = () => {
             filename,
             pageIds: pageIds,
           });
-          if (window.electronAPI?.saveDownload) {
-            await window.electronAPI.saveDownload(downloadUrl, filename);
-          } else {
-            const link = document.createElement('a');
-            link.href = downloadUrl;
-            link.download = filename || '';
-            document.body.appendChild(link);
-            link.click();
-            link.remove();
-          }
         }
       } else if (type === 'editable-pptx') {
         // Async export - create processing task and start polling
