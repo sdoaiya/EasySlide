@@ -166,13 +166,71 @@ def _resolve_image_generation_workers(requested, configured):
     return min(MAX_IMAGE_GENERATION_WORKERS, max(1, value))
 
 
+IMAGE_DENSITY_HINTS = {
+    'sparse': ('轻量', '页面更留白，减少装饰和信息块，突出核心标题与 1-2 个关键视觉元素'),
+    'standard': ('标准', '保持常规商务 PPT 信息密度，标题、正文、图表与装饰均衡'),
+    'rich': ('丰富', '提高信息密度，可使用更多图表、卡片、标注和数据层级，但不得拥挤或遮挡文字'),
+}
+
+IMAGE_STYLE_HINTS = {
+    'theme': ('跟随模板', '优先延续当前模板或项目既有视觉风格'),
+    'business': ('商务简洁', '克制、清晰、适合汇报，避免夸张装饰'),
+    'tech': ('科技感', '现代科技视觉，可使用冷色、网格、发光线条或数据界面质感'),
+    'photo': ('真实图片感', '优先使用真实场景、产品摄影或高质量写实素材感'),
+    'flat': ('扁平插画', '使用干净扁平插画、几何图形和低复杂度图标风格'),
+}
+
+
+def _normalize_image_generation_choice(value, choices, default):
+    if isinstance(value, str) and value.strip() in choices:
+        return value.strip()
+    return default
+
+
+def _clean_image_style_prompt(value):
+    if not isinstance(value, str):
+        return ''
+    return value.strip()[:500]
+
+
+def _resolve_image_generation_options(options):
+    density = _normalize_image_generation_choice(
+        options.get('image_density') or options.get('density'),
+        IMAGE_DENSITY_HINTS,
+        'standard',
+    )
+    style = _normalize_image_generation_choice(
+        options.get('image_style') or options.get('style'),
+        IMAGE_STYLE_HINTS,
+        'theme',
+    )
+    custom_prompt = _clean_image_style_prompt(
+        options.get('image_style_prompt') or options.get('custom_prompt')
+    )
+    return density, style, custom_prompt
+
+
+def _build_image_generation_settings_prompt(density, style, custom_prompt):
+    density_label, density_hint = IMAGE_DENSITY_HINTS[density]
+    style_label, style_hint = IMAGE_STYLE_HINTS[style]
+    lines = [
+        f"信息密度：{density_label}。{density_hint}。",
+        f"视觉风格：{style_label}。{style_hint}。",
+    ]
+    if custom_prompt:
+        lines.append(f"用户补充图片风格要求：{custom_prompt}")
+    return "\n\n图片生成设置：\n" + "\n".join(f"- {line}" for line in lines)
+
+
 def _submit_image_generation_task(task, project, pages, options=None):
     """Submit a recoverable batch image task for pages that still need images."""
     options = options or {}
     file_service = FileService(current_app.config['UPLOAD_FOLDER'])
     use_template = options.get('use_template', True)
+    image_density, image_style, image_style_prompt = _resolve_image_generation_options(options)
     ref_image_path = file_service.get_template_path(project.id) if use_template else None
-    if not ref_image_path and not project.template_style and not has_gorden_template_pack(project.template_pack_id):
+    has_generation_style = image_style != 'theme' or bool(image_style_prompt)
+    if not ref_image_path and not project.template_style and not has_gorden_template_pack(project.template_pack_id) and not has_generation_style:
         raise ValueError("请先上传模板图片或添加风格描述。")
 
     outline = _reconstruct_outline_from_pages(get_filtered_pages(project.id, None))
@@ -203,6 +261,9 @@ def _submit_image_generation_task(task, project, pages, options=None):
             'use_template': use_template,
             'language': language,
             'max_workers': max_workers,
+            'image_density': image_density,
+            'image_style': image_style,
+            'image_style_prompt': image_style_prompt,
         },
         style_snapshot={
             'template_pack_id': project.template_pack_id,
@@ -230,6 +291,11 @@ def _submit_image_generation_task(task, project, pages, options=None):
     combined_requirements = project.extra_requirements or ""
     if project.template_style:
         combined_requirements += f"\n\nppt页面风格描述：\n\n{project.template_style}"
+    combined_requirements += _build_image_generation_settings_prompt(
+        image_density,
+        image_style,
+        image_style_prompt,
+    )
 
     try:
         task_manager.submit_task(

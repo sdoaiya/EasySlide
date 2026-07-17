@@ -1,5 +1,5 @@
 import { apiClient, getApiBaseUrl } from './client';
-import type { Project, Task, ApiResponse, CreateProjectRequest, Page, Material, NativeExportQualityReport, ProjectDashboardStats } from '@/types';
+import type { Project, Task, ApiResponse, CreateProjectRequest, Page, Material, NativeExportQualityReport, ProjectDashboardStats, ImageGenerationOptions } from '@/types';
 import type { Settings } from '../types/index';
 
 export type { Material };
@@ -419,11 +419,24 @@ export const refineDescriptions = async (
  * @param language 输出语言（可选，默认从 sessionStorage 获取）
  * @param pageIds 可选的页面ID列表，如果不提供则生成所有页面
  */
-export const generateImages = async (projectId: string, language?: OutputLanguage, pageIds?: string[]): Promise<ApiResponse> => {
-  const lang = language || await getStoredOutputLanguage();
+export const generateImages = async (
+  projectId: string,
+  language?: OutputLanguage,
+  pageIds?: string[],
+  options?: ImageGenerationOptions,
+): Promise<ApiResponse> => {
+  const lang = options?.language || language || await getStoredOutputLanguage();
   const response = await apiClient.post<ApiResponse>(
     `/api/projects/${projectId}/generate/images`,
-    { language: lang, page_ids: pageIds }
+    {
+      language: lang,
+      page_ids: pageIds,
+      max_workers: options?.maxWorkers,
+      use_template: options?.useTemplate,
+      image_density: options?.density,
+      image_style: options?.style,
+      image_style_prompt: options?.customPrompt?.trim() || undefined,
+    }
   );
   return response.data;
 };

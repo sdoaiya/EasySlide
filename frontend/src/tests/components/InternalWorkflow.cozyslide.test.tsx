@@ -209,6 +209,8 @@ function renderAt(path: string, element: React.ReactNode) {
 describe('EasySlide internal workflow chrome', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.removeItem('slidePreviewImageGenerationSettings');
+    localStorage.removeItem('skip1KResolutionWarning');
     mocks.exportTasks = [];
     mocks.store.currentProject.pages = [];
     mocks.store.currentProject.creation_type = 'ppt_renovation';
@@ -308,6 +310,46 @@ describe('EasySlide internal workflow chrome', () => {
     expect(screen.queryByRole('button', { name: /批量生成图片/ })).not.toBeInTheDocument();
   });
 
+  it('uses saved image generation settings when starting a batch', async () => {
+    mocks.store.currentProject.pages = [{
+      id: 'page-1',
+      page_id: 'page-1',
+      order_index: 0,
+      status: 'DESCRIPTION_GENERATED',
+      outline_content: { title: 'Slide 1', points: [] },
+      description_content: { text: 'Desc 1' },
+    }];
+    mocks.store.generateImages.mockResolvedValueOnce(undefined);
+    const endpoints = await import('@/api/endpoints');
+    vi.mocked(endpoints.getSettings).mockResolvedValueOnce({
+      data: { image_resolution: '2K' },
+    } as any);
+
+    renderAt('/project/project-1/preview', <SlidePreview />);
+
+    fireEvent.click(screen.getByRole('button', { name: '图片生成设置' }));
+    fireEvent.change(screen.getByLabelText('生成并发'), { target: { value: '2' } });
+    fireEvent.change(screen.getByLabelText('图片生成密度'), { target: { value: 'rich' } });
+    fireEvent.change(screen.getByLabelText('图片风格'), { target: { value: 'tech' } });
+    fireEvent.change(screen.getByLabelText('图片风格补充要求'), { target: { value: '蓝绿色科技感' } });
+    fireEvent.click(screen.getByLabelText('使用模板约束'));
+    fireEvent.click(screen.getByRole('button', { name: '保存图片生成设置' }));
+    fireEvent.click(screen.getByRole('button', { name: '开始生成 (1)' }));
+
+    await waitFor(() => {
+      expect(mocks.store.generateImages).toHaveBeenCalledWith(
+        ['page-1'],
+        {
+          maxWorkers: 2,
+          useTemplate: false,
+          density: 'rich',
+          style: 'tech',
+          customPrompt: '蓝绿色科技感',
+        },
+      );
+    });
+  });
+
   it('uses the primary image action to pause and resume an active generation task', () => {
     mocks.store.currentProject.pages = [{
       id: 'page-1',
@@ -377,7 +419,10 @@ describe('EasySlide internal workflow chrome', () => {
     fireEvent.click(screen.getByRole('button', { name: '生成选中页面 (1)' }));
 
     await waitFor(() => {
-      expect(mocks.store.generateImages).toHaveBeenCalledWith(['page-failed']);
+      expect(mocks.store.generateImages).toHaveBeenCalledWith(
+        ['page-failed'],
+        { maxWorkers: 4, useTemplate: true, density: 'standard', style: 'theme', customPrompt: '' },
+      );
     });
   });
 

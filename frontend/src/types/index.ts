@@ -90,6 +90,15 @@ export interface NativeImageSettings {
   custom_counts: Record<string, number>;
 }
 
+export interface ImageGenerationOptions {
+  maxWorkers?: number;
+  useTemplate?: boolean;
+  density?: 'sparse' | 'standard' | 'rich';
+  style?: 'theme' | 'business' | 'tech' | 'photo' | 'flat';
+  customPrompt?: string;
+  language?: 'zh' | 'ja' | 'en' | 'auto';
+}
+
 export interface NativeExportQualityReport {
   slideCount: number;
   textObjects: number;

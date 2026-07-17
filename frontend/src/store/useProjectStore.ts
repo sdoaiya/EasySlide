@@ -1,5 +1,5 @@
 ﻿import { create } from 'zustand';
-import type { Project, RenderMode, Task } from '@/types';
+import type { ImageGenerationOptions, Project, RenderMode, Task } from '@/types';
 import * as api from '@/api/endpoints';
 import {
   debounce,
@@ -149,7 +149,7 @@ interface ProjectState {
   generatePageDescription: (pageId: string, detailLevel?: string) => Promise<void>;
   regenerateRenovationPage: (pageId: string, keepLayout?: boolean) => Promise<void>;
   generatePageImage: (pageId: string, forceRegenerate?: boolean) => Promise<void>;
-  generateImages: (pageIds?: string[]) => Promise<void>;
+  generateImages: (pageIds?: string[], options?: ImageGenerationOptions) => Promise<void>;
   editPageImage: (
     pageId: string,
     editPrompt: string,
@@ -1045,7 +1045,7 @@ const debouncedUpdatePage = debounce(
   },
 
   // 生成图片（非阻塞，每个页面显示生成状态）
-  generateImages: async (pageIds?: string[]) => {
+  generateImages: async (pageIds?: string[], options?: ImageGenerationOptions) => {
     const { currentProject, pageGeneratingTasks } = get();
     if (!currentProject?.id) return;
 
@@ -1065,7 +1065,7 @@ const debouncedUpdatePage = debounce(
     
     try {
       // 调用批量生成 API
-      const response = await api.generateImages(currentProject.id, undefined, targetPageIds);
+      const response = await api.generateImages(currentProject.id, undefined, targetPageIds, options);
       const taskId = response.data?.task_id;
       
       if (taskId) {
@@ -1206,7 +1206,15 @@ const debouncedUpdatePage = debounce(
     if (!project) return;
     const task = project.active_image_tasks?.[0];
     if (!task) {
-      set({ activeImageTask: null });
+      set(state => {
+        const staleTaskId = state.activeImageTask?.task_id;
+        if (!staleTaskId) return { activeImageTask: null };
+        const nextTasks = { ...state.pageGeneratingTasks };
+        Object.entries(nextTasks).forEach(([pageId, taskId]) => {
+          if (taskId === staleTaskId) delete nextTasks[pageId];
+        });
+        return { activeImageTask: null, pageGeneratingTasks: nextTasks };
+      });
       return;
     }
     const savedPageIds = getUnfinishedImageTaskPageIds(task, project);

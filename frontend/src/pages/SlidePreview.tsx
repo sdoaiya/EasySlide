@@ -296,7 +296,7 @@ import { useProjectStore } from '@/store/useProjectStore';
 import { useExportTasksStore, type ExportTask, type ExportTaskType } from '@/store/useExportTasksStore';
 import { getImageUrl } from '@/api/client';
 import { getPageImageVersions, setCurrentImageVersion, updateProject, uploadTemplate, exportPPTX as apiExportPPTX, exportPDF as apiExportPDF, exportImages as apiExportImages, exportEditablePPTX as apiExportEditablePPTX, exportVideo as apiExportVideo, getSettings, getElevenLabsVoices } from '@/api/endpoints';
-import type { ImageVersion, DescriptionContent, ExportExtractorMethod, ExportInpaintMethod, Page, NarrationConfig } from '@/types';
+import type { ImageGenerationOptions, ImageVersion, DescriptionContent, ExportExtractorMethod, ExportInpaintMethod, Page, NarrationConfig } from '@/types';
 import { normalizeErrorMessage } from '@/utils';
 import { NativeDeckWorkspaceLoader } from '@/components/native-deck/NativeDeckWorkspaceLoader';
 import { buildNativeProjectSlides } from '@/native-deck/nativeProjectSlides';
@@ -344,6 +344,42 @@ const NARRATION_TONE_OPTIONS = [
   { value: 'storytelling-focused, emotional, and captivating', zh: '故事沉浸型', en: 'Storytelling and emotional' },
   { value: 'conversational, witty, and approachable', zh: '轻松聊天型', en: 'Conversational and witty' },
 ];
+
+const IMAGE_GENERATION_SETTINGS_KEY = 'slidePreviewImageGenerationSettings';
+type SlideImageGenerationSettings = Required<Pick<ImageGenerationOptions, 'maxWorkers' | 'useTemplate' | 'density' | 'style'>> & {
+  customPrompt: string;
+};
+
+const DEFAULT_IMAGE_GENERATION_SETTINGS: SlideImageGenerationSettings = {
+  maxWorkers: 4,
+  useTemplate: true,
+  density: 'standard',
+  style: 'theme',
+  customPrompt: '',
+};
+
+const clampImageWorkers = (value: unknown) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return DEFAULT_IMAGE_GENERATION_SETTINGS.maxWorkers;
+  return Math.min(4, Math.max(1, Math.round(numeric)));
+};
+
+const loadImageGenerationSettings = (): SlideImageGenerationSettings => {
+  try {
+    const raw = localStorage.getItem(IMAGE_GENERATION_SETTINGS_KEY);
+    if (!raw) return DEFAULT_IMAGE_GENERATION_SETTINGS;
+    const parsed = JSON.parse(raw) as Partial<ImageGenerationOptions>;
+    return {
+      maxWorkers: clampImageWorkers(parsed.maxWorkers),
+      useTemplate: parsed.useTemplate !== false,
+      density: ['sparse', 'standard', 'rich'].includes(String(parsed.density)) ? parsed.density as SlideImageGenerationSettings['density'] : 'standard',
+      style: ['theme', 'business', 'tech', 'photo', 'flat'].includes(String(parsed.style)) ? parsed.style as SlideImageGenerationSettings['style'] : 'theme',
+      customPrompt: typeof parsed.customPrompt === 'string' ? parsed.customPrompt : '',
+    };
+  } catch {
+    return DEFAULT_IMAGE_GENERATION_SETTINGS;
+  }
+};
 
 const DEFAULT_VIDEO_NARRATION_CONFIG: NarrationConfig = {
   speaker_persona: 'knowledgeable and patient university professor',
@@ -496,6 +532,9 @@ export const SlidePreview: React.FC = () => {
     currentProject?.export_high_fidelity_editable || false
   );
   const [isSavingExportSettings, setIsSavingExportSettings] = useState(false);
+  const [showImageGenerationSettings, setShowImageGenerationSettings] = useState(false);
+  const [imageGenerationSettings, setImageGenerationSettings] = useState(loadImageGenerationSettings);
+  const [draftImageGenerationSettings, setDraftImageGenerationSettings] = useState(loadImageGenerationSettings);
   // 画面比例
   const [aspectRatio, setAspectRatio] = useState<string>(
     currentProject?.image_aspect_ratio || '16:9'
@@ -749,6 +788,24 @@ export const SlidePreview: React.FC = () => {
     setPending1KAction(null);
   }, []);
 
+  const openImageGenerationSettings = useCallback(() => {
+    setDraftImageGenerationSettings(imageGenerationSettings);
+    setShowImageGenerationSettings(true);
+  }, [imageGenerationSettings]);
+
+  const saveImageGenerationSettings = useCallback(() => {
+    const nextSettings = {
+      maxWorkers: clampImageWorkers(draftImageGenerationSettings.maxWorkers),
+      useTemplate: draftImageGenerationSettings.useTemplate !== false,
+      density: draftImageGenerationSettings.density,
+      style: draftImageGenerationSettings.style,
+      customPrompt: draftImageGenerationSettings.customPrompt.trim(),
+    };
+    setImageGenerationSettings(nextSettings);
+    localStorage.setItem(IMAGE_GENERATION_SETTINGS_KEY, JSON.stringify(nextSettings));
+    setShowImageGenerationSettings(false);
+  }, [draftImageGenerationSettings]);
+
   const handleGenerateAll = async () => {
     // 先检查分辨率，如果是1K则显示警告
     await checkResolutionAndExecute(async () => {
@@ -763,7 +820,7 @@ export const SlidePreview: React.FC = () => {
 
       const executeGenerate = async () => {
         try {
-          await generateImages(pageIds);
+          await generateImages(pageIds, imageGenerationSettings);
         } catch (error: any) {
           console.error('批量生成错误:', error);
           console.error('错误响应:', error?.response?.data);
@@ -2313,6 +2370,100 @@ export const SlidePreview: React.FC = () => {
         </div>
       )}
 
+      <Modal
+        isOpen={showImageGenerationSettings}
+        onClose={() => setShowImageGenerationSettings(false)}
+        title="图片生成设置"
+        size="sm"
+      >
+        <div className="space-y-4 p-5">
+          <label className="block text-sm font-medium text-gray-700 dark:text-foreground-secondary">
+            <span>生成并发</span>
+            <select
+              aria-label="生成并发"
+              value={draftImageGenerationSettings.maxWorkers}
+              onChange={(event) => setDraftImageGenerationSettings(prev => ({
+                ...prev,
+                maxWorkers: clampImageWorkers(event.target.value),
+              }))}
+              className="mt-2 h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-800 outline-none focus:border-sky-500 dark:border-border-primary dark:bg-background-elevated dark:text-foreground-primary"
+            >
+              {[1, 2, 3, 4].map(value => (
+                <option key={value} value={value}>{value}</option>
+              ))}
+            </select>
+          </label>
+          <label className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 dark:border-border-primary dark:text-foreground-secondary">
+            <span>使用模板约束</span>
+            <input
+              aria-label="使用模板约束"
+              type="checkbox"
+              checked={draftImageGenerationSettings.useTemplate}
+              onChange={(event) => setDraftImageGenerationSettings(prev => ({
+                ...prev,
+                useTemplate: event.target.checked,
+              }))}
+              className="h-4 w-4 accent-sky-600"
+            />
+          </label>
+          <label className="block text-sm font-medium text-gray-700 dark:text-foreground-secondary">
+            <span>图片生成密度</span>
+            <select
+              aria-label="图片生成密度"
+              value={draftImageGenerationSettings.density}
+              onChange={(event) => setDraftImageGenerationSettings(prev => ({
+                ...prev,
+                density: event.target.value as SlideImageGenerationSettings['density'],
+              }))}
+              className="mt-2 h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-800 outline-none focus:border-sky-500 dark:border-border-primary dark:bg-background-elevated dark:text-foreground-primary"
+            >
+              <option value="sparse">轻量</option>
+              <option value="standard">标准</option>
+              <option value="rich">丰富</option>
+            </select>
+          </label>
+          <label className="block text-sm font-medium text-gray-700 dark:text-foreground-secondary">
+            <span>图片风格</span>
+            <select
+              aria-label="图片风格"
+              value={draftImageGenerationSettings.style}
+              onChange={(event) => setDraftImageGenerationSettings(prev => ({
+                ...prev,
+                style: event.target.value as SlideImageGenerationSettings['style'],
+              }))}
+              className="mt-2 h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-800 outline-none focus:border-sky-500 dark:border-border-primary dark:bg-background-elevated dark:text-foreground-primary"
+            >
+              <option value="theme">跟随模板</option>
+              <option value="business">商务简洁</option>
+              <option value="tech">科技感</option>
+              <option value="photo">真实图片感</option>
+              <option value="flat">扁平插画</option>
+            </select>
+          </label>
+          <label className="block text-sm font-medium text-gray-700 dark:text-foreground-secondary">
+            <span>图片风格补充要求</span>
+            <textarea
+              aria-label="图片风格补充要求"
+              value={draftImageGenerationSettings.customPrompt}
+              onChange={(event) => setDraftImageGenerationSettings(prev => ({
+                ...prev,
+                customPrompt: event.target.value,
+              }))}
+              rows={3}
+              className="mt-2 w-full resize-none rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 outline-none focus:border-sky-500 dark:border-border-primary dark:bg-background-elevated dark:text-foreground-primary"
+              placeholder="例如：蓝绿色科技感，少量发光线条，避免卡通化"
+            />
+          </label>
+          <p className="text-xs leading-relaxed text-gray-500 dark:text-foreground-tertiary">
+            默认并发上限为 4；批量生成只补未生成页面，不覆盖已上传或已生成的图片。
+          </p>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="ghost" onClick={() => setShowImageGenerationSettings(false)}>取消</Button>
+            <Button variant="primary" onClick={saveImageGenerationSettings}>保存图片生成设置</Button>
+          </div>
+        </div>
+      </Modal>
+
       {/* 主内容区 */}
       <div className="flex-1 flex flex-col md:flex-row overflow-hidden min-w-0 min-h-0">
         {/* 左侧：缩略图列表 */}
@@ -2340,6 +2491,14 @@ export const SlidePreview: React.FC = () => {
                 : isMultiSelectMode && selectedPageIds.size > 0
                   ? t('preview.generateSelected', { count: pendingBatchImageCount })
                   : t('preview.batchGenerate', { count: pendingBatchImageCount })}
+            </Button>
+            <Button
+              variant="secondary"
+              icon={<Settings size={15} />}
+              onClick={openImageGenerationSettings}
+              className="w-full text-xs md:text-sm"
+            >
+              图片生成设置
             </Button>
           </div>
           

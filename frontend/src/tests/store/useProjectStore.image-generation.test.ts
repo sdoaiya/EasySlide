@@ -40,7 +40,30 @@ describe('useProjectStore image generation', () => {
   it('batch generation submits only pages without images', async () => {
     await useProjectStore.getState().generateImages()
 
-    expect(api.generateImages).toHaveBeenCalledWith('project-images', undefined, ['page-missing'])
+    expect(api.generateImages).toHaveBeenCalledWith('project-images', undefined, ['page-missing'], undefined)
+  })
+
+  it('passes image generation settings to the batch endpoint', async () => {
+    await useProjectStore.getState().generateImages(undefined, {
+      maxWorkers: 2,
+      useTemplate: false,
+      density: 'rich',
+      style: 'tech',
+      customPrompt: '蓝绿色科技感',
+    })
+
+    expect(api.generateImages).toHaveBeenCalledWith(
+      'project-images',
+      undefined,
+      ['page-missing'],
+      {
+        maxWorkers: 2,
+        useTemplate: false,
+        density: 'rich',
+        style: 'tech',
+        customPrompt: '蓝绿色科技感',
+      },
+    )
   })
 
   it('does not start another batch when every selected page already has an image', async () => {
@@ -186,6 +209,30 @@ describe('useProjectStore image generation', () => {
 
     expect(useProjectStore.getState().pageGeneratingTasks).toEqual({
       'page-missing': 'single-page-task',
+    })
+  })
+
+  it('clears stale batch page mappings when reopening a project without an active batch task', () => {
+    const staleTask = {
+      task_id: 'stale-batch-task',
+      task_type: 'GENERATE_IMAGES',
+      status: 'PROCESSING',
+      progress: { total: 1, completed: 0, page_ids: ['page-missing'] },
+    } as any
+    useProjectStore.setState({
+      currentProject: { ...project, active_image_tasks: [] },
+      activeImageTask: staleTask,
+      pageGeneratingTasks: {
+        'page-missing': 'stale-batch-task',
+        'page-ready': 'single-page-task',
+      },
+    } as any)
+
+    useProjectStore.getState().restoreImageGeneration()
+
+    expect(useProjectStore.getState().activeImageTask).toBeNull()
+    expect(useProjectStore.getState().pageGeneratingTasks).toEqual({
+      'page-ready': 'single-page-task',
     })
   })
 
