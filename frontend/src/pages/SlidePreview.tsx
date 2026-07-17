@@ -901,7 +901,7 @@ export const SlidePreview: React.FC = () => {
     // 先检查分辨率，如果是1K则显示警告
     await checkResolutionAndExecute(async () => {
       try {
-        await generatePageImage(page.id!, true);
+        await generatePageImage(page.id!, true, imageGenerationSettings);
         show({ message: t('slidePreview.generationStarted'), type: 'success' });
       } catch (error: any) {
         // 提取后端返回的更具体错误信息
@@ -932,7 +932,7 @@ export const SlidePreview: React.FC = () => {
         });
       }
     });
-  }, [currentProject, selectedIndex, pageGeneratingTasks, generatePageImage, show, checkResolutionAndExecute]);
+  }, [currentProject, selectedIndex, pageGeneratingTasks, generatePageImage, imageGenerationSettings, show, checkResolutionAndExecute]);
 
   const handleSwitchVersion = async (versionId: string) => {
     if (!currentProject || !selectedPage?.id || !projectId) return;

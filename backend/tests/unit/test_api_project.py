@@ -490,6 +490,60 @@ class TestImageGenerationConcurrency:
             assert '视觉风格：科技感' in submit_args[11]
             assert '蓝绿色科技感，少量发光线条' in submit_args[11]
 
+    def test_single_page_image_generation_applies_image_generation_settings_to_prompt(self, app):
+        from models import db, Page, Project, Task
+        from controllers import page_controller as page_controller_module
+
+        class MinimalAIService:
+            def extract_image_urls_from_markdown(self, _text):
+                return []
+
+        with app.app_context():
+            project = Project(
+                id='proj-single-image-settings',
+                creation_type='idea',
+                idea_prompt='test',
+                template_style='clean',
+                image_aspect_ratio='16:9',
+                status='DESCRIPTIONS_GENERATED',
+            )
+            page = Page(
+                id='page-single-image-settings',
+                project_id=project.id,
+                order_index=0,
+                status='DESCRIPTION_GENERATED',
+            )
+            page.set_outline_content({'title': page.id, 'points': []})
+            page.set_description_content({'text': page.id})
+            db.session.add_all([project, page])
+            db.session.commit()
+
+            with (
+                patch.object(page_controller_module, 'get_ai_service', return_value=MinimalAIService()),
+                patch.object(page_controller_module.task_manager, 'submit_task') as submit_task,
+            ):
+                response = app.test_client().post(
+                    f'/api/projects/{project.id}/pages/{page.id}/generate/image',
+                    json={
+                        'force_regenerate': True,
+                        'image_density': 'rich',
+                        'image_style': 'tech',
+                        'image_style_prompt': '蓝绿色科技感，少量发光线条',
+                    },
+                )
+
+            data = assert_success_response(response, 202)['data']
+            task = Task.query.get(data['task_id'])
+            progress = task.get_progress()
+            submit_args = submit_task.call_args.args
+
+            assert progress['image_options']['image_density'] == 'rich'
+            assert progress['image_options']['image_style'] == 'tech'
+            assert progress['image_options']['image_style_prompt'] == '蓝绿色科技感，少量发光线条'
+            assert '信息密度：丰富' in submit_args[11]
+            assert '视觉风格：科技感' in submit_args[11]
+            assert '蓝绿色科技感，少量发光线条' in submit_args[11]
+
     def test_single_page_image_generation_accepts_gorden_template_pack_without_style_text(self, app):
         from models import db, Page, Project
         from controllers import page_controller as page_controller_module

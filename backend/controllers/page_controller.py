@@ -18,6 +18,10 @@ from services.task_manager import (
     edit_page_image_task,
     get_image_prompt_field_names,
 )
+from controllers.project_controller import (
+    _build_image_generation_settings_prompt,
+    _resolve_image_generation_options,
+)
 from datetime import datetime
 from pathlib import Path
 from werkzeug.utils import secure_filename
@@ -356,6 +360,7 @@ def generate_page_image(project_id, page_id):
         use_template = data.get('use_template', True)
         force_regenerate = data.get('force_regenerate', False)
         language = data.get('language', current_app.config.get('OUTPUT_LANGUAGE', 'zh'))
+        image_density, image_style, image_style_prompt = _resolve_image_generation_options(data)
         
         # Check if already generated
         if page.generated_image_path and not force_regenerate:
@@ -461,6 +466,11 @@ def generate_page_image(project_id, page_id):
         if project.template_style:
             style_requirement = f"\n\nppt页面风格描述：\n\n{project.template_style}"
             combined_requirements = combined_requirements + style_requirement
+        combined_requirements += _build_image_generation_settings_prompt(
+            image_density,
+            image_style,
+            image_style_prompt,
+        )
         
         # Create async task for image generation
         task = Task(
@@ -484,6 +494,9 @@ def generate_page_image(project_id, page_id):
                 'use_template': use_template,
                 'language': language,
                 'max_workers': 1,
+                'image_density': image_density,
+                'image_style': image_style,
+                'image_style_prompt': image_style_prompt,
             },
             style_snapshot={
                 'template_pack_id': project.template_pack_id,

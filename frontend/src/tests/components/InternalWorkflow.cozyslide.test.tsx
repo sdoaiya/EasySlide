@@ -610,7 +610,11 @@ describe('EasySlide internal workflow chrome', () => {
     fireEvent.click(screen.getByRole('button', { name: '重试此页' }));
 
     await waitFor(() => {
-      expect(mocks.store.generatePageImage).toHaveBeenCalledWith('page-1', true);
+      expect(mocks.store.generatePageImage).toHaveBeenCalledWith(
+        'page-1',
+        true,
+        { maxWorkers: 4, useTemplate: true, density: 'standard', style: 'theme', customPrompt: '' },
+      );
     });
   });
 

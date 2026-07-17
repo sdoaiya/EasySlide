@@ -148,7 +148,7 @@ interface ProjectState {
   generateDescriptions: (detailLevel?: string) => Promise<void>;
   generatePageDescription: (pageId: string, detailLevel?: string) => Promise<void>;
   regenerateRenovationPage: (pageId: string, keepLayout?: boolean) => Promise<void>;
-  generatePageImage: (pageId: string, forceRegenerate?: boolean) => Promise<void>;
+  generatePageImage: (pageId: string, forceRegenerate?: boolean, options?: ImageGenerationOptions) => Promise<void>;
   generateImages: (pageIds?: string[], options?: ImageGenerationOptions) => Promise<void>;
   editPageImage: (
     pageId: string,
@@ -1008,7 +1008,7 @@ const debouncedUpdatePage = debounce(
   },
 
   // 生成单页图片（用于预览页的手动重新生成）
-  generatePageImage: async (pageId: string, forceRegenerate: boolean = false) => {
+  generatePageImage: async (pageId: string, forceRegenerate: boolean = false, options?: ImageGenerationOptions) => {
     const { currentProject } = get();
     if (!currentProject) return;
 
@@ -1020,7 +1020,7 @@ const debouncedUpdatePage = debounce(
     set({ error: null, warningMessage: null });
 
     try {
-      const response = await api.generatePageImage(currentProject.id, pageId, forceRegenerate);
+      const response = await api.generatePageImage(currentProject.id, pageId, forceRegenerate, options);
       const taskId = response.data?.task_id;
 
       if (taskId) {

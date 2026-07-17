@@ -3,6 +3,7 @@ import { useProjectStore } from '@/store/useProjectStore'
 import * as api from '@/api/endpoints'
 
 vi.mock('@/api/endpoints', () => ({
+  generatePageImage: vi.fn(),
   generateImages: vi.fn(),
   getProject: vi.fn(),
   getTaskStatus: vi.fn(),
@@ -58,6 +59,31 @@ describe('useProjectStore image generation', () => {
       ['page-missing'],
       {
         maxWorkers: 2,
+        useTemplate: false,
+        density: 'rich',
+        style: 'tech',
+        customPrompt: '蓝绿色科技感',
+      },
+    )
+  })
+
+  it('passes image generation settings to the single page endpoint', async () => {
+    vi.mocked(api.generatePageImage).mockResolvedValue({ data: {} } as any)
+
+    await useProjectStore.getState().generatePageImage('page-missing', true, {
+      maxWorkers: 3,
+      useTemplate: false,
+      density: 'rich',
+      style: 'tech',
+      customPrompt: '蓝绿色科技感',
+    })
+
+    expect(api.generatePageImage).toHaveBeenCalledWith(
+      'project-images',
+      'page-missing',
+      true,
+      {
+        maxWorkers: 3,
         useTemplate: false,
         density: 'rich',
         style: 'tech',

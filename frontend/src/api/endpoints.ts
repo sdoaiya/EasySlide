@@ -448,12 +448,21 @@ export const generatePageImage = async (
   projectId: string,
   pageId: string,
   forceRegenerate: boolean = false,
+  options?: ImageGenerationOptions,
   language?: OutputLanguage
 ): Promise<ApiResponse> => {
-  const lang = language || await getStoredOutputLanguage();
+  const lang = options?.language || language || await getStoredOutputLanguage();
   const response = await apiClient.post<ApiResponse>(
     `/api/projects/${projectId}/pages/${pageId}/generate/image`,
-    { force_regenerate: forceRegenerate, language: lang }
+    {
+      force_regenerate: forceRegenerate,
+      language: lang,
+      max_workers: options?.maxWorkers,
+      use_template: options?.useTemplate,
+      image_density: options?.density,
+      image_style: options?.style,
+      image_style_prompt: options?.customPrompt?.trim() || undefined,
+    }
   );
   return response.data;
 };
