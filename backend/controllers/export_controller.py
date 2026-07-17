@@ -55,6 +55,27 @@ def _resolve_exports_root(project_id):
     return exports_root
 
 
+def _resolve_export_file(exports_root, filename):
+    name = str(filename or '').strip()
+    if (
+        not name
+        or name.startswith(('.', '_'))
+        or '/' in name
+        or '\\' in name
+        or ':' in name
+        or '\x00' in name
+        or Path(name).name != name
+    ):
+        return None
+
+    file_path = (exports_root / name).resolve()
+    try:
+        file_path.relative_to(exports_root)
+    except ValueError:
+        return None
+    return file_path
+
+
 def _get_native_export_task(project_id, task_id):
     return Task.query.filter(
         Task.id == task_id,
@@ -329,25 +350,18 @@ def delete_export(project_id, filename):
         if not project:
             return not_found('Project')
 
-        safe_filename = secure_filename(filename)
-        if not safe_filename or safe_filename != filename:
-            return bad_request('Invalid export filename')
-
         exports_root = _resolve_exports_root(project_id)
         if exports_root is None:
             return bad_request('Invalid project ID')
-        file_path = (exports_root / safe_filename).resolve()
-
-        try:
-            file_path.relative_to(exports_root)
-        except ValueError:
+        file_path = _resolve_export_file(exports_root, filename)
+        if file_path is None:
             return bad_request('Invalid export filename')
 
         if not file_path.is_file():
             return not_found('File')
 
         file_path.unlink()
-        return success_response(data={"filename": safe_filename}, message="Export file deleted")
+        return success_response(data={"filename": file_path.name}, message="Export file deleted")
 
     except Exception as e:
         return error_response('SERVER_ERROR', str(e), 500)

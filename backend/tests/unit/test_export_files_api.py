@@ -40,6 +40,16 @@ def test_delete_export_removes_file_from_disk(client, app):
     assert data["data"]["files"] == []
 
 
+def test_delete_export_allows_project_theme_chinese_filename(client, app):
+    project_id, export_path = _create_project_with_export(app, "年度经营复盘.pptx")
+
+    response = client.delete(f"/api/projects/{project_id}/exports/年度经营复盘.pptx")
+
+    data = assert_success_response(response)
+    assert data["data"]["filename"] == "年度经营复盘.pptx"
+    assert not os.path.exists(export_path)
+
+
 def test_delete_export_rejects_path_traversal(client, app):
     project_id, export_path = _create_project_with_export(app)
 
