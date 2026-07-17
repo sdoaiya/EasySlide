@@ -1,5 +1,5 @@
 import { apiClient, getApiBaseUrl } from './client';
-import type { Project, Task, ApiResponse, CreateProjectRequest, Page, Material, NativeExportQualityReport, ProjectDashboardStats, ImageGenerationOptions } from '@/types';
+import type { Project, Task, ApiResponse, CreateProjectRequest, Page, Material, NativeExportQualityReport, ProjectDashboardStats, ImageGenerationOptions, ImageGenerationResponse } from '@/types';
 import type { Settings } from '../types/index';
 
 export type { Material };
@@ -424,9 +424,9 @@ export const generateImages = async (
   language?: OutputLanguage,
   pageIds?: string[],
   options?: ImageGenerationOptions,
-): Promise<ApiResponse> => {
+): Promise<ApiResponse<ImageGenerationResponse>> => {
   const lang = options?.language || language || await getStoredOutputLanguage();
-  const response = await apiClient.post<ApiResponse>(
+  const response = await apiClient.post<ApiResponse<ImageGenerationResponse>>(
     `/api/projects/${projectId}/generate/images`,
     {
       language: lang,

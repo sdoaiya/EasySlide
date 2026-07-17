@@ -99,6 +99,13 @@ export interface ImageGenerationOptions {
   language?: 'zh' | 'ja' | 'en' | 'auto';
 }
 
+export interface ImageGenerationResponse {
+  task_id: string | null;
+  status: 'GENERATING_IMAGES' | 'NO_PENDING_IMAGES';
+  total_pages: number;
+  skipped_existing?: number;
+}
+
 export interface NativeExportQualityReport {
   slideCount: number;
   textObjects: number;
