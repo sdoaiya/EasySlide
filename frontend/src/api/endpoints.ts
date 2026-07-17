@@ -805,6 +805,7 @@ export const exportVideo = async (
     language?: string;
     generateNarration?: boolean;
     enableKenBurns?: boolean;
+    kenBurnsStyle?: 'auto' | 'zoom' | 'pan';
     includeNoImagePages?: boolean;
     presentationTopic?: string;
     narrationConfig?: {
@@ -828,6 +829,7 @@ export const exportVideo = async (
     language: options?.language,
     generate_narration: options?.generateNarration ?? true,
     enable_ken_burns: options?.enableKenBurns ?? false,
+    ken_burns_style: options?.kenBurnsStyle ?? 'auto',
     include_no_image_pages: options?.includeNoImagePages ?? false,
     presentation_topic: options?.presentationTopic,
     narration_config: options?.narrationConfig,

@@ -68,6 +68,10 @@ const previewI18n = {
       videoElevenLabsGoSettings: "前往设置",
       videoEnableKenBurns: "启用画面动效",
       videoKenBurnsTip: "为每页幻灯片添加缓慢的缩放或平移动画，让视频画面更有节奏感",
+      videoKenBurnsStyle: "镜头动效风格",
+      videoKenBurnsStyleAuto: "自动交替",
+      videoKenBurnsStyleZoom: "轻柔推近",
+      videoKenBurnsStylePan: "横移浏览",
       videoIncludeNoImage: "包含未配图页面（生成占位帧）",
       videoMissingImagesWarning: "本次导出范围还有 {{count}} 页未生成图片。勾选“包含未配图页面”才会用占位帧导出，否则请先生成图片。",
       videoStartExport: "开始导出",
@@ -190,6 +194,10 @@ const previewI18n = {
       videoElevenLabsGoSettings: "Go to Settings",
       videoEnableKenBurns: "Enable camera motion",
       videoKenBurnsTip: "Adds slow zoom or pan animation to each slide for a more dynamic video",
+      videoKenBurnsStyle: "Camera motion style",
+      videoKenBurnsStyleAuto: "Alternate automatically",
+      videoKenBurnsStyleZoom: "Gentle zoom",
+      videoKenBurnsStylePan: "Pan across",
       videoIncludeNoImage: "Include pages without images (placeholder frames)",
       videoMissingImagesWarning: "{{count}} page(s) in this export range still have no images. Enable \"Include pages without images\" to export placeholder frames, or generate images first.",
       videoStartExport: "Start Export",
@@ -417,6 +425,7 @@ export const SlidePreview: React.FC = () => {
   const [pptxTransitionsEnabled, setPptxTransitionsEnabled] = useState(false);
   const [pptxTransitionEffects, setPptxTransitionEffects] = useState<PptxTransitionEffect[]>(['fade']);
   const [videoEnableKenBurns, setVideoEnableKenBurns] = useState(false);
+  const [videoKenBurnsStyle, setVideoKenBurnsStyle] = useState<'auto' | 'zoom' | 'pan'>('auto');
   const [videoIncludeNoImage, setVideoIncludeNoImage] = useState(false);
   const [videoVoice, setVideoVoice] = useState('zh-CN-XiaoxiaoNeural');
   const [videoSpeed, setVideoSpeed] = useState<number>(() => {
@@ -1335,6 +1344,7 @@ export const SlidePreview: React.FC = () => {
         const response = await apiExportVideo(projectId, {
           pageIds,
           enableKenBurns: videoEnableKenBurns,
+          kenBurnsStyle: videoKenBurnsStyle,
           includeNoImagePages: videoIncludeNoImage,
           voice: activeVoice,
           speed: videoSpeed,
@@ -1508,27 +1518,30 @@ export const SlidePreview: React.FC = () => {
 
   const handleTemplateSelect = async (templateFile: File | null, templateId?: string) => {
     if (!projectId) return;
-    
+    const gordenTemplate = findGordenTemplatePack(templateId);
+
     // 如果有templateId，按需加载File
     let file = templateFile;
     if (templateId && !file) {
       file = await getTemplateFile(templateId, userTemplates);
-      if (!file) {
+      if (!file && !gordenTemplate) {
         show({ message: t('slidePreview.loadTemplateFailed'), type: 'error' });
         return;
       }
     }
-    
-    if (!file) {
+
+    if (!file && !gordenTemplate) {
       // 如果没有文件也没有 ID，可能是取消选择
       return;
     }
-    
+
     setIsUploadingTemplate(true);
     try {
-      await uploadTemplate(projectId, file);
-      const gordenStyle = findGordenTemplatePack(templateId)?.style;
-      await updateProject(projectId, { template_pack_id: findGordenTemplatePack(templateId)?.id || null });
+      if (file) {
+        await uploadTemplate(projectId, file);
+      }
+      const gordenStyle = gordenTemplate?.style;
+      await updateProject(projectId, { template_pack_id: gordenTemplate?.id || null });
       if (gordenStyle) {
         const mergedStyle = [gordenStyle, templateStyle.trim()].filter(Boolean).join('\n');
         await updateProject(projectId, { template_style: mergedStyle });
@@ -1980,7 +1993,7 @@ export const SlidePreview: React.FC = () => {
                     {videoShowAdvancedNarration ? t('preview.videoNarrationCollapse') : t('preview.videoNarrationAdvanced')}
                   </button>
                 </div>
-                <div className="rounded-lg border border-gray-200 dark:border-border-primary px-3 py-2 text-sm text-gray-700 dark:text-foreground-secondary">
+                <div className="h-24 overflow-y-auto break-words rounded-lg border border-gray-200 dark:border-border-primary px-3 py-2 pr-2 text-sm leading-6 text-gray-700 dark:text-foreground-secondary">
                   <span className="font-medium mr-2">{t('preview.videoNarrationSummaryLabel')}</span>
                   <span>{narrationSummary}</span>
                 </div>
@@ -2197,6 +2210,23 @@ export const SlidePreview: React.FC = () => {
                     </span>
                   </span>
                 </label>
+                {videoEnableKenBurns && (
+                  <div className="pl-7">
+                    <label className="block text-xs font-medium text-gray-600 dark:text-foreground-tertiary mb-1.5">
+                      {t('preview.videoKenBurnsStyle')}
+                    </label>
+                    <select
+                      aria-label={t('preview.videoKenBurnsStyle')}
+                      value={videoKenBurnsStyle}
+                      onChange={e => setVideoKenBurnsStyle(e.target.value as 'auto' | 'zoom' | 'pan')}
+                      className="w-full max-w-xs px-3 py-2 text-sm border border-gray-200 dark:border-border-primary rounded-lg bg-white dark:bg-background-primary focus:outline-none focus:ring-2 focus:ring-sky-400"
+                    >
+                      <option value="auto">{t('preview.videoKenBurnsStyleAuto')}</option>
+                      <option value="zoom">{t('preview.videoKenBurnsStyleZoom')}</option>
+                      <option value="pan">{t('preview.videoKenBurnsStylePan')}</option>
+                    </select>
+                  </div>
+                )}
                 <label className="flex items-center gap-3 cursor-pointer">
                   <input
                     type="checkbox"

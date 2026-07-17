@@ -50,6 +50,7 @@ check_ffmpeg_available = _tts_mod.check_ffmpeg_available
 check_ffmpeg_ass_filter_available = _tts_mod.check_ffmpeg_ass_filter_available
 get_audio_duration = _tts_mod.get_audio_duration
 KEN_BURNS_EFFECTS = _tts_mod.KEN_BURNS_EFFECTS
+resolve_ken_burns_effect = _tts_mod.resolve_ken_burns_effect
 KEN_BURNS_MAX_ZOOM = _tts_mod.KEN_BURNS_MAX_ZOOM
 composite_video = _tts_mod.composite_video
 _run_ffmpeg_command = _tts_mod._run_ffmpeg_command
@@ -227,6 +228,14 @@ class TestKenBurnsEffects:
         assert KEN_BURNS_EFFECTS[2] == 'pan_left'
         assert KEN_BURNS_EFFECTS[3] == 'pan_right'
         assert KEN_BURNS_EFFECTS[4 % 4] == 'zoom_in'
+
+    def test_effect_style_limits_the_motion_family(self):
+        assert resolve_ken_burns_effect(0, 'auto') == 'zoom_in'
+        assert resolve_ken_burns_effect(1, 'zoom') == 'zoom_out'
+        assert resolve_ken_burns_effect(2, 'zoom') == 'zoom_in'
+        assert resolve_ken_burns_effect(0, 'pan') == 'pan_left'
+        assert resolve_ken_burns_effect(1, 'pan') == 'pan_right'
+        assert resolve_ken_burns_effect(1, 'unexpected') == 'zoom_out'
 
     def test_zoom_strength_is_conservative(self):
         assert KEN_BURNS_MAX_ZOOM == pytest.approx(1.08)
@@ -745,6 +754,7 @@ class TestExportVideoRoute:
         response = client.post(
             f'/api/projects/{project_id}/export/video',
             json={
+                'ken_burns_style': 'pan',
                 'narration_config': {
                     'speaker_persona': 'confident corporate executive',
                     'min_words': 80,
@@ -757,6 +767,7 @@ class TestExportVideoRoute:
         assert data['narration_config']['speaker_persona'] == 'confident corporate executive'
         assert data['narration_config']['min_words'] == 80
         assert data['narration_config']['max_words'] == 120
+        assert data['ken_burns_style'] == 'pan'
 
     def test_export_video_default_filename_uses_project_theme(self, client, app, monkeypatch):
         monkeypatch.setattr('services.task_manager.task_manager.submit_task', lambda *args, **kwargs: None)

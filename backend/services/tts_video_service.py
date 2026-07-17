@@ -870,10 +870,21 @@ def _generate_elevenlabs_whole_and_split(
 
 # 四种交替动效
 KEN_BURNS_EFFECTS = ['zoom_in', 'zoom_out', 'pan_left', 'pan_right']
+KEN_BURNS_EFFECT_STYLES = {
+    'auto': KEN_BURNS_EFFECTS,
+    'zoom': ['zoom_in', 'zoom_out'],
+    'pan': ['pan_left', 'pan_right'],
+}
 
 # 轻量动效参数：既保留镜头感，也避免把边缘文字裁出屏幕
 KEN_BURNS_MAX_ZOOM = 1.08
 KEN_BURNS_PAN_CANVAS_SCALE = 1.08
+
+
+def resolve_ken_burns_effect(page_index: int, motion_style: str = 'auto') -> str:
+    """Choose a stable motion for each slide while preserving the legacy default."""
+    effects = KEN_BURNS_EFFECT_STYLES.get(motion_style, KEN_BURNS_EFFECTS)
+    return effects[page_index % len(effects)]
 
 
 def _prepare_canvas(src, content_w: int, content_h: int, canvas_w: int, canvas_h: int):
@@ -1585,6 +1596,7 @@ def generate_narration_video(
     height: int = 1080,
     fps: int = 25,
     enable_ken_burns: bool = False,
+    ken_burns_style: str = 'auto',
     ffmpeg_path: str = 'ffmpeg',
     progress_callback: Optional[Callable[[str, str, int], None]] = None,
     silent_duration: float = 0,
@@ -1607,6 +1619,7 @@ def generate_narration_video(
         height: 视频高度
         fps: 帧率
         enable_ken_burns: 是否启用 Ken Burns 动效（默认关闭）
+        ken_burns_style: auto（交替）、zoom（推近）、pan（横移）
         ffmpeg_path: ffmpeg 路径
         progress_callback: 进度回调 (step, message, percent)
         silent_duration: 无旁白页面的静音时长（秒），0 表示使用默认值
@@ -1746,7 +1759,7 @@ def generate_narration_video(
             image_path = page['image_path']
             narration = page.get('narration_text')
             page_idx = page.get('page_index', i)
-            effect = KEN_BURNS_EFFECTS[page_idx % len(KEN_BURNS_EFFECTS)]
+            effect = resolve_ken_burns_effect(page_idx, ken_burns_style)
             audio_duration = page_durations[i]
             audio_path = audio_paths[i]
             alignment = alignments[i]

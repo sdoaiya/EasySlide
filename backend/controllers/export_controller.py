@@ -883,6 +883,9 @@ def export_video(project_id):
         speed = max(0.7, min(speed, 1.2))
         generate_narration = data.get('generate_narration', True)
         enable_ken_burns = data.get('enable_ken_burns', False)
+        ken_burns_style = data.get('ken_burns_style', 'auto')
+        if ken_burns_style not in {'auto', 'zoom', 'pan'}:
+            ken_burns_style = 'auto'
         include_no_image_pages = data.get('include_no_image_pages', False)
         language = data.get('language', current_app.config.get('OUTPUT_LANGUAGE', 'zh'))
         presentation_topic = data.get('presentation_topic') or project.idea_prompt or ''
@@ -925,6 +928,7 @@ def export_video(project_id):
                     "speed": speed,
                     "generate_narration": generate_narration,
                     "enable_ken_burns": enable_ken_burns,
+                    "ken_burns_style": ken_burns_style,
                     "include_no_image_pages": include_no_image_pages,
                     "page_ids": selected_page_ids if selected_page_ids else None,
                     "language": language,
@@ -955,6 +959,7 @@ def export_video(project_id):
             speed=speed,
             generate_narration=generate_narration,
             enable_ken_burns=enable_ken_burns,
+            ken_burns_style=ken_burns_style,
             include_no_image_pages=include_no_image_pages,
             page_ids=selected_page_ids if selected_page_ids else None,
             language=language,
@@ -968,6 +973,7 @@ def export_video(project_id):
                 "voice": voice,
                 "generate_narration": generate_narration,
                 "enable_ken_burns": enable_ken_burns,
+                "ken_burns_style": ken_burns_style,
                 "include_no_image_pages": include_no_image_pages,
                 "narration_config": narration_config,
             },

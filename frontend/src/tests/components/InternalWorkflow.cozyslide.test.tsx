@@ -177,7 +177,11 @@ vi.mock('@/components/shared/MaterialGeneratorModal', () => ({
 }));
 
 vi.mock('@/components/shared/TemplateSelector', () => ({
-  TemplateSelector: () => null,
+  TemplateSelector: ({ onSelect }: any) => (
+    <button type="button" onClick={() => onSelect(null, 'gorden-data-viz-deck')}>
+      选择 Gorden 数据模板
+    </button>
+  ),
   getTemplateFile: vi.fn(),
 }));
 
@@ -506,6 +510,76 @@ describe('EasySlide internal workflow chrome', () => {
       downloadUrl,
     }));
     expect((window as any).electronAPI.saveDownload).not.toHaveBeenCalled();
+  });
+
+  it('applies a Gorden image template in existing projects even when its reference image is unavailable', async () => {
+    const endpoints = await import('@/api/endpoints');
+    const templateSelector = await import('@/components/shared/TemplateSelector');
+    mocks.store.currentProject.pages = [{
+      id: 'page-1',
+      page_id: 'page-1',
+      order_index: 0,
+      status: 'COMPLETED',
+      generated_image_path: '/files/page-1.png',
+      outline_content: { title: 'Slide 1', points: [] },
+      description_content: { text: 'Desc 1' },
+    }];
+    vi.mocked(templateSelector.getTemplateFile).mockResolvedValueOnce(null);
+
+    renderAt('/project/project-1/preview', <SlidePreview />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: '更换模板' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: '选择 Gorden 数据模板' }));
+
+    await waitFor(() => {
+      expect(endpoints.updateProject).toHaveBeenCalledWith(
+        'project-1',
+        { template_pack_id: 'gorden-data-viz-deck' },
+      );
+    });
+    expect(endpoints.uploadTemplate).not.toHaveBeenCalled();
+    expect(mocks.toastShow).toHaveBeenCalledWith({
+      message: '模板更换成功',
+      type: 'success',
+    });
+  });
+
+  it('sends the selected Ken Burns style when exporting narration video', async () => {
+    const endpoints = await import('@/api/endpoints');
+    mocks.store.currentProject.pages = [{
+      id: 'page-1',
+      page_id: 'page-1',
+      order_index: 0,
+      status: 'COMPLETED',
+      generated_image_path: '/files/page-1.png',
+      outline_content: { title: 'Slide 1', points: [] },
+      description_content: { text: 'Desc 1' },
+    }];
+    vi.mocked(endpoints.getSettings).mockResolvedValueOnce({
+      data: { output_language: 'zh', elevenlabs_api_key_length: 0 },
+    } as any);
+    vi.mocked(endpoints.exportVideo).mockResolvedValueOnce({
+      data: { task_id: 'video-task-1' },
+    } as any);
+
+    renderAt('/project/project-1/preview', <SlidePreview />);
+
+    fireEvent.click(screen.getByRole('button', { name: '导出 导出' }));
+    fireEvent.click(screen.getByRole('button', { name: '导出为讲解视频' }));
+    await screen.findByText('讲解视频导出设置');
+    fireEvent.click(screen.getByLabelText(/启用画面动效/));
+    fireEvent.change(screen.getByLabelText('镜头动效风格'), { target: { value: 'pan' } });
+    fireEvent.click(screen.getByRole('button', { name: '开始导出' }));
+
+    await waitFor(() => {
+      expect(endpoints.exportVideo).toHaveBeenCalledWith(
+        'project-1',
+        expect.objectContaining({
+          enableKenBurns: true,
+          kenBurnsStyle: 'pan',
+        }),
+      );
+    });
   });
 
   it('shows backend ElevenLabs voice errors when enabling TTS fails', async () => {
