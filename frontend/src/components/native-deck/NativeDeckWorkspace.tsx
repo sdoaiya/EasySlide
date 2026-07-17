@@ -475,7 +475,7 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
                 <strong className="truncate text-lg">预览</strong>
                 <span className="rounded-full border border-blue-100 bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-600">Step 3 · 视觉成稿</span>
               </div>
-              <span className="truncate text-[11px] text-foreground-secondary">生成图片、预览并导出交付</span>
+              <span className="truncate text-[11px] text-foreground-secondary">生成内容、预览并导出交付</span>
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
@@ -483,7 +483,7 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
             <button type="button" aria-label="重做" title="重做" disabled={!historyFuture.current.length} onClick={redo} className="hidden h-10 w-9 items-center justify-center rounded-lg hover:bg-background-hover disabled:opacity-30 md:inline-flex"><Redo2 size={17} aria-hidden="true" /></button>
             <button type="button" onClick={() => media.setSettingsOpen(true)} className="hidden h-10 items-center gap-2 rounded-lg px-3 text-sm font-semibold hover:bg-background-hover lg:inline-flex"><Settings2 size={17} />项目设置</button>
             {media.pages.length > 0 && (
-              <button type="button" aria-label={media.running ? (media.paused ? '继续生成图片' : '暂停生成图片') : '批量生成图片'} title={media.remaining > 0 ? `批量生成 ${media.remaining} 张图片` : '没有待生成图片'} disabled={!media.running && media.remaining === 0} onClick={media.running ? (media.paused ? media.resume : media.pause) : media.start} className="hidden h-10 items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 text-sm font-semibold text-sky-700 hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-45 lg:inline-flex"><Sparkles size={17} />{media.running ? (media.paused ? '继续生成图片' : '暂停生成图片') : '批量生成图片'}</button>
+              <button type="button" aria-label={media.running ? (media.paused ? '继续生成' : '暂停生成') : '批量生成'} title={media.remaining > 0 ? `批量生成 ${media.remaining} 个内容位` : '没有待生成内容'} disabled={!media.running && media.remaining === 0} onClick={media.running ? (media.paused ? media.resume : media.pause) : media.start} className="hidden h-10 items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 text-sm font-semibold text-sky-700 hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-45 lg:inline-flex"><Sparkles size={17} />{media.running ? (media.paused ? '继续生成' : '暂停生成') : '批量生成'}</button>
             )}
             <button type="button" onClick={() => window.location.reload()} className="hidden h-10 items-center gap-2 rounded-lg px-3 text-sm font-semibold hover:bg-background-hover md:inline-flex"><RefreshCw size={17} />刷新</button>
             <button type="button" aria-label={presenting ? '退出演示模式' : '演示模式'} title={presenting ? '退出演示模式' : '演示模式'} onClick={() => void (presenting ? stopPresentation() : startPresentation())} className="hidden h-10 items-center gap-2 rounded-lg px-3 text-sm font-semibold hover:bg-background-hover md:inline-flex"><MonitorPlay size={17} />{presenting ? '退出演示' : '演示'}</button>

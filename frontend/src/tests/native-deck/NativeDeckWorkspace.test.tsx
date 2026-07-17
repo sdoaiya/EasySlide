@@ -485,10 +485,10 @@ describe('NativeDeckWorkspace', () => {
     renderWorkspace([{ ...slides[1], props: { ...slides[1].props, image: '' } }])
 
     expect(screen.queryByRole('dialog', { name: '图片生成设置' })).not.toBeInTheDocument()
-    const imageButtons = screen.getAllByRole('button', { name: '批量生成图片' })
+    const imageButtons = screen.getAllByRole('button', { name: '批量生成' })
     expect(imageButtons).toHaveLength(1)
     expect(imageButtons.some((button) => button.className.includes('bg-gradient-to-r'))).toBe(false)
-    expect(screen.getByRole('navigation', { name: '原生页面' })).not.toHaveTextContent('批量生成图片')
+    expect(screen.getByRole('navigation', { name: '原生页面' })).not.toHaveTextContent('批量生成')
 
     fireEvent.click(screen.getByRole('button', { name: '项目设置' }))
     expect(screen.getByRole('dialog', { name: '图片生成设置' })).toBeInTheDocument()
@@ -524,7 +524,7 @@ describe('NativeDeckWorkspace', () => {
     const toolbar = container.querySelector('header')
     expect(toolbar).toBeInTheDocument()
     expect(toolbar).not.toHaveTextContent('批量生成页面')
-    expect(toolbar).toHaveTextContent('批量生成图片')
+    expect(toolbar).toHaveTextContent('批量生成')
     expect(screen.getByRole('button', { name: '批量生成页面' })).toBeInTheDocument()
   })
 
