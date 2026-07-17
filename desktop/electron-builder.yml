@@ -2,7 +2,6 @@ appId: com.easyslide.desktop
 productName: EasySlide
 directories:
   output: ${env.ELECTRON_BUILDER_OUT_DIR}
-electronDist: node_modules/electron/dist
 files:
   - main.js
   - download.js

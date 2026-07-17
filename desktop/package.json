@@ -5,13 +5,16 @@
   "author": "Anionex",
   "version": "0.3.0",
   "main": "main.js",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "start": "electron .",
     "dist:win": "electron-builder --config electron-builder.yml --win",
     "dist:mac": "electron-builder --config electron-builder.yml --mac"
   },
   "devDependencies": {
-    "electron": "^33.0.0",
-    "electron-builder": "^25.1.8"
+    "electron": "^43.1.1",
+    "electron-builder": "^26.15.3"
   }
 }

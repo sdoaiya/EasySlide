@@ -69,6 +69,11 @@ canvas.save(ico_target, sizes=[(256, 256), (128, 128), (64, 64), (48, 48), (32, 
       [string]$Target
     )
 
+    $unpackedSource = Join-Path $Source 'win-unpacked'
+    if (-not (Test-Path $unpackedSource)) {
+      throw "Desktop build output is missing: $unpackedSource"
+    }
+
     New-Item -ItemType Directory -Force -Path $Target | Out-Null
     Copy-Item -Recurse -Force (Join-Path $Source '*') $Target
 
@@ -80,7 +85,7 @@ canvas.save(ico_target, sizes=[(256, 256), (128, 128), (64, 64), (48, 48), (32, 
     if (Test-Path $portableDir) {
       Remove-Item -Recurse -Force $portableDir
     }
-    Copy-Item -Recurse -Force (Join-Path $Source 'win-unpacked') $portableDir
+    Copy-Item -Recurse -Force $unpackedSource $portableDir
     New-Item -ItemType File -Force -Path (Join-Path $portableDir 'portable.flag') | Out-Null
     Write-Host "Desktop release: $Target"
   }
