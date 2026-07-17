@@ -473,6 +473,7 @@ def test_full_slide_background_fallback_suppresses_text_overlay(tmp_path, monkey
     assert manifest['background_strategy']['mode'] == 'source-full-slide-raster'
     assert manifest['text_boxes'][0]['suppressed_due_background_failure'] is True
     assert manifest['text_boxes'][0]['editable_text_added'] is False
+    assert any("跳过 1 个可编辑文字框" in warning for warning in warnings.other_warnings)
     assert json.loads((Path(warnings.rebuild_artifacts_dir) / 'page_001' / 'validation.json').read_text(encoding='utf-8')) == {'passed': True, 'errors': []}
 
 

@@ -2337,6 +2337,25 @@ class ExportService:
                 'foreground_shape_count': foreground_shape_count,
                 'total_shape_count': len(slide.shapes),
             }
+            suppressed_background_text_count = sum(
+                1 for item in page_manifest.get('text_boxes', [])
+                if item.get('suppressed_due_background_failure')
+            )
+            if suppressed_background_text_count:
+                warnings.add_warning(
+                    f"第 {page_idx + 1} 页背景无法可靠清理，已保留原始页面并跳过 "
+                    f"{suppressed_background_text_count} 个可编辑文字框，避免文字重影"
+                )
+            raster_suppressed_text_count = sum(
+                len(item.get('suppressed_text_ids') or [])
+                for item in page_manifest.get('elements', [])
+                if item.get('render_decision') == 'raster_region_with_text'
+            )
+            if raster_suppressed_text_count:
+                warnings.add_warning(
+                    f"第 {page_idx + 1} 页有 {raster_suppressed_text_count} 个子文字位于复杂栅格区域内，"
+                    "已保留为区域图片以避免文字重影"
+                )
             page_manifest['quality_checks']['background_strategy_checked'] = bool(
                 background_added
                 and os.path.exists(background_path)
