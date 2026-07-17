@@ -50,6 +50,69 @@ GORDEN_TEMPLATE_VISUAL_PROFILES = {
     'competition-speech': '竞聘述职风：深蓝砖红、晋升答辩、项目复盘、成果指标和能力模型表达清楚。',
 }
 
+LAYOUT_FAMILY_HINTS = {
+    'hero': '主视觉封面：大标题与单一视觉焦点，避免卡片堆叠',
+    'numbered_index': '编号目录：使用清晰编号和章节分组',
+    'chapter_marker': '章节标记：大章节号、短标题与充足留白',
+    'timeline': '时间线 timeline：沿单一方向组织阶段、日期和里程碑',
+    'process': '流程 process：使用有方向的步骤链路和箭头关系',
+    'comparison': '对比 comparison：使用左右或上下对照，保持维度一致',
+    'matrix': '矩阵 matrix：使用二维象限或规则网格组织分类',
+    'funnel': '漏斗 funnel：按层级或转化阶段逐级收敛',
+    'dashboard': '仪表盘 dashboard：突出 KPI、图表和关键结论',
+    'split_visual': '图文分栏 split visual：主图与文字形成明确主次',
+    'bento': '模块化 bento：使用不同尺度的信息模块形成节奏',
+    'summary_actions': '总结行动：聚合核心结论与下一步行动',
+}
+
+ROLE_LAYOUT_FAMILIES = {
+    'cover': ('hero',),
+    'agenda': ('numbered_index', 'timeline'),
+    'section': ('chapter_marker',),
+    'data': ('dashboard', 'comparison', 'funnel'),
+    'content': ('split_visual', 'bento', 'process', 'comparison', 'matrix'),
+    'ending': ('summary_actions',),
+}
+
+LAYOUT_KEYWORDS = (
+    ('timeline', ('时间线', '里程碑', '阶段', '历程', 'timeline', 'milestone')),
+    ('process', ('流程', '步骤', '路径', '链路', 'process', 'workflow')),
+    ('comparison', ('对比', '比较', '差异', '优劣', 'comparison', 'versus', ' vs ')),
+    ('matrix', ('矩阵', '象限', 'swot', 'matrix', 'quadrant')),
+    ('funnel', ('漏斗', '转化', 'funnel', 'conversion')),
+    ('dashboard', ('指标', '数据', '业绩', 'kpi', 'dashboard', 'metrics')),
+)
+
+
+def infer_image_layout_family(
+    role: str,
+    page_index: int,
+    page_data: Mapping[str, Any] | None = None,
+) -> str:
+    """Choose a stable layout while varying adjacent pages of the same role."""
+    data = page_data or {}
+    searchable = ' '.join((
+        str(data.get('title') or ''),
+        ' '.join(str(item) for item in (data.get('points') or [])),
+    )).lower()
+    for family, keywords in LAYOUT_KEYWORDS:
+        if any(keyword in searchable for keyword in keywords):
+            return family
+    families = ROLE_LAYOUT_FAMILIES.get(role, ROLE_LAYOUT_FAMILIES['content'])
+    return families[(max(1, int(page_index or 1)) - 1) % len(families)]
+
+
+def append_image_layout_hint(requirements: str | None, layout_family: str) -> str | None:
+    """Append one layout constraint without duplicating it on retries."""
+    base = (requirements or '').strip()
+    detail = LAYOUT_FAMILY_HINTS.get(layout_family)
+    if not detail:
+        return base or None
+    hint = f'本页版式家族：{layout_family}。{detail}。不得退化为连续页面重复的通用三卡片布局。'
+    if hint in base:
+        return base or None
+    return f'{base}\n\n{hint}' if base else hint
+
 
 def has_gorden_template_pack(template_pack_id: str | None) -> bool:
     """Return whether a bundled Gorden pack can provide image-mode visual guidance."""

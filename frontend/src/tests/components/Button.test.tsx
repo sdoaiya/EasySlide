@@ -25,18 +25,18 @@ describe('Button Component', () => {
     expect(screen.getByText('Disabled')).toBeDisabled()
   })
 
-  it('applies gradient styles for primary variant', () => {
+  it('uses a solid semantic primary style without hover lift', () => {
     render(<Button>Primary</Button>)
     const button = screen.getByText('Primary')
-    // 实际使用gradient样式
-    expect(button).toHaveClass('bg-gradient-to-r')
+    expect(button).toHaveClass('bg-[var(--app-accent)]')
+    expect(button).not.toHaveClass('bg-gradient-to-r')
+    expect(button).not.toHaveClass('hover:-translate-y-0.5')
   })
 
   it('applies border styles for secondary variant', () => {
     render(<Button variant="secondary">Secondary</Button>)
     const button = screen.getByText('Secondary')
-    // secondary使用border样式
-    expect(button).toHaveClass('border-sky-200')
+    expect(button).toHaveClass('border-[var(--app-border)]')
   })
 
   it('shows loading state and disables button', () => {

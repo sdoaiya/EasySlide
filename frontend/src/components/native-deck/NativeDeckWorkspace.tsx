@@ -11,7 +11,7 @@ import { NativeDeckExportSurface } from './NativeDeckExportSurface'
 import { exportNativeDeck } from '@/native-deck/exportNativeDeck'
 import { exportNativeDeckHtml } from '@/native-deck/exportNativeDeckHtml'
 import { exportNativeDeckPdf } from '@/native-deck/exportNativeDeckPdf'
-import { captureNativeDeckFrames } from '@/native-deck/exportNativeDeckFrames'
+import { captureNativeDeckFrameSequences } from '@/native-deck/exportNativeDeckFrames'
 import { migrateNativeProps } from '@/native-deck/nativeLayoutMigration'
 import { useExportTasksStore, type ExportTask } from '@/store/useExportTasksStore'
 import { addPage, completeNativePptxExport, createNativePptxExport, deletePage, exportNativeVideo, getNativePageVersions, getTaskStatus, restoreNativePageVersion, type NativePageVersion, updateNativePptxProgress, updatePagesOrder } from '@/api/endpoints'
@@ -30,6 +30,30 @@ export type NativeDeckWorkspaceProps = {
   autoSaveDelay?: number
   onBack?: () => void
   onHome?: () => void
+}
+
+type NativeVideoPreset = 'business' | 'training' | 'launch' | 'brief'
+
+type NativeVideoDirectorConfig = {
+  preset: NativeVideoPreset
+  motion_intensity: 'minimal' | 'subtle' | 'standard'
+  subtitle_mode: 'standard' | 'highlight'
+  transition: 'cut' | 'fade' | 'push'
+  page_pause_ms: number
+}
+
+const NATIVE_VIDEO_PRESETS: Record<NativeVideoPreset, NativeVideoDirectorConfig> = {
+  business: { preset: 'business', motion_intensity: 'subtle', subtitle_mode: 'highlight', transition: 'fade', page_pause_ms: 260 },
+  training: { preset: 'training', motion_intensity: 'standard', subtitle_mode: 'highlight', transition: 'fade', page_pause_ms: 340 },
+  launch: { preset: 'launch', motion_intensity: 'standard', subtitle_mode: 'highlight', transition: 'push', page_pause_ms: 180 },
+  brief: { preset: 'brief', motion_intensity: 'minimal', subtitle_mode: 'standard', transition: 'cut', page_pause_ms: 120 },
+}
+
+const NATIVE_VIDEO_PRESET_LABELS: Record<NativeVideoPreset, string> = {
+  business: '商务汇报',
+  training: '培训课程',
+  launch: '产品发布',
+  brief: '简洁播报',
 }
 
 function validate(slide: NativeSlideSpec, contract: NativeLayoutContract | undefined) {
@@ -69,6 +93,8 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
   const [exportSurfaceVisible, setExportSurfaceVisible] = useState(false)
   const [exportFormat, setExportFormat] = useState<'PPTX' | 'PDF' | '离线 HTML' | '讲解视频'>('PPTX')
   const [exportError, setExportError] = useState('')
+  const [showVideoSettings, setShowVideoSettings] = useState(false)
+  const [videoPreset, setVideoPreset] = useState<NativeVideoPreset>('business')
   const [zoom, setZoom] = useState(1)
   const [presenting, setPresenting] = useState(false)
   const [pageVersions, setPageVersions] = useState<NativePageVersion[]>([])
@@ -401,7 +427,7 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
     }
   }
 
-  const startExport = async (formatSelection = exportFormat) => {
+  const startExport = async (formatSelection = exportFormat, directorConfig?: NativeVideoDirectorConfig) => {
     if (exporting || dirtyPageIds.size || !slides.length) return
     const id = `export-${Date.now()}`
     setExporting(true)
@@ -410,8 +436,14 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
       if (formatSelection === '讲解视频') {
         await showExportSurface()
         addTask({ id, taskId: '', projectId, type: 'video', status: 'PROCESSING', progress: { total: slides.length, completed: 0, percent: 1, current_step: '正在截取页面帧' } })
-        const frames = await captureNativeDeckFrames()
-        const created = await exportNativeVideo(projectId, frames, slides.map((slide) => slide.pageId), nativeExportFilename(exportTitle, 'mp4'))
+        const frames = await captureNativeDeckFrameSequences()
+        const created = await exportNativeVideo(
+          projectId,
+          frames,
+          slides.map((slide) => slide.pageId),
+          nativeExportFilename(exportTitle, 'mp4'),
+          directorConfig || NATIVE_VIDEO_PRESETS[videoPreset],
+        )
         const taskId = created.data?.task_id
         if (!taskId) throw new Error('创建视频导出任务失败')
         addTask({ id, taskId, projectId, type: 'video', status: 'PENDING' })
@@ -438,6 +470,10 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
 
   const exportSelectedFormat = async () => {
     setExportError('')
+    if (exportFormat === '讲解视频') {
+      setShowVideoSettings(true)
+      return
+    }
     try { await startExport() } catch (error) { setExportError(error instanceof Error ? error.message : String(error)) }
   }
 
@@ -445,6 +481,10 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
     const format = task.type === 'native-pdf' ? 'PDF' : task.type === 'native-html' ? '离线 HTML' : task.type === 'video' ? '讲解视频' : 'PPTX'
     setExportFormat(format)
     setExportError('')
+    if (format === '讲解视频') {
+      setShowVideoSettings(true)
+      return
+    }
     try { await startExport(format) } catch (error) { setExportError(error instanceof Error ? error.message : String(error)) }
   }
 
@@ -538,6 +578,34 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
       </div>}
       <NativeImageSettingsDialog open={media.settingsOpen} settings={media.settings} pages={media.pages} saving={media.savingSettings} onClose={() => media.setSettingsOpen(false)} onSave={(settings) => void media.saveSettings(settings)} />
       <MaterialSelector projectId={projectId} isOpen={Boolean(media.selectedSlot)} multiple={false} maxSelection={1} onClose={media.closeSelector} onSelect={(materials) => { if (materials[0]) media.useSelectedMaterial(materials[0].url) }} />
+      {showVideoSettings && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/35 p-4" onMouseDown={() => setShowVideoSettings(false)}>
+          <section role="dialog" aria-modal="true" aria-label="讲解视频设置" className="w-full max-w-lg rounded-lg border border-slate-200 bg-white p-5 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">讲解视频设置</h2>
+                <p className="mt-1 text-sm text-slate-500">选择成片节奏，原生元素会按页面动效分阶段呈现。</p>
+              </div>
+              <button type="button" aria-label="关闭讲解视频设置" onClick={() => setShowVideoSettings(false)} className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"><X size={18} /></button>
+            </div>
+            <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {(Object.keys(NATIVE_VIDEO_PRESETS) as NativeVideoPreset[]).map((preset) => (
+                <button key={preset} type="button" aria-pressed={videoPreset === preset} onClick={() => setVideoPreset(preset)} className={`h-10 rounded-lg border px-3 text-sm font-semibold ${videoPreset === preset ? 'border-sky-500 bg-sky-50 text-sky-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                  {NATIVE_VIDEO_PRESET_LABELS[preset]}
+                </button>
+              ))}
+            </div>
+            <div className="mt-5 flex justify-end gap-2 border-t border-slate-100 pt-4">
+              <button type="button" onClick={() => setShowVideoSettings(false)} className="h-10 rounded-lg px-4 text-sm font-semibold text-slate-600 hover:bg-slate-100">取消</button>
+              <button type="button" onClick={() => {
+                const config = NATIVE_VIDEO_PRESETS[videoPreset]
+                setShowVideoSettings(false)
+                void startExport('讲解视频', config).catch((error) => setExportError(error instanceof Error ? error.message : String(error)))
+              }} className="h-10 rounded-lg bg-sky-600 px-4 text-sm font-semibold text-white hover:bg-sky-700">开始导出视频</button>
+            </div>
+          </section>
+        </div>
+      )}
     </WorkspaceShell>
   )
 }

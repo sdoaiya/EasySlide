@@ -1,5 +1,36 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { waitForNativeAnimations, waitForNativeMedia, waitForNativeStableLayout } from '@/native-deck/exportNativeDeckFrames'
+
+const { toPng } = vi.hoisted(() => ({ toPng: vi.fn(async () => 'data:image/png;base64,AA==') }))
+vi.mock('html-to-image', () => ({ toPng }))
+
+import { captureNativeDeckFrameSequences, waitForNativeAnimations, waitForNativeMedia, waitForNativeStableLayout } from '@/native-deck/exportNativeDeckFrames'
+
+describe('captureNativeDeckFrameSequences', () => {
+  beforeEach(() => {
+    toPng.mockClear()
+  })
+
+  it('captures one final frame when the page has no element entrance animation', async () => {
+    document.body.innerHTML = '<div id="deck"><section class="slide"><div class="native-slide-content"><div><p>A</p><p>B</p></div></div></section></div>'
+
+    const sequences = await captureNativeDeckFrameSequences(document)
+
+    expect(sequences).toHaveLength(1)
+    expect(sequences[0]).toHaveLength(1)
+    expect(toPng).toHaveBeenCalledOnce()
+  })
+
+  it('captures progressive element stages and restores editor visibility', async () => {
+    document.body.innerHTML = '<div id="deck"><section class="slide" data-native-animation=\'{"elementEnter":"fade"}\'><div class="native-slide-content"><div><p>A</p><p style="visibility:visible">B</p><p>C</p><p>D</p><p>E</p></div></div></section></div>'
+    const candidates = Array.from(document.querySelectorAll<HTMLElement>('.native-slide-content p'))
+
+    const sequences = await captureNativeDeckFrameSequences(document)
+
+    expect(sequences[0]).toHaveLength(4)
+    expect(toPng).toHaveBeenCalledTimes(4)
+    expect(candidates.map((element) => element.style.visibility)).toEqual(['', 'visible', '', '', ''])
+  })
+})
 
 describe('waitForNativeAnimations', () => {
   beforeEach(() => {

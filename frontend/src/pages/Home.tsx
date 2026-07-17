@@ -672,8 +672,8 @@ export const Home: React.FC = () => {
         return;
       }
 
-      // 模板风格与文字风格是互斥入口：文字风格只有开关开启时才参与生成。
-      const selectedGordenTemplate = renderMode === 'image' && !useTemplateStyle
+      // 图片模式下模板决定视觉骨架，文字描述风格只作为可选微调。
+      const selectedGordenTemplate = renderMode === 'image'
         ? findGordenTemplatePack(selectedTemplateId)
         : undefined;
 
@@ -1278,14 +1278,7 @@ export const Home: React.FC = () => {
                   <input
                     type="checkbox"
                     checked={useTemplateStyle}
-                    onChange={(e) => {
-                      setUseTemplateStyle(e.target.checked);
-                      if (e.target.checked) {
-                        setSelectedTemplate(null);
-                        setSelectedTemplateId(null);
-                        setSelectedPresetTemplateId(null);
-                      }
-                    }}
+                    onChange={(e) => setUseTemplateStyle(e.target.checked)}
                     className="sr-only peer"
                   />
                   <div className="w-11 h-6 bg-gray-200 dark:bg-background-hover peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-cyan-300 dark:peer-focus:ring-cyan-400/30 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white dark:after:bg-foreground-secondary after:border-gray-300 dark:after:border-border-hover after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyan-500"></div>
@@ -1293,20 +1286,21 @@ export const Home: React.FC = () => {
               </label>
             </div>
 
-            {useTemplateStyle ? (
-              <TextStyleSelector
-                value={templateStyle}
-                onChange={setTemplateStyle}
-                onToast={show}
-              />
-            ) : (
-              <TemplateSelector
-                onSelect={handleTemplateSelect}
-                selectedTemplateId={selectedTemplateId}
-                selectedPresetTemplateId={selectedPresetTemplateId}
-                showUpload={true}
-                projectId={currentProjectId}
-              />
+            <TemplateSelector
+              onSelect={handleTemplateSelect}
+              selectedTemplateId={selectedTemplateId}
+              selectedPresetTemplateId={selectedPresetTemplateId}
+              showUpload={true}
+              projectId={currentProjectId}
+            />
+            {useTemplateStyle && (
+              <div className="mt-4">
+                <TextStyleSelector
+                  value={templateStyle}
+                  onChange={setTemplateStyle}
+                  onToast={show}
+                />
+              </div>
             )}
           </div> : (
             <div className="mb-6 md:mb-8 pt-4 border-t border-gray-100 dark:border-border-primary">

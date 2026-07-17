@@ -66,7 +66,7 @@ vi.mock('@/store/useExportTasksStore', () => ({
 }))
 
 vi.mock('@/native-deck/exportNativeDeckFrames', () => ({
-  captureNativeDeckFrames: frameMocks.capture,
+  captureNativeDeckFrameSequences: frameMocks.capture,
 }))
 
 vi.mock('@/native-deck/exportNativeDeck', () => ({
@@ -607,12 +607,16 @@ describe('NativeDeckWorkspace', () => {
     fireEvent.change(screen.getByLabelText('导出格式'), { target: { value: '讲解视频' } })
     const exportButton = screen.getByRole('button', { name: '导出讲解视频' })
     fireEvent.click(exportButton)
+    expect(await screen.findByRole('dialog', { name: '讲解视频设置' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '培训课程' }))
+    fireEvent.click(screen.getByRole('button', { name: '开始导出视频' }))
 
     await waitFor(() => expect(nativeApiMocks.exportNativeVideo).toHaveBeenCalledWith(
       'project-1',
       expect.any(Array),
       ['page-1'],
       '议程.mp4',
+      { preset: 'training', motion_intensity: 'standard', subtitle_mode: 'highlight', transition: 'fade', page_pause_ms: 340 },
     ))
     expect(exportTaskMocks.addTask).toHaveBeenCalledWith(expect.objectContaining({ type: 'video', taskId: 'video-task-1' }))
     expect(exportTaskMocks.pollTask).toHaveBeenCalledWith(expect.stringMatching(/^export-/), 'project-1', 'video-task-1')

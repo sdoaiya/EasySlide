@@ -23,6 +23,8 @@ test.describe('UI-driven E2E test (Mocked Backend)', () => {
     console.log('\n========================================')
     console.log('🌐 Starting UI-driven E2E test (Mocked Backend)')
     console.log('========================================\n')
+
+    let mockPages: Array<Record<string, unknown>> = []
     
     // Mock API responses
     await page.route('**/api/projects', async (route) => {
@@ -54,6 +56,34 @@ test.describe('UI-driven E2E test (Mocked Backend)', () => {
         })
       })
     })
+
+    await page.route('**/api/projects/*/generate/outline/stream', async (route) => {
+      const outlinePages = [
+        { index: 0, title: '什么是AI', points: ['AI的基本概念'] },
+        { index: 1, title: 'AI的应用', points: ['AI的典型应用场景'] },
+        { index: 2, title: 'AI的未来', points: ['AI的发展趋势'] },
+      ]
+      mockPages = outlinePages.map((outlinePage, index) => ({
+        id: `mock-page-${index + 1}`,
+        order_index: index,
+        outline_content: {
+          title: outlinePage.title,
+          points: outlinePage.points,
+        },
+        status: 'OUTLINE_GENERATED',
+      }))
+      const streamBody = [
+        ...outlinePages.map((outlinePage) =>
+          `event: page\ndata: ${JSON.stringify(outlinePage)}\n\n`),
+        `event: done\ndata: ${JSON.stringify({ total: mockPages.length, pages: mockPages })}\n\n`,
+      ].join('')
+
+      await route.fulfill({
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+        body: streamBody,
+      })
+    })
     
     // Mock project status (outline generated)
     await page.route('**/api/projects/mock-project-123', async (route) => {
@@ -65,6 +95,7 @@ test.describe('UI-driven E2E test (Mocked Backend)', () => {
           data: {
             project_id: 'mock-project-123',
             status: 'OUTLINE_GENERATED',
+            pages: mockPages,
             outline_content: {
               pages: [
                 { title: '什么是AI', order_index: 0 },
@@ -74,6 +105,31 @@ test.describe('UI-driven E2E test (Mocked Backend)', () => {
             }
           }
         })
+      })
+    })
+
+    await page.route('**/api/projects/*/generate/descriptions/stream', async (route) => {
+      mockPages = mockPages.map((mockPage, index) => ({
+        ...mockPage,
+        status: 'DESCRIPTION_GENERATED',
+        description_content: {
+          text: `第 ${index + 1} 页的完整页面描述`,
+        },
+      }))
+      const streamBody = [
+        ...mockPages.map((mockPage, index) =>
+          `event: description\ndata: ${JSON.stringify({
+            page_index: index,
+            page_id: mockPage.id,
+            text: `第 ${index + 1} 页的完整页面描述`,
+          })}\n\n`),
+        `event: done\ndata: ${JSON.stringify({ total: mockPages.length, pages: mockPages })}\n\n`,
+      ].join('')
+
+      await route.fulfill({
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+        body: streamBody,
       })
     })
     
@@ -132,8 +188,9 @@ test.describe('UI-driven E2E test (Mocked Backend)', () => {
     // Step 1: Visit homepage
     // ====================================
     console.log('📱 Step 1: Opening homepage...')
-    await page.goto('http://localhost:3011')
-await expect(page).toHaveTitle(/EasySlide/i)
+    await page.goto('/create')
+    await expect(page).toHaveTitle(/EasySlide/i)
+    await expect(page.locator('#create')).toBeVisible()
     console.log('✓ Homepage loaded successfully\n')
     
     // ====================================
@@ -144,14 +201,16 @@ await expect(page).toHaveTitle(/EasySlide/i)
     await page.click('button:has-text("一句话生成")').catch(() => {
       // If click fails, the tab might already be selected, which is fine
     })
-    await page.waitForSelector('textarea, input[type="text"]', { timeout: 10000 })
+    const ideaInput = page.getByRole('textbox', {
+      name: '例如：生成一份关于 AI 发展史的演讲 PPT',
+    })
+    await expect(ideaInput).toBeVisible()
     console.log('✓ Create form displayed\n')
     
     // ====================================
     // Step 3: Enter idea and click "Next"
     // ====================================
     console.log('✍️  Step 3: Entering idea content...')
-    const ideaInput = page.locator('textarea, input[type="text"]').first()
     await ideaInput.fill('创建一份关于人工智能基础的简短PPT，包含3页：什么是AI、AI的应用、AI的未来')
     
     console.log('🚀 Clicking "Next" button...')
@@ -183,9 +242,8 @@ await expect(page).toHaveTitle(/EasySlide/i)
     // Step 6: Verify UI shows outline (mocked data)
     // ====================================
     console.log('✅ Step 6: Verifying UI shows outline items...')
-    // The UI should show the mocked outline data
-    await expect(page.locator('.outline-card, [data-testid="outline-item"], .outline-section').first())
-      .toBeVisible({ timeout: 10000 })
+    await expect(page.getByText('什么是AI').first()).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText('AI的未来').first()).toBeVisible()
     console.log('✓ Outline items visible in UI\n')
     
     // ====================================
@@ -213,19 +271,18 @@ await expect(page).toHaveTitle(/EasySlide/i)
     // Step 9: Navigate to image generation
     // ====================================
     console.log('➡️  Step 9: Navigating to image generation page...')
-    const nextBtn2 = page.locator('button:has-text("下一步")')
-    if (await nextBtn2.count() > 0) {
-      await nextBtn2.first().click()
-      await page.waitForTimeout(1000)
-      console.log('✓ Navigated to image generation page\n')
-    }
+    const startGenerationBtn = page.getByRole('button', { name: '开始生成' })
+    await expect(startGenerationBtn).toBeVisible()
+    await startGenerationBtn.click()
+    await page.waitForTimeout(1000)
+    console.log('✓ Navigated to image generation page\n')
     
     // ====================================
     // Step 10: Test image generation UI (mocked)
     // ====================================
     console.log('🎨 Step 10: Testing image generation UI (mocked)...')
-    await page.waitForSelector('button:has-text("批量生成图片")', { timeout: 10000 })
-    const generateImageBtn = page.locator('button:has-text("批量生成图片")')
+    const generateImageBtn = page.getByRole('button', { name: /开始生成/ })
+    await expect(generateImageBtn.first()).toBeVisible({ timeout: 10000 })
     if (await generateImageBtn.count() > 0) {
       await generateImageBtn.first().click()
       await page.waitForTimeout(2000)

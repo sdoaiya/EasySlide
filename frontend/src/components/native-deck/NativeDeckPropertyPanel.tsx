@@ -685,7 +685,7 @@ function limitsFor(contract: NativeLayoutContract, key: string) {
 }
 
 function isControlVisible(control: NativeControl, values: Record<string, unknown>) {
-  if (control.showIf && !Boolean(values[control.showIf])) return false
+  if (control.showIf && !values[control.showIf]) return false
   if (!control.dependsOn) return true
   const actual = values[control.dependsOn]
   if (Array.isArray(control.dependsOnValues)) return control.dependsOnValues.some((value) => Object.is(value, actual))

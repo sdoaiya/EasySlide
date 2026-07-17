@@ -21,6 +21,7 @@ from services.image_generation_manifest import (
     update_manifest_page,
     write_prompt_snapshot,
 )
+from services.image_generation_quality import assess_generated_image, summarize_generation_quality
 from utils import get_filtered_pages
 from utils.image_utils import check_image_resolution
 
@@ -78,6 +79,23 @@ def get_image_prompt_field_names() -> set:
     except Exception as e:
         logger.warning("Failed to retrieve image prompt extra fields; using defaults: %s", e)
         return set(Settings.DEFAULT_IMAGE_PROMPT_FIELDS)
+
+
+def prepare_page_for_image_generation(page: Page, file_service) -> bool:
+    """Return whether a page needs generation, clearing stale file references."""
+    image_path = page.generated_image_path
+    if not image_path:
+        return True
+    if file_service.file_exists(image_path):
+        try:
+            with Image.open(file_service.get_absolute_path(image_path)) as image:
+                image.verify()
+            return False
+        except (OSError, ValueError):
+            logger.warning("Ignoring invalid generated image for page %s: %s", page.id, image_path)
+    page.generated_image_path = None
+    page.cached_image_path = None
+    return True
 
 
 def _append_extra_fields(
@@ -790,8 +808,10 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
     with app.app_context():
         try:
             from services.image_template_profiles import (
+                append_image_layout_hint,
                 append_image_page_role_hint,
                 append_template_visual_profile_hint,
+                infer_image_layout_family,
                 infer_image_page_role,
                 resolve_template_reference_path,
             )
@@ -860,7 +880,8 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                         page_obj = Page.query.get(page_id)
                         if not page_obj:
                             raise ValueError(f"Page {page_id} not found")
-                        if page_obj.generated_image_path:
+                        had_image_reference = bool(page_obj.generated_image_path)
+                        if not prepare_page_for_image_generation(page_obj, file_service):
                             return (
                                 page_id,
                                 page_obj.generated_image_path,
@@ -871,6 +892,8 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                                     'output_path': page_obj.generated_image_path,
                                 },
                             )
+                        if had_image_reference:
+                            db.session.commit()
                         
                         def mark_generating():
                             page_for_update = Page.query.get(page_id)
@@ -930,6 +953,11 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                                 page_data,
                                 page_obj.part,
                             )
+                            layout_family = infer_image_layout_family(
+                                role,
+                                page_obj.order_index + 1,
+                                page_data,
+                            )
                             project_obj = Project.query.get(project_id)
                             page_ref_image_path = None
                             if use_template:
@@ -944,13 +972,17 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                             
                             # Generate image prompt
                             page_extra_requirements = append_image_page_role_hint(extra_requirements, role)
+                            page_extra_requirements = append_image_layout_hint(
+                                page_extra_requirements,
+                                layout_family,
+                            )
                             page_extra_requirements = append_template_visual_profile_hint(
                                 page_extra_requirements,
                                 getattr(project_obj, 'template_pack_id', None) if use_template else None,
                             )
 
                             prompt = ai_service.generate_image_prompt(
-                                outline, page_data, desc_text, page_index,
+                                outline, page_data, desc_text, page_obj.order_index + 1,
                                 has_material_images=has_material_images,
                                 extra_requirements=page_extra_requirements,
                                 language=language,
@@ -1001,6 +1033,7 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                         
                         # 优化：直接在子线程中计算版本号并保存到最终位置
                         # 每个页面独立，使用数据库事务保证版本号原子性，避免临时文件
+                        qa = assess_generated_image(image, aspect_ratio, resolution_matches=is_match)
                         image_path, next_version = save_image_with_version(
                             image, project_id, page_id, file_service, page_obj=page_obj
                         )
@@ -1017,12 +1050,9 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                                 'output_path': image_path,
                                 'prompt_path': prompt_snapshot['path'],
                                 'prompt_hash': prompt_snapshot['sha256'],
-                                'qa': {
-                                    'status': 'passed' if is_match else 'warning',
-                                    'width': image.width,
-                                    'height': image.height,
-                                    'resolution_matches': bool(is_match),
-                                },
+                                'visual_role': role,
+                                'layout_family': layout_family,
+                                'qa': qa,
                             },
                         )
                         
@@ -1145,6 +1175,13 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                 task.completed_at = datetime.utcnow()
                 progress = task.get_progress()
                 progress['status'] = 'completed' if failed == 0 else 'completed_with_errors'
+                quality_summary = summarize_generation_quality(progress.get('pages'))
+                progress['quality_summary'] = quality_summary
+                if quality_summary['warnings']:
+                    progress['warning_message'] = (
+                        f"图片已生成，其中 {quality_summary['warnings']} 页存在质量提醒，"
+                        "可在任务详情中查看并单页重试。"
+                    )
                 _set_image_task_progress(task, progress, file_service.upload_folder)
                 if resolution_mismatched > 0:
                     logger.warning(f"Task {task_id} has {resolution_mismatched} resolution mismatches")
@@ -1195,8 +1232,10 @@ def generate_single_page_image_task(task_id: str, project_id: str, page_id: str,
     with app.app_context():
         try:
             from services.image_template_profiles import (
+                append_image_layout_hint,
                 append_image_page_role_hint,
                 append_template_visual_profile_hint,
+                infer_image_layout_family,
                 infer_image_page_role,
                 resolve_template_reference_path,
             )
@@ -1265,6 +1304,7 @@ def generate_single_page_image_task(task_id: str, project_id: str, page_id: str,
 
             total_pages = Page.query.filter_by(project_id=project_id).count()
             role = infer_image_page_role(page.order_index + 1, total_pages, page_data, page.part)
+            layout_family = infer_image_layout_family(role, page.order_index + 1, page_data)
             project = Project.query.get(project_id)
             ref_image_path = resolve_template_reference_path(
                 getattr(project, 'template_pack_id', None),
@@ -1273,6 +1313,7 @@ def generate_single_page_image_task(task_id: str, project_id: str, page_id: str,
             )
 
             page_extra_requirements = append_image_page_role_hint(extra_requirements, role)
+            page_extra_requirements = append_image_layout_hint(page_extra_requirements, layout_family)
             page_extra_requirements = append_template_visual_profile_hint(
                 page_extra_requirements,
                 getattr(project, 'template_pack_id', None) if use_template else None,
@@ -1330,6 +1371,16 @@ def generate_single_page_image_task(task_id: str, project_id: str, page_id: str,
             if not image:
                 raise ValueError("Failed to generate image")
             
+            actual_res, is_match = check_image_resolution(image, resolution)
+            if not is_match:
+                logger.warning(
+                    "Resolution mismatch for page %s: requested %s, got %s",
+                    page_id,
+                    resolution,
+                    actual_res,
+                )
+            qa = assess_generated_image(image, aspect_ratio, resolution_matches=is_match)
+
             # 保存图片并创建历史版本记录
             image_path, next_version = save_image_with_version(
                 image, project_id, page_id, file_service, page_obj=page
@@ -1354,12 +1405,13 @@ def generate_single_page_image_task(task_id: str, project_id: str, page_id: str,
                 output_path=image_path,
                 prompt_path=prompt_snapshot['path'],
                 prompt_hash=prompt_snapshot['sha256'],
-                qa={
-                    'status': 'passed',
-                    'width': image.width,
-                    'height': image.height,
-                },
+                visual_role=role,
+                layout_family=layout_family,
+                qa=qa,
             )
+            progress['quality_summary'] = summarize_generation_quality(progress.get('pages'))
+            if progress['quality_summary']['warnings']:
+                progress['warning_message'] = "当前页面存在质量提醒，可调整描述后单页重试。"
             _set_image_task_progress(task, progress, file_service.upload_folder)
             db.session.commit()
             
@@ -2394,7 +2446,9 @@ def export_video_task(
     page_ids: list = None,
     language: str = 'zh',
     narration_config: dict | None = None,
+    director_plan: dict | None = None,
     frame_paths: list[str] | None = None,
+    frame_sequences: list[list[str]] | None = None,
     app=None,
 ):
     """
@@ -2506,7 +2560,14 @@ def export_video_task(
             # 构建页面列表：有图片的用实际图片，无图片的根据选项处理
             valid_pages = []
 
-            if frame_paths is not None:
+            if frame_sequences is not None:
+                if len(frame_sequences) != len(pages):
+                    raise ValueError('浏览器视频帧数量与页面数量不一致')
+                missing_frames = [path for sequence in frame_sequences for path in sequence if not os.path.isfile(path)]
+                if missing_frames:
+                    raise ValueError('浏览器视频帧已丢失，请重新发起导出')
+                valid_pages = list(zip(pages, frame_sequences))
+            elif frame_paths is not None:
                 if len(frame_paths) != len(pages):
                     raise ValueError('浏览器视频帧数量与页面数量不一致')
                 missing_frames = [path for path in frame_paths if not os.path.isfile(path)]
@@ -2514,13 +2575,13 @@ def export_video_task(
                     raise ValueError('浏览器视频帧已丢失，请重新发起导出')
                 valid_pages = list(zip(pages, frame_paths))
 
-            if frame_paths is None and include_no_image_pages:
+            if frame_paths is None and frame_sequences is None and include_no_image_pages:
                 video_width = app.config.get('VIDEO_OUTPUT_WIDTH', 1920)
                 video_height = app.config.get('VIDEO_OUTPUT_HEIGHT', 1080)
                 placeholder_dir = os.path.join(app.config['UPLOAD_FOLDER'], project_id, 'exports', f'_placeholder_{task_id}')
                 os.makedirs(placeholder_dir, exist_ok=True)
 
-            if frame_paths is None:
+            if frame_paths is None and frame_sequences is None:
                 for page in pages:
                     if page.generated_image_path:
                         img_path = file_service.get_absolute_path(page.generated_image_path)
@@ -2639,7 +2700,9 @@ def export_video_task(
             # ── Step 2: 构建 pages_data ──
             pages_data = []
             missing_narration_pages = []
-            for page, img_path in valid_pages:
+            for page, image_source in valid_pages:
+                stage_image_paths = image_source if isinstance(image_source, list) else [image_source]
+                img_path = stage_image_paths[-1]
                 db.session.refresh(page)
                 narration = page.narration_text
                 if not narration or not narration.strip():
@@ -2654,6 +2717,9 @@ def export_video_task(
                     'image_path': img_path,
                     'narration_text': narration,
                     'page_index': page.order_index,
+                    'title': (page.get_outline_content() or {}).get('title', ''),
+                    'render_mode': project.render_mode or 'image',
+                    'stage_image_paths': stage_image_paths if len(stage_image_paths) > 1 else [],
                 })
 
             if missing_narration_pages and fail_fast:
@@ -2697,6 +2763,7 @@ def export_video_task(
                 fail_fast=fail_fast,
                 elevenlabs_config=elevenlabs_config,
                 speed=speed,
+                director_plan=director_plan,
             )
 
             # ── Step 4: 标记完成 ──
@@ -2741,10 +2808,11 @@ def export_video_task(
             if placeholder_dir and os.path.exists(placeholder_dir):
                 import shutil
                 shutil.rmtree(placeholder_dir, ignore_errors=True)
-            if frame_paths:
+            captured_frame_paths = frame_paths or [path for sequence in (frame_sequences or []) for path in sequence]
+            if captured_frame_paths:
                 task = Task.query.get(task_id)
                 if not task or task.status in {'COMPLETED', 'FAILED'}:
                     import shutil
-                    for directory in {os.path.dirname(path) for path in frame_paths}:
+                    for directory in {os.path.dirname(path) for path in captured_frame_paths}:
                         if os.path.basename(directory) == f'_native_video_{task_id}':
                             shutil.rmtree(directory, ignore_errors=True)

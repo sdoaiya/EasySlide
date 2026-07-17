@@ -183,4 +183,21 @@ describe('Home render mode selection', () => {
     expect(call[3]).toContain('深蓝与砖红数据视觉');
     expect(call[8]).toBe('gorden-data-viz-deck');
   });
+
+  it('keeps the selected image template when adding a text style prompt', async () => {
+    const user = userEvent.setup();
+    renderHome();
+
+    await user.click(screen.getByRole('button', { name: '选择数据可视化合辑' }));
+    await user.click(screen.getByRole('checkbox', { name: '使用文字描述风格' }));
+    await user.type(screen.getByPlaceholderText(/描述您想要的 PPT 风格/), '更偏高端咨询风');
+    await user.type(screen.getByRole('textbox', { name: /生成一份关于/ }), '经营分析');
+    await user.click(screen.getByRole('button', { name: '下一步' }));
+
+    await waitFor(() => expect(initializeProject).toHaveBeenCalledOnce());
+    const call = initializeProject.mock.calls[0];
+    expect(call[3]).toContain('深蓝与砖红数据视觉');
+    expect(call[3]).toContain('更偏高端咨询风');
+    expect(call[8]).toBe('gorden-data-viz-deck');
+  });
 });

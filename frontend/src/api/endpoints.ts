@@ -838,6 +838,13 @@ export const exportVideo = async (
       min_words?: number;
       max_words?: number;
     };
+    directorConfig?: {
+      preset?: 'business' | 'training' | 'launch' | 'brief';
+      motion_intensity?: 'minimal' | 'subtle' | 'standard';
+      subtitle_mode?: 'standard' | 'highlight' | 'off';
+      transition?: 'cut' | 'fade' | 'push';
+      page_pause_ms?: number;
+    };
   }
 ): Promise<ApiResponse<{ task_id: string }>> => {
   const response = await apiClient.post<
@@ -855,20 +862,31 @@ export const exportVideo = async (
     include_no_image_pages: options?.includeNoImagePages ?? false,
     presentation_topic: options?.presentationTopic,
     narration_config: options?.narrationConfig,
+    director_config: options?.directorConfig,
   });
   return response.data;
 };
 
 export const exportNativeVideo = async (
   projectId: string,
-  frames: Blob[],
+  frames: Blob[] | Blob[][],
   pageIds: string[],
   filename?: string,
+  directorConfig?: {
+    preset?: 'business' | 'training' | 'launch' | 'brief';
+    motion_intensity?: 'minimal' | 'subtle' | 'standard';
+    subtitle_mode?: 'standard' | 'highlight' | 'off';
+    transition?: 'cut' | 'fade' | 'push';
+    page_pause_ms?: number;
+  },
 ): Promise<ApiResponse<{ task_id: string }>> => {
   const formData = new FormData();
   formData.append('page_ids', JSON.stringify(pageIds));
   if (filename) formData.append('filename', filename);
-  frames.forEach((frame, index) => formData.append('frames', frame, `frame-${index + 1}.png`));
+  if (directorConfig) formData.append('director_config', JSON.stringify(directorConfig));
+  const sequences = Array.isArray(frames[0]) ? frames as Blob[][] : (frames as Blob[]).map((frame) => [frame]);
+  formData.append('frame_counts', JSON.stringify(sequences.map((sequence) => sequence.length)));
+  sequences.flat().forEach((frame, index) => formData.append('frames', frame, `frame-${index + 1}.png`));
   const response = await apiClient.post<ApiResponse<{ task_id: string }>>(
     `/api/projects/${projectId}/export/native-video`,
     formData,

@@ -774,6 +774,7 @@ describe('EasySlide internal workflow chrome', () => {
     fireEvent.click(screen.getByRole('button', { name: '导出 导出' }));
     fireEvent.click(screen.getByRole('button', { name: '导出为讲解视频' }));
     await screen.findByText('讲解视频导出设置');
+    fireEvent.click(screen.getByRole('button', { name: '培训课程' }));
     fireEvent.click(screen.getByLabelText(/启用画面动效/));
     fireEvent.change(screen.getByLabelText('镜头动效风格'), { target: { value: 'pan' } });
     fireEvent.click(screen.getByRole('button', { name: '开始导出' }));
@@ -784,6 +785,10 @@ describe('EasySlide internal workflow chrome', () => {
         expect.objectContaining({
           enableKenBurns: true,
           kenBurnsStyle: 'pan',
+          directorConfig: expect.objectContaining({
+            preset: 'training',
+            motion_intensity: 'standard',
+          }),
         }),
       );
     });

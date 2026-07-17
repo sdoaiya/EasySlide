@@ -62,6 +62,11 @@ const previewI18n = {
       videoNarrationMinWords: "最少字数",
       videoNarrationMaxWords: "最多字数",
       videoNarrationSummaryLabel: "当前策略",
+      videoDirectorPreset: "成片风格",
+      videoDirectorBusiness: "商务汇报",
+      videoDirectorTraining: "培训课程",
+      videoDirectorLaunch: "产品发布",
+      videoDirectorBrief: "简洁播报",
       videoNarrationGenerateMissing: "自动为缺失旁白的页面生成讲稿",
       videoUseElevenLabs: "使用 ElevenLabs 语音合成",
       videoElevenLabsNoKey: "尚未配置 ElevenLabs API Key，语音合成将无法使用。",
@@ -188,6 +193,11 @@ const previewI18n = {
       videoNarrationMinWords: "Min words",
       videoNarrationMaxWords: "Max words",
       videoNarrationSummaryLabel: "Current strategy",
+      videoDirectorPreset: "Video style",
+      videoDirectorBusiness: "Business",
+      videoDirectorTraining: "Training",
+      videoDirectorLaunch: "Product launch",
+      videoDirectorBrief: "Brief update",
       videoNarrationGenerateMissing: "Auto-generate narration for slides that are missing it",
       videoUseElevenLabs: "Use ElevenLabs text-to-speech",
       videoElevenLabsNoKey: "No ElevenLabs API Key configured — voice synthesis will not work.",
@@ -345,6 +355,15 @@ const NARRATION_TONE_OPTIONS = [
   { value: 'conversational, witty, and approachable', zh: '轻松聊天型', en: 'Conversational and witty' },
 ];
 
+type VideoDirectorPreset = 'business' | 'training' | 'launch' | 'brief';
+
+const VIDEO_DIRECTOR_PRESETS: Array<{ value: VideoDirectorPreset; labelKey: string }> = [
+  { value: 'business', labelKey: 'videoDirectorBusiness' },
+  { value: 'training', labelKey: 'videoDirectorTraining' },
+  { value: 'launch', labelKey: 'videoDirectorLaunch' },
+  { value: 'brief', labelKey: 'videoDirectorBrief' },
+];
+
 const IMAGE_GENERATION_SETTINGS_KEY = 'slidePreviewImageGenerationSettings';
 type SlideImageGenerationSettings = Required<Pick<ImageGenerationOptions, 'maxWorkers' | 'useTemplate' | 'density' | 'style'>> & {
   customPrompt: string;
@@ -408,6 +427,21 @@ const DEFAULT_VIDEO_NARRATION_CONFIG: NarrationConfig = {
   presentation_topic: '',
   min_words: 100,
   max_words: 200,
+};
+
+type VideoDirectorConfig = {
+  preset: VideoDirectorPreset;
+  motion_intensity: 'minimal' | 'subtle' | 'standard';
+  subtitle_mode: 'standard' | 'highlight';
+  transition: 'cut' | 'fade' | 'push';
+  page_pause_ms: number;
+};
+
+const VIDEO_DIRECTOR_CONFIGS: Record<VideoDirectorPreset, VideoDirectorConfig> = {
+  business: { preset: 'business', motion_intensity: 'subtle', subtitle_mode: 'highlight', transition: 'fade', page_pause_ms: 260 },
+  training: { preset: 'training', motion_intensity: 'standard', subtitle_mode: 'highlight', transition: 'fade', page_pause_ms: 340 },
+  launch: { preset: 'launch', motion_intensity: 'standard', subtitle_mode: 'highlight', transition: 'push', page_pause_ms: 220 },
+  brief: { preset: 'brief', motion_intensity: 'minimal', subtitle_mode: 'standard', transition: 'cut', page_pause_ms: 160 },
 };
 
 type PptxTransitionEffect =
@@ -483,6 +517,7 @@ export const SlidePreview: React.FC = () => {
   const [videoEnableKenBurns, setVideoEnableKenBurns] = useState(false);
   const [videoKenBurnsStyle, setVideoKenBurnsStyle] = useState<'auto' | 'zoom' | 'pan'>('auto');
   const [videoIncludeNoImage, setVideoIncludeNoImage] = useState(false);
+  const [videoDirectorConfig, setVideoDirectorConfig] = useState<VideoDirectorConfig>(VIDEO_DIRECTOR_CONFIGS.business);
   const [videoVoice, setVideoVoice] = useState('zh-CN-XiaoxiaoNeural');
   const [videoSpeed, setVideoSpeed] = useState<number>(() => {
     const stored = parseFloat(localStorage.getItem('videoSpeed') || '');
@@ -505,6 +540,37 @@ export const SlidePreview: React.FC = () => {
   }, [elevenLabsEnabled, elevenLabsVoiceId, elevenLabsVoices]);
   const [videoNarrationConfig, setVideoNarrationConfig] = useState<NarrationConfig>(DEFAULT_VIDEO_NARRATION_CONFIG);
   const [videoShowAdvancedNarration, setVideoShowAdvancedNarration] = useState(false);
+  const applyVideoDirectorPreset = useCallback((preset: VideoDirectorPreset) => {
+    const presetValues = {
+      business: {
+        speed: 1.0,
+        speaker_persona: 'confident corporate executive',
+        speech_tone: 'analytical, data-driven, and highly professional',
+      },
+      training: {
+        speed: 0.95,
+        speaker_persona: 'knowledgeable and patient university professor',
+        speech_tone: 'conversational, witty, and approachable',
+      },
+      launch: {
+        speed: 1.05,
+        speaker_persona: 'charismatic keynote speaker',
+        speech_tone: 'inspiring, passionate, and persuasive',
+      },
+      brief: {
+        speed: 1.1,
+        speaker_persona: 'confident corporate executive',
+        speech_tone: 'analytical, data-driven, and highly professional',
+      },
+    }[preset];
+    setVideoDirectorConfig(VIDEO_DIRECTOR_CONFIGS[preset]);
+    setVideoSpeed(presetValues.speed);
+    setVideoNarrationConfig(previous => ({
+      ...previous,
+      speaker_persona: presetValues.speaker_persona,
+      speech_tone: presetValues.speech_tone,
+    }));
+  }, []);
   // 多选导出相关状态
   const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
   const [selectedPageIds, setSelectedPageIds] = useState<Set<string>>(new Set());
@@ -1438,6 +1504,7 @@ export const SlidePreview: React.FC = () => {
             ...videoNarrationConfig,
             presentation_topic: videoNarrationConfig.presentation_topic,
           },
+          directorConfig: videoDirectorConfig,
         });
         const taskId = response.data?.task_id;
 
@@ -2062,6 +2129,26 @@ export const SlidePreview: React.FC = () => {
             <h3 className="text-lg font-semibold">{t('preview.videoExportTitle')}</h3>
             <p className="text-sm text-gray-500 dark:text-foreground-tertiary mt-1 mb-5">{t('preview.videoExportSubtitle')}</p>
             <div className="space-y-5">
+              <div className="space-y-2">
+                <div className="text-sm font-medium">{t('preview.videoDirectorPreset')}</div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {VIDEO_DIRECTOR_PRESETS.map(({ value: preset, labelKey }) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      aria-pressed={videoDirectorConfig.preset === preset}
+                      onClick={() => applyVideoDirectorPreset(preset)}
+                      className={`min-h-10 px-3 py-2 text-sm border rounded-lg transition-colors ${
+                        videoDirectorConfig.preset === preset
+                          ? 'border-sky-500 bg-sky-50 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300'
+                          : 'border-gray-200 text-gray-600 hover:border-sky-300 dark:border-border-primary dark:text-foreground-secondary'
+                      }`}
+                    >
+                      {t(`preview.${labelKey}`)}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div className="rounded-xl border border-gray-200 dark:border-border-primary p-4 space-y-4">
                 <div className="flex items-center justify-between gap-4">
                   <div>

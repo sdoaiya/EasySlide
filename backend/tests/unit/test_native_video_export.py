@@ -24,6 +24,9 @@ def test_native_video_export_saves_browser_frames_without_overwriting_page_image
         Page(id='native-video-page-1', project_id=project.id, order_index=0, narration_text='第一页旁白'),
         Page(id='native-video-page-2', project_id=project.id, order_index=1, narration_text='第二页旁白'),
     ]
+    pages[0].set_native_props({
+        '__animation': {'elementEnter': 'fade', 'elementDuration': 420},
+    })
     db.session.add(project)
     db.session.add_all(pages)
     db.session.commit()
@@ -33,9 +36,12 @@ def test_native_video_export_saves_browser_frames_without_overwriting_page_image
             f'/api/projects/{project.id}/export/native-video',
             data={
                 'page_ids': json.dumps([page.id for page in pages]),
+                'frame_counts': json.dumps([2, 1]),
+                'director_config': json.dumps({'preset': 'launch'}),
                 'frames': [
                     (_png_bytes('red'), 'frame-1.png'),
                     (_png_bytes('blue'), 'frame-2.png'),
+                    (_png_bytes('green'), 'frame-3.png'),
                 ],
             },
             content_type='multipart/form-data',
@@ -43,13 +49,18 @@ def test_native_video_export_saves_browser_frames_without_overwriting_page_image
 
     data = assert_success_response(response)
     task = db.session.get(Task, data['data']['task_id'])
-    frame_paths = task.get_progress()['_resume']['kwargs']['frame_paths']
+    frame_sequences = task.get_progress()['_resume']['kwargs']['frame_sequences']
+    frame_paths = [path for sequence in frame_sequences for path in sequence]
 
     assert task.task_type == 'EXPORT_VIDEO'
-    assert len(frame_paths) == 2
+    assert [len(sequence) for sequence in frame_sequences] == [2, 1]
+    assert len(frame_paths) == 3
     assert all(Path(path).is_file() for path in frame_paths)
     assert all(page.generated_image_path is None for page in pages)
-    assert submit_task.call_args.kwargs['frame_paths'] == frame_paths
+    assert submit_task.call_args.kwargs['frame_sequences'] == frame_sequences
+    director_plan = task.get_progress()['_resume']['kwargs']['director_plan']
+    assert director_plan['preset'] == 'launch'
+    assert director_plan['pages'][0]['element_timeline'][0]['enter'] == 'fade'
 
 
 def test_native_video_export_marks_the_committed_task_failed_when_submission_fails(client):

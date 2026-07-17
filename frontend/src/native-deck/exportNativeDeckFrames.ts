@@ -24,6 +24,67 @@ export async function captureNativeDeckFrames(root: ParentNode = document) {
   return frames
 }
 
+export async function captureNativeDeckFrameSequences(root: ParentNode = document) {
+  await prepareNativeDeckForCapture(root)
+  const slides = Array.from(root.querySelectorAll<HTMLElement>('#deck > .slide'))
+  if (!slides.length) throw new Error('没有可导出的视频页面')
+
+  const sequences: Blob[][] = []
+  for (const slide of slides) {
+    const candidates = stageCandidates(slide)
+    const animation = parseNativeAnimation(slide.dataset.nativeAnimation)
+    const shouldStage = animation.elementEnter && animation.elementEnter !== 'none' && candidates.length > 1
+    if (!shouldStage) {
+      sequences.push([await captureSlide(slide)])
+      continue
+    }
+
+    const stageCount = Math.min(4, candidates.length)
+    const frames: Blob[] = []
+    const previousVisibility = candidates.map((element) => element.style.visibility)
+    try {
+      for (let stage = 1; stage <= stageCount; stage += 1) {
+        const visibleCount = Math.ceil((stage / stageCount) * candidates.length)
+        candidates.forEach((element, index) => { element.style.visibility = index < visibleCount ? '' : 'hidden' })
+        frames.push(await captureSlide(slide))
+      }
+    } finally {
+      candidates.forEach((element, index) => { element.style.visibility = previousVisibility[index] })
+    }
+    sequences.push(frames)
+  }
+  return sequences
+}
+
+async function captureSlide(slide: HTMLElement) {
+  const dataUrl = await toPng(slide, {
+    width: WIDTH,
+    height: HEIGHT,
+    canvasWidth: WIDTH,
+    canvasHeight: HEIGHT,
+    pixelRatio: 1,
+    cacheBust: true,
+  })
+  return dataUrlBlob(dataUrl)
+}
+
+function parseNativeAnimation(value: string | undefined) {
+  try {
+    const parsed = JSON.parse(value || '{}')
+    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : {}
+  } catch {
+    return {}
+  }
+}
+
+function stageCandidates(slide: HTMLElement) {
+  const content = slide.querySelector<HTMLElement>('.native-slide-content')
+  if (!content) return []
+  const root = content.firstElementChild as HTMLElement | null
+  const candidates = root ? Array.from(root.children) : Array.from(content.children)
+  return candidates.filter((element): element is HTMLElement => element instanceof HTMLElement && !element.hasAttribute('aria-hidden'))
+}
+
 export async function prepareNativeDeckForCapture(root: ParentNode = document) {
   await waitForNativeLayouts(root)
   await document.fonts?.ready

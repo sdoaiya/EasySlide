@@ -23,10 +23,37 @@ from utils import (
 from services import ExportService, FileService
 from services.ai_service_manager import get_ai_service
 from services.prompts import normalize_narration_generation_config
+from services.video_director import build_video_director_plan, normalize_video_director_config
 
 logger = logging.getLogger(__name__)
 
 export_bp = Blueprint('export', __name__, url_prefix='/api/projects')
+
+
+def _video_director_page_inputs(pages, render_mode='image'):
+    inputs = []
+    for page in pages:
+        outline = page.get_outline_content() or {}
+        description = page.get_description_content() or {}
+        native_props = page.get_native_props() if render_mode == 'native' else {}
+        animation = native_props.get('__animation') if isinstance(native_props, dict) else None
+        element_animations = []
+        if isinstance(animation, dict) and animation.get('elementEnter') not in (None, 'none'):
+            element_animations.append({
+                'element_id': 'content-group',
+                'enter': animation.get('elementEnter'),
+                'order': 1,
+                'emphasis': animation.get('emphasis'),
+            })
+        inputs.append({
+            'page_index': page.order_index,
+            'title': outline.get('title', ''),
+            'description_text': description.get('text', ''),
+            'layout_id': page.native_layout or '',
+            'render_mode': render_mode,
+            'element_animations': element_animations,
+        })
+    return inputs
 
 
 def _parse_pptx_transition_effects():
@@ -798,8 +825,19 @@ def export_native_video(project_id):
     if [page.id for page in pages] != page_ids:
         return bad_request('页面顺序与项目不一致，请刷新后重试')
     frames = request.files.getlist('frames')
-    if len(frames) != len(pages):
-        return bad_request('每一页必须上传一张视频帧')
+    try:
+        frame_counts = json.loads(request.form.get('frame_counts', '[]'))
+    except json.JSONDecodeError:
+        return bad_request('frame_counts 必须是 JSON 数组')
+    if not frame_counts:
+        frame_counts = [1] * len(pages)
+    if (
+        not isinstance(frame_counts, list)
+        or len(frame_counts) != len(pages)
+        or any(not isinstance(count, int) or count < 1 or count > 4 for count in frame_counts)
+        or sum(frame_counts) != len(frames)
+    ):
+        return bad_request('每页必须上传 1-4 张连续阶段帧')
     try:
         for frame in frames:
             Image.open(frame.stream).verify()
@@ -812,6 +850,15 @@ def export_native_video(project_id):
         _project_title_filename(project, 'mp4', f'native_{project_id}.mp4'),
         'mp4',
     )
+    try:
+        raw_director_config = json.loads(request.form.get('director_config', '{}'))
+    except json.JSONDecodeError:
+        return bad_request('director_config 必须是 JSON 对象')
+    director_config = normalize_video_director_config(raw_director_config)
+    director_plan = build_video_director_plan(
+        _video_director_page_inputs(pages, 'native'),
+        director_config,
+    )
 
     task = Task(project_id=project_id, task_type='EXPORT_VIDEO', status='PENDING')
     db.session.add(task)
@@ -819,11 +866,16 @@ def export_native_video(project_id):
     frames_dir = Path(current_app.config['UPLOAD_FOLDER']) / project_id / 'exports' / f'_native_video_{task.id}'
     try:
         frames_dir.mkdir(parents=True, exist_ok=True)
-        frame_paths = []
-        for index, frame in enumerate(frames):
-            frame_path = frames_dir / f'frame_{index:04d}.png'
-            frame.save(frame_path)
-            frame_paths.append(str(frame_path.resolve()))
+        frame_sequences = []
+        cursor = 0
+        for page_index, count in enumerate(frame_counts):
+            page_frames = []
+            for stage_index in range(count):
+                frame_path = frames_dir / f'frame_{page_index:04d}_{stage_index:02d}.png'
+                frames[cursor].save(frame_path)
+                cursor += 1
+                page_frames.append(str(frame_path.resolve()))
+            frame_sequences.append(page_frames)
 
         from services.tts_video_service import get_default_voice
         from services.task_manager import export_video_task, task_manager
@@ -844,7 +896,8 @@ def export_native_video(project_id):
                 None,
                 fallback_topic=project.idea_prompt or '',
             ),
-            'frame_paths': frame_paths,
+            'director_plan': director_plan,
+            'frame_sequences': frame_sequences,
         }
         task.set_progress({
             'total': 100,
@@ -928,6 +981,7 @@ def export_video(project_id):
             data.get('narration_config'),
             fallback_topic=presentation_topic,
         )
+        director_config = normalize_video_director_config(data.get('director_config'))
 
         # 获取页面
         selected_page_ids = parse_page_ids_from_body(data)
@@ -936,6 +990,11 @@ def export_video(project_id):
 
         if not pages:
             return bad_request("No pages found for project")
+
+        director_plan = build_video_director_plan(
+            _video_director_page_inputs(pages, 'native' if project.render_mode == 'native' else 'image'),
+            director_config,
+        )
 
         has_images = any(page.generated_image_path for page in pages)
         if not has_images and not include_no_image_pages:
@@ -968,6 +1027,7 @@ def export_video(project_id):
                     "page_ids": selected_page_ids if selected_page_ids else None,
                     "language": language,
                     "narration_config": narration_config,
+                    "director_plan": director_plan,
                 },
             },
         })
@@ -999,6 +1059,7 @@ def export_video(project_id):
             page_ids=selected_page_ids if selected_page_ids else None,
             language=language,
             narration_config=narration_config,
+            director_plan=director_plan,
             app=app,
         )
 
@@ -1011,6 +1072,8 @@ def export_video(project_id):
                 "ken_burns_style": ken_burns_style,
                 "include_no_image_pages": include_no_image_pages,
                 "narration_config": narration_config,
+                "director_config": director_config,
+                "director_plan": director_plan,
             },
             message="Video export task created"
         )

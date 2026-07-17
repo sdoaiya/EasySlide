@@ -87,15 +87,14 @@ test.describe('Video export narration config', () => {
     await page.locator('select').nth(0).selectOption('confident corporate executive')
     await page.locator('select').nth(1).selectOption('potential investors and venture capitalists')
     await page.locator('select').nth(2).selectOption('inspiring, passionate, and persuasive')
-    await page.locator('input[type="text"]').fill('our company 2025 annual financial report and 2026 strategic plan')
     await page.locator('button:has-text("高级配置")').click()
+    await page.locator('input[type="text"]').fill('our company 2025 annual financial report and 2026 strategic plan')
     await page.locator('input[type="number"]').nth(0).fill('80')
     await page.locator('input[type="number"]').nth(1).fill('140')
-    await page.locator('input[type="checkbox"]').nth(0).uncheck()
     await page.locator('button:has-text("开始导出")').click()
 
     await expect.poll(() => exportPayload).not.toBeNull()
-    expect(exportPayload.generate_narration).toBe(false)
+    expect(exportPayload.generate_narration).toBe(true)
     expect(exportPayload.presentation_topic).toBe('our company 2025 annual financial report and 2026 strategic plan')
     expect(exportPayload.narration_config).toMatchObject({
       speaker_persona: 'confident corporate executive',

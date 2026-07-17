@@ -1129,6 +1129,56 @@ def create_static_clip(
     _run_ffmpeg_command(cmd, "FFmpeg failed for static clip", idle_timeout=idle_timeout)
 
 
+def create_staged_clip(
+    image_paths: List[str],
+    output_path: str,
+    duration: float,
+    width: int = 1920,
+    height: int = 1080,
+    fps: int = 25,
+    ffmpeg_path: str = 'ffmpeg',
+    idle_timeout: float = _FFMPEG_IDLE_TIMEOUT_SECONDS,
+    include_silent_audio: bool = False,
+) -> None:
+    """Build a bounded sequence of native reveal stages for one slide."""
+    if not image_paths:
+        raise ValueError('Native staged clip requires at least one frame')
+    if len(image_paths) == 1:
+        if include_silent_audio:
+            create_silent_clip(
+                image_paths[0], output_path, duration=duration, width=width, height=height,
+                fps=fps, enable_ken_burns=False, ffmpeg_path=ffmpeg_path, idle_timeout=idle_timeout,
+            )
+        else:
+            create_static_clip(
+                image_paths[0], output_path, duration, width=width, height=height,
+                fps=fps, ffmpeg_path=ffmpeg_path, idle_timeout=idle_timeout,
+            )
+        return
+
+    stage_duration = max(duration / len(image_paths), 0.25)
+    stage_clips = []
+    try:
+        for index, image_path in enumerate(image_paths):
+            stage_path = f'{output_path}.stage_{index:02d}.mp4'
+            if include_silent_audio:
+                create_silent_clip(
+                    image_path, stage_path, duration=stage_duration, width=width, height=height,
+                    fps=fps, enable_ken_burns=False, ffmpeg_path=ffmpeg_path, idle_timeout=idle_timeout,
+                )
+            else:
+                create_static_clip(
+                    image_path, stage_path, stage_duration, width=width, height=height,
+                    fps=fps, ffmpeg_path=ffmpeg_path, idle_timeout=idle_timeout,
+                )
+            stage_clips.append(stage_path)
+        composite_video(stage_clips, output_path, fps=fps, ffmpeg_path=ffmpeg_path, idle_timeout=idle_timeout)
+    finally:
+        for stage_path in stage_clips:
+            if os.path.exists(stage_path):
+                os.remove(stage_path)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # 字幕生成与烧录
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1360,6 +1410,7 @@ def generate_ass_subtitle(
     width: int = 1920,
     height: int = 1080,
     font_size: int = 0,
+    subtitle_mode: str = 'standard',
 ) -> None:
     """
     生成 ASS 字幕文件（带半透明底栏，CJK 字体）。
@@ -1408,7 +1459,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             start = _format_ass_time(entry['start'])
             end = _format_ass_time(entry['end'])
             text = _sanitize_ass_dialogue_text(entry['text'])
+            if subtitle_mode == 'highlight':
+                text = _highlight_ass_keywords(text)
             f.write(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text}\n")
+
+
+def _highlight_ass_keywords(text: str) -> str:
+    accent = r'{\c&H0034D399&}'
+    normal = r'{\c&H00FFFFFF&}'
+    pattern = re.compile(r'(?<=[“「『])[^”」』]{2,12}(?=[”」』])|(?:[$￥¥]\s*)?\d+(?:[.,]\d+)*(?:%|％|万|亿|元|倍)?')
+    return pattern.sub(lambda match: f'{accent}{match.group(0)}{normal}', text)
 
 
 def _strip_invisible_unicode(text: str, keep_newlines: bool = False) -> str:
@@ -1510,6 +1570,7 @@ def mux_video_audio(
     output_path: str,
     ffmpeg_path: str = 'ffmpeg',
     idle_timeout: float = _FFMPEG_IDLE_TIMEOUT_SECONDS,
+    normalize_audio: bool = False,
 ) -> None:
     """将视频和音频合并为一个 MP4 文件"""
     cmd = [
@@ -1517,11 +1578,10 @@ def mux_video_audio(
         '-i', video_path,
         '-i', audio_path,
         '-c:v', 'copy',
-        '-c:a', 'aac',
-        '-shortest',
-        '-movflags', '+faststart',
-        output_path,
     ]
+    if normalize_audio:
+        cmd += ['-af', 'loudnorm=I=-16:LRA=7:TP=-1.5']
+    cmd += ['-c:a', 'aac', '-shortest', '-movflags', '+faststart', output_path]
     _run_ffmpeg_command(cmd, "FFmpeg mux failed", idle_timeout=idle_timeout)
 
 
@@ -1603,6 +1663,7 @@ def generate_narration_video(
     fail_fast: bool = False,
     elevenlabs_config: Optional[dict] = None,
     speed: float = 1.0,
+    director_plan: Optional[dict] = None,
 ) -> None:
     """
     完整的播报视频生成流水线。
@@ -1651,6 +1712,11 @@ def generate_narration_video(
 
     try:
         total = len(pages_data)
+        directed_pages = {
+            int(item.get('page_index', index)): item
+            for index, item in enumerate((director_plan or {}).get('pages', []))
+            if isinstance(item, dict)
+        }
         muxed_clips: List[str] = []
         subtitle_entries: List[dict] = []
         cumulative_time = 0.0
@@ -1759,16 +1825,27 @@ def generate_narration_video(
             image_path = page['image_path']
             narration = page.get('narration_text')
             page_idx = page.get('page_index', i)
-            effect = resolve_ken_burns_effect(page_idx, ken_burns_style)
+            page_direction = directed_pages.get(page_idx, {})
+            motion = page_direction.get('motion') if isinstance(page_direction.get('motion'), dict) else {}
+            effect = motion.get('effect') or resolve_ken_burns_effect(page_idx, ken_burns_style)
             audio_duration = page_durations[i]
             audio_path = audio_paths[i]
             alignment = alignments[i]
+            stage_image_paths = [
+                path for path in (page.get('stage_image_paths') or [])
+                if isinstance(path, str) and os.path.isfile(path)
+            ]
 
             # 整片头/尾的静音 padding 与画面淡入/淡出
             is_first = (i == 0)
             is_last = (i == total - 1)
-            leading_pad = _LEADING_PAD_SECONDS if is_first else 0.0
+            audio_direction = page_direction.get('audio') if isinstance(page_direction.get('audio'), dict) else {}
+            planned_pause = max(float(audio_direction.get('pause_before_ms') or 0) / 1000.0, 0.0)
+            leading_pad = max(_LEADING_PAD_SECONDS if is_first else 0.0, planned_pause)
             trailing_pad = _TRAILING_PAD_SECONDS if is_last else 0.0
+            transition = page_direction.get('transition') if isinstance(page_direction.get('transition'), dict) else {}
+            transition_fade = min(float(transition.get('duration_ms') or 0) / 1000.0, 0.35)
+            fade_in_seconds = max(leading_pad if is_first else 0.0, transition_fade if not is_first and transition.get('type') == 'fade' else 0.0)
 
             if audio_path and (leading_pad > 0 or trailing_pad > 0):
                 padded_audio = os.path.join(tmp_dir, f'audio_padded_{i:03d}.mp3')
@@ -1798,12 +1875,22 @@ def generate_narration_video(
 
             if audio_paths[i]:
                 video_clip = os.path.join(tmp_dir, f'video_{i:03d}.mp4')
-                if enable_ken_burns:
+                if len(stage_image_paths) > 1:
+                    create_staged_clip(
+                        stage_image_paths,
+                        video_clip,
+                        display_duration,
+                        width=width,
+                        height=height,
+                        fps=fps,
+                        ffmpeg_path=ffmpeg_path,
+                    )
+                elif effect != 'static' and (enable_ken_burns or director_plan):
                     create_ken_burns_clip(
                         image_path, video_clip, display_duration,
                         width=width, height=height, fps=fps,
                         effect_type=effect, ffmpeg_path=ffmpeg_path,
-                        fade_in_seconds=leading_pad,
+                        fade_in_seconds=fade_in_seconds,
                         fade_out_seconds=trailing_pad,
                     )
                 else:
@@ -1811,25 +1898,43 @@ def generate_narration_video(
                         image_path, video_clip, display_duration,
                         width=width, height=height, fps=fps,
                         ffmpeg_path=ffmpeg_path,
-                        fade_in_seconds=leading_pad,
+                        fade_in_seconds=fade_in_seconds,
                         fade_out_seconds=trailing_pad,
                     )
 
                 # Mux video + audio
                 muxed_path = os.path.join(tmp_dir, f'muxed_{i:03d}.mp4')
-                mux_video_audio(video_clip, audio_path, muxed_path, ffmpeg_path=ffmpeg_path)
+                mux_video_audio(
+                    video_clip,
+                    audio_path,
+                    muxed_path,
+                    ffmpeg_path=ffmpeg_path,
+                    normalize_audio=bool(audio_direction.get('normalize_loudness')),
+                )
                 muxed_clips.append(muxed_path)
             else:
                 # 静音片段（含无声音轨以保证 concat 兼容）
                 silent_path = os.path.join(tmp_dir, f'silent_{i:03d}.mp4')
-                create_silent_clip(
-                    image_path, silent_path, duration=display_duration,
-                    width=width, height=height, fps=fps,
-                    effect_type=effect, enable_ken_burns=enable_ken_burns,
-                    ffmpeg_path=ffmpeg_path,
-                    fade_in_seconds=leading_pad,
-                    fade_out_seconds=trailing_pad,
-                )
+                if len(stage_image_paths) > 1:
+                    create_staged_clip(
+                        stage_image_paths,
+                        silent_path,
+                        display_duration,
+                        width=width,
+                        height=height,
+                        fps=fps,
+                        ffmpeg_path=ffmpeg_path,
+                        include_silent_audio=True,
+                    )
+                else:
+                    create_silent_clip(
+                        image_path, silent_path, duration=display_duration,
+                        width=width, height=height, fps=fps,
+                        effect_type=effect, enable_ken_burns=effect != 'static' and (enable_ken_burns or bool(director_plan)),
+                        ffmpeg_path=ffmpeg_path,
+                        fade_in_seconds=fade_in_seconds,
+                        fade_out_seconds=trailing_pad,
+                    )
                 muxed_clips.append(silent_path)
 
             if progress_callback:
@@ -1849,7 +1954,8 @@ def generate_narration_video(
                 progress_callback("字幕", "正在烧录字幕…", 88)
 
             ass_path = os.path.join(tmp_dir, 'subtitles.ass')
-            generate_ass_subtitle(subtitle_entries, ass_path, width=width, height=height)
+            subtitle_mode = str((director_plan or {}).get('config', {}).get('subtitle_mode') or 'standard')
+            generate_ass_subtitle(subtitle_entries, ass_path, width=width, height=height, subtitle_mode=subtitle_mode)
             burn_subtitles(raw_video, ass_path, output_path, ffmpeg_path=ffmpeg_path)
         else:
             shutil.copy2(raw_video, output_path)

@@ -9,7 +9,9 @@ assert _SPEC and _SPEC.loader
 _MODULE = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_MODULE)
 append_image_page_role_hint = _MODULE.append_image_page_role_hint
+append_image_layout_hint = _MODULE.append_image_layout_hint
 append_template_visual_profile_hint = _MODULE.append_template_visual_profile_hint
+infer_image_layout_family = _MODULE.infer_image_layout_family
 infer_image_page_role = _MODULE.infer_image_page_role
 resolve_template_reference_path = _MODULE.resolve_template_reference_path
 
@@ -48,6 +50,23 @@ def test_role_hints_carry_distinct_image_generation_constraints():
     assert '总结' in ending
     assert '下一步' in ending
     assert '禁止占位符' in data
+
+
+def test_infers_semantic_layout_and_varies_adjacent_content_pages():
+    assert infer_image_layout_family('content', 3, {'title': '项目实施时间线'}) == 'timeline'
+    assert infer_image_layout_family('data', 4, {'title': '销售转化漏斗'}) == 'funnel'
+    assert infer_image_layout_family('content', 4, {'title': '方案概述'}) != infer_image_layout_family(
+        'content', 5, {'title': '核心能力'}
+    )
+
+
+def test_appends_layout_hint_without_duplication():
+    result = append_image_layout_hint('原始要求', 'timeline')
+
+    assert result is not None
+    assert result.startswith('原始要求')
+    assert 'timeline' in result
+    assert append_image_layout_hint(result, 'timeline') == result
 
 
 def test_appends_gorden_template_visual_profile_without_duplicate():

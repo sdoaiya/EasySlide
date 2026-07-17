@@ -76,7 +76,7 @@ async function inlinePageMedia(page: HTMLElement, mediaMap: Map<string, string>)
       dataUrl = await blobToDataUrl(await response.blob())
       mediaMap.set(value, dataUrl)
       mediaMap.set(absolute, dataUrl)
-      try { mediaMap.set(new URL(absolute).pathname, dataUrl) } catch {}
+      try { mediaMap.set(new URL(absolute).pathname, dataUrl) } catch { /* Keep the absolute URL mapping. */ }
     }
     element.setAttribute(attribute, dataUrl)
   }))

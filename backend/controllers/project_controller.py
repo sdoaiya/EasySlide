@@ -30,6 +30,7 @@ from services.task_manager import (
     generate_images_task,
     process_ppt_renovation_task,
     get_image_prompt_field_names,
+    prepare_page_for_image_generation,
 )
 from utils import (
     success_response, error_response, not_found, bad_request,
@@ -78,6 +79,16 @@ def _calibrate_stale_image_generation_state(project):
     """Turn DB-only running image tasks into resumable paused tasks before listing."""
     changed = False
     pages = list(project.pages or [])
+    if project.render_mode != 'native':
+        file_service = FileService(current_app.config['UPLOAD_FOLDER'])
+        for page in pages:
+            if page.generated_image_path and not file_service.file_exists(page.generated_image_path):
+                page.generated_image_path = None
+                page.cached_image_path = None
+                if page.status == 'COMPLETED':
+                    page.status = 'DESCRIPTION_GENERATED' if page.description_content else 'DRAFT'
+                changed = True
+
     tasks = sorted(
         [
             task for task in (project.tasks or [])
@@ -89,7 +100,15 @@ def _calibrate_stale_image_generation_state(project):
         reverse=True,
     )
     if not tasks:
-        return False
+        next_status = _derive_image_project_status(project, pages)
+        if (
+            project.render_mode != 'native'
+            and project.status != next_status
+            and (changed or project.status == 'GENERATING_IMAGES')
+        ):
+            project.status = next_status
+            changed = True
+        return changed
 
     for task in tasks:
         progress = task.get_progress()
@@ -104,7 +123,7 @@ def _calibrate_stale_image_generation_state(project):
         changed = _reset_image_page_after_stale_task(page) or changed
 
     next_status = _derive_image_project_status(project, pages)
-    if project.status in {'GENERATING_IMAGES'} and project.status != next_status:
+    if project.render_mode != 'native' and project.status != next_status:
         project.status = next_status
         changed = True
 
@@ -599,6 +618,9 @@ def get_project(project_id):
         
         if not project:
             return not_found('Project')
+
+        if _calibrate_stale_image_generation_state(project):
+            db.session.commit()
         
         return success_response(project.to_dict(include_pages=True))
     
@@ -1352,14 +1374,52 @@ def generate_images(project_id):
 
         # Batch generation is additive. Explicit single-page regeneration remains
         # available through the page endpoint with force_regenerate=true.
-        pages = [page for page in requested_pages if not page.generated_image_path]
+        file_service = FileService(current_app.config['UPLOAD_FOLDER'])
+        pages = [
+            page for page in requested_pages
+            if prepare_page_for_image_generation(page, file_service)
+        ]
         skipped_existing = len(requested_pages) - len(pages)
+
+        active_image_tasks = Task.query.filter(
+            Task.project_id == project_id,
+            Task.task_type == 'GENERATE_IMAGES',
+            Task.status.in_({'PENDING', 'PROCESSING', 'RUNNING', 'PAUSED'}),
+        ).order_by(Task.created_at.desc()).all()
+        claimed_page_ids = set()
+        task_by_page_id = {}
+        for active_task in active_image_tasks:
+            progress = active_task.get_progress()
+            active_page_ids = progress.get('page_ids')
+            if not isinstance(active_page_ids, list):
+                active_page_ids = [
+                    item.get('page_id')
+                    for item in progress.get('pages', [])
+                    if isinstance(item, dict) and item.get('page_id')
+                ]
+            for active_page_id in active_page_ids:
+                claimed_page_ids.add(active_page_id)
+                task_by_page_id.setdefault(active_page_id, active_task)
+
+        unclaimed_pages = [page for page in pages if page.id not in claimed_page_ids]
+        claimed_requested_pages = [page for page in pages if page.id in claimed_page_ids]
+        if not unclaimed_pages and claimed_requested_pages:
+            active_task = task_by_page_id[claimed_requested_pages[0].id]
+            return success_response({
+                'task_id': active_task.id,
+                'status': 'GENERATING_IMAGES',
+                'total_pages': 0,
+                'skipped_existing': skipped_existing,
+                'skipped_active': len(claimed_requested_pages),
+            }, status_code=202)
+        pages = unclaimed_pages
         if not pages:
             return success_response({
                 'task_id': None,
                 'status': 'NO_PENDING_IMAGES',
                 'total_pages': 0,
                 'skipped_existing': skipped_existing,
+                'skipped_active': 0,
             })
         
         # Create task
@@ -1377,6 +1437,7 @@ def generate_images(project_id):
             'status': 'GENERATING_IMAGES',
             'total_pages': len(pages),
             'skipped_existing': skipped_existing,
+            'skipped_active': len(claimed_requested_pages),
         }, status_code=202)
     
     except Exception as e:
@@ -1454,7 +1515,11 @@ def resume_export_task(project_id, task_id):
         progress = task.get_progress()
         saved_page_ids = progress.get('page_ids') if isinstance(progress.get('page_ids'), list) else None
         pages = get_filtered_pages(project_id, saved_page_ids)
-        pages = [page for page in pages if not page.generated_image_path]
+        file_service = FileService(current_app.config['UPLOAD_FOLDER'])
+        pages = [
+            page for page in pages
+            if prepare_page_for_image_generation(page, file_service)
+        ]
         if not pages:
             task.status = 'COMPLETED'
             task.completed_at = datetime.utcnow()

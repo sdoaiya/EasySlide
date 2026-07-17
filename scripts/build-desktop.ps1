@@ -63,6 +63,16 @@ canvas.save(ico_target, sizes=[(256, 256), (128, 128), (64, 64), (48, 48), (32, 
   }
   npm --prefix desktop run dist:win
 
+  $installerPath = Join-Path $desktopOutput 'EasySlide-0.3.0-Setup.exe'
+  $blockmapPath = "$installerPath.blockmap"
+  $builderDeadline = (Get-Date).AddMinutes(10)
+  while ((-not (Test-Path $installerPath) -or -not (Test-Path $blockmapPath)) -and (Get-Date) -lt $builderDeadline) {
+    Start-Sleep -Seconds 2
+  }
+  if (-not (Test-Path $installerPath) -or -not (Test-Path $blockmapPath)) {
+    throw "Desktop installer did not finish within 10 minutes: $installerPath"
+  }
+
   function Publish-DesktopDelivery {
     param(
       [string]$Source,

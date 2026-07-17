@@ -123,7 +123,7 @@ function extractNativeShapeIds(xml: string) {
         if (ids.length) return ids
       }
     }
-  } catch {}
+  } catch { /* Fall back to the XML expression below. */ }
   return Array.from(xml.matchAll(/<p:(?:sp|pic|graphicFrame|cxn|grpSp)\b[\s\S]*?<p:cNvPr\b[^>]*\bid="(\d+)"/g), (match) => match[1])
 }
 

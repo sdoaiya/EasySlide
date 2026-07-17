@@ -221,7 +221,8 @@ class TestProjectGet:
 
 
 class TestProjectList:
-    def test_project_stats_cover_all_projects_not_only_current_page(self, client):
+    def test_project_stats_cover_all_projects_not_only_current_page(self, app, client):
+        from PIL import Image
         from models import db, Page, Project
 
         completed = Project(id='stats-completed', creation_type='idea', status='COMPLETED')
@@ -262,6 +263,10 @@ class TestProjectList:
             order_index=1,
             status='DESCRIPTION_GENERATED',
         )
+        for page in (completed_page, partial_page_with_image):
+            image_path = Path(app.config['UPLOAD_FOLDER']) / page.generated_image_path
+            image_path.parent.mkdir(parents=True, exist_ok=True)
+            Image.new('RGB', (16, 9), 'white').save(image_path)
         db.session.add_all([
             completed, completed_page,
             generating, generating_page,
@@ -281,6 +286,31 @@ class TestProjectList:
             'generating': 1,
             'in_progress': 3,
         }
+
+    def test_missing_image_downgrades_completed_project_before_counting(self, client):
+        from models import db, Page, Project
+
+        project = Project(id='stats-missing-image', creation_type='idea', status='COMPLETED')
+        page = Page(
+            id='stats-missing-image-page',
+            project_id=project.id,
+            order_index=0,
+            status='COMPLETED',
+            generated_image_path='generated/missing-from-disk.png',
+        )
+        page.set_description_content({'text': 'ready to regenerate'})
+        db.session.add_all([project, page])
+        db.session.commit()
+
+        data = assert_success_response(client.get('/api/projects?limit=10&offset=0'))['data']
+
+        db.session.refresh(project)
+        db.session.refresh(page)
+        assert data['stats']['completed'] == 0
+        assert data['stats']['in_progress'] == 1
+        assert project.status == 'DESCRIPTIONS_GENERATED'
+        assert page.status == 'DESCRIPTION_GENERATED'
+        assert page.generated_image_path is None
 
     def test_project_list_pauses_stale_image_generation_tasks_before_counting(self, client):
         from models import db, Page, Project, Task
@@ -326,6 +356,32 @@ class TestProjectList:
             'in_progress': 1,
         }
 
+    def test_native_project_detail_does_not_run_image_file_calibration(self, client):
+        from models import db, Page, Project
+
+        project = Project(
+            id='native-project-image-calibration-boundary',
+            creation_type='idea',
+            render_mode='native',
+            status='NATIVE_DECK_GENERATED',
+        )
+        page = Page(
+            id='native-page-image-calibration-boundary',
+            project_id=project.id,
+            order_index=0,
+            status='NATIVE_GENERATED',
+            generated_image_path='native/not-an-image-mode-result.html',
+        )
+        db.session.add_all([project, page])
+        db.session.commit()
+
+        data = assert_success_response(client.get(f'/api/projects/{project.id}'))['data']
+
+        db.session.refresh(page)
+        assert data['pages'][0]['generated_image_url'].endswith('/not-an-image-mode-result.html')
+        assert page.generated_image_path == 'native/not-an-image-mode-result.html'
+        assert page.status == 'NATIVE_GENERATED'
+
 
 class TestImageGenerationConcurrency:
     def test_batch_image_generation_caps_workers_at_four(self):
@@ -336,6 +392,7 @@ class TestImageGenerationConcurrency:
         assert _resolve_image_generation_workers(None, 20) == 4
 
     def test_batch_image_generation_skips_pages_with_existing_images(self, app):
+        from PIL import Image
         from models import db, Page, Project, Task
         from controllers import project_controller as project_controller_module
 
@@ -364,6 +421,9 @@ class TestImageGenerationConcurrency:
             for page in (completed_page, pending_page):
                 page.set_outline_content({'title': page.id, 'points': []})
                 page.set_description_content({'text': page.id})
+            existing_path = Path(app.config['UPLOAD_FOLDER']) / completed_page.generated_image_path
+            existing_path.parent.mkdir(parents=True, exist_ok=True)
+            Image.new('RGB', (16, 9), 'white').save(existing_path)
             db.session.add_all([project, completed_page, pending_page])
             db.session.commit()
 
@@ -398,6 +458,134 @@ class TestImageGenerationConcurrency:
             assert completed_page.generated_image_path == 'generated/existing.png'
             assert completed_page.status == 'COMPLETED'
             assert pending_page.status == 'QUEUED'
+            submit_task.assert_called_once()
+
+    def test_batch_image_generation_reuses_active_task_for_claimed_pages(self, app):
+        from models import db, Page, Project, Task
+        from controllers import project_controller as project_controller_module
+
+        with app.app_context():
+            project = Project(
+                id='proj-reuse-active-image-task',
+                creation_type='idea',
+                idea_prompt='test',
+                template_style='clean',
+                image_aspect_ratio='16:9',
+                status='GENERATING_IMAGES',
+            )
+            page = Page(
+                id='page-claimed-by-task',
+                project_id=project.id,
+                order_index=0,
+                status='QUEUED',
+            )
+            page.set_outline_content({'title': page.id, 'points': []})
+            page.set_description_content({'text': page.id})
+            active_task = Task(
+                id='active-image-task-to-reuse',
+                project_id=project.id,
+                task_type='GENERATE_IMAGES',
+                status='PROCESSING',
+            )
+            active_task.set_progress({'page_ids': [page.id], 'total': 1, 'completed': 0, 'failed': 0})
+            db.session.add_all([project, page, active_task])
+            db.session.commit()
+
+            with (
+                patch.object(project_controller_module, 'get_ai_service', return_value=object()),
+                patch.object(project_controller_module.task_manager, 'submit_task') as submit_task,
+            ):
+                response = app.test_client().post(
+                    f'/api/projects/{project.id}/generate/images',
+                    json={'page_ids': [page.id]},
+                )
+
+            data = assert_success_response(response, 202)['data']
+            assert data['task_id'] == active_task.id
+            assert data['status'] == 'GENERATING_IMAGES'
+            submit_task.assert_not_called()
+
+    def test_batch_image_generation_recovers_missing_image_files(self, app):
+        from models import db, Page, Project, Task
+        from controllers import project_controller as project_controller_module
+
+        with app.app_context():
+            project = Project(
+                id='proj-recover-missing-image',
+                creation_type='idea',
+                idea_prompt='test',
+                template_style='clean',
+                image_aspect_ratio='16:9',
+                status='COMPLETED',
+            )
+            page = Page(
+                id='page-missing-file',
+                project_id=project.id,
+                order_index=0,
+                status='COMPLETED',
+                generated_image_path='generated/file-does-not-exist.png',
+                cached_image_path='generated/file-does-not-exist-thumb.jpg',
+            )
+            page.set_outline_content({'title': page.id, 'points': []})
+            page.set_description_content({'text': page.id})
+            db.session.add_all([project, page])
+            db.session.commit()
+
+            with (
+                patch.object(project_controller_module, 'get_ai_service', return_value=object()),
+                patch.object(project_controller_module.task_manager, 'submit_task') as submit_task,
+            ):
+                response = app.test_client().post(f'/api/projects/{project.id}/generate/images', json={})
+
+            data = assert_success_response(response, 202)['data']
+            task = Task.query.get(data['task_id'])
+            db.session.refresh(page)
+
+            assert data['total_pages'] == 1
+            assert task.get_progress()['page_ids'] == [page.id]
+            assert page.generated_image_path is None
+            assert page.cached_image_path is None
+            assert page.status == 'QUEUED'
+            submit_task.assert_called_once()
+
+    def test_batch_image_generation_recovers_corrupt_image_files(self, app):
+        from models import db, Page, Project
+        from controllers import project_controller as project_controller_module
+
+        with app.app_context():
+            project = Project(
+                id='proj-recover-corrupt-image',
+                creation_type='idea',
+                idea_prompt='test',
+                template_style='clean',
+                image_aspect_ratio='16:9',
+                status='COMPLETED',
+            )
+            page = Page(
+                id='page-corrupt-file',
+                project_id=project.id,
+                order_index=0,
+                status='COMPLETED',
+                generated_image_path='generated/corrupt.png',
+            )
+            page.set_outline_content({'title': page.id, 'points': []})
+            page.set_description_content({'text': page.id})
+            corrupt_path = Path(app.config['UPLOAD_FOLDER']) / page.generated_image_path
+            corrupt_path.parent.mkdir(parents=True, exist_ok=True)
+            corrupt_path.write_bytes(b'not an image')
+            db.session.add_all([project, page])
+            db.session.commit()
+
+            with (
+                patch.object(project_controller_module, 'get_ai_service', return_value=object()),
+                patch.object(project_controller_module.task_manager, 'submit_task') as submit_task,
+            ):
+                response = app.test_client().post(f'/api/projects/{project.id}/generate/images', json={})
+
+            assert_success_response(response, 202)
+            db.session.refresh(page)
+            assert page.generated_image_path is None
+            assert page.status == 'QUEUED'
             submit_task.assert_called_once()
 
     def test_batch_image_generation_accepts_gorden_template_pack_without_style_text(self, app):
@@ -586,6 +774,51 @@ class TestImageGenerationConcurrency:
             assert data['page_id'] == page.id
             submit_task.assert_called_once()
 
+    def test_single_page_generation_recovers_missing_image_file(self, app):
+        from models import db, Page, Project
+        from controllers import page_controller as page_controller_module
+
+        class MinimalAIService:
+            def extract_image_urls_from_markdown(self, _text):
+                return []
+
+        with app.app_context():
+            project = Project(
+                id='proj-single-missing-image',
+                creation_type='idea',
+                idea_prompt='test',
+                template_style='clean',
+                image_aspect_ratio='16:9',
+                status='COMPLETED',
+            )
+            page = Page(
+                id='page-single-missing-image',
+                project_id=project.id,
+                order_index=0,
+                status='COMPLETED',
+                generated_image_path='generated/missing-single.png',
+                cached_image_path='generated/missing-single-thumb.jpg',
+            )
+            page.set_outline_content({'title': page.id, 'points': []})
+            page.set_description_content({'text': page.id})
+            db.session.add_all([project, page])
+            db.session.commit()
+
+            with (
+                patch.object(page_controller_module, 'get_ai_service', return_value=MinimalAIService()),
+                patch.object(page_controller_module.task_manager, 'submit_task') as submit_task,
+            ):
+                response = app.test_client().post(
+                    f'/api/projects/{project.id}/pages/{page.id}/generate/image',
+                    json={},
+                )
+
+            assert_success_response(response, 202)
+            db.session.refresh(page)
+            assert page.generated_image_path is None
+            assert page.cached_image_path is None
+            submit_task.assert_called_once()
+
     def test_batch_image_generation_can_resolve_template_pack_per_page(self, app):
         from PIL import Image
         from models import db, Page, Project
@@ -594,6 +827,7 @@ class TestImageGenerationConcurrency:
 
         class BatchAIService:
             prompt_requirements = []
+            page_indexes = []
 
             def flatten_outline(self, outline):
                 return outline
@@ -603,6 +837,7 @@ class TestImageGenerationConcurrency:
 
             def generate_image_prompt(self, *args, **kwargs):
                 self.prompt_requirements.append(kwargs.get('extra_requirements') or '')
+                self.page_indexes.append(args[3])
                 return 'prompt'
 
             def generate_image(self, *args, **kwargs):
@@ -618,10 +853,13 @@ class TestImageGenerationConcurrency:
                 image_aspect_ratio='16:9',
                 status='DESCRIPTIONS_GENERATED',
             )
-            page = Page(project_id=project.id, order_index=0, status='DESCRIPTION_GENERATED')
+            previous_page = Page(project_id=project.id, order_index=0, status='DESCRIPTION_GENERATED')
+            previous_page.set_outline_content({'title': 'Page 1', 'points': []})
+            previous_page.set_description_content({'text': 'Description 1'})
+            page = Page(project_id=project.id, order_index=1, status='DESCRIPTION_GENERATED')
             page.set_outline_content({'title': 'Page 1', 'points': []})
             page.set_description_content({'text': 'Description 1'})
-            db.session.add_all([project, page])
+            db.session.add_all([project, previous_page, page])
             db.session.commit()
 
             def fake_save_image_with_version(_image, _project_id, _page_id, _file_service, page_obj=None, image_format='PNG'):
@@ -664,6 +902,7 @@ class TestImageGenerationConcurrency:
                 manifest_path = Path(app.config['UPLOAD_FOLDER']) / task['progress']['manifest_path']
                 persisted_manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
                 assert persisted_manifest['pages'][0]['status'] == 'completed'
+                assert BatchAIService.page_indexes == [2]
                 assert any('模板视觉DNA' in item for item in BatchAIService.prompt_requirements)
                 assert any('数据仪表盘' in item for item in BatchAIService.prompt_requirements)
 

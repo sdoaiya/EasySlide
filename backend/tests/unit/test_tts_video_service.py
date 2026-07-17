@@ -522,6 +522,20 @@ class TestSubtitleSplitting:
         finally:
             os.unlink(path)
 
+    def test_ass_highlight_mode_accents_numbers_and_quoted_terms(self):
+        entries = [{'start': 0.0, 'end': 2.0, 'text': '增长 25%，核心是“交付效率”'}]
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix='.ass', delete=False, mode='w') as f:
+            path = f.name
+        try:
+            generate_ass_subtitle(entries, path, subtitle_mode='highlight')
+            with open(path, 'r', encoding='utf-8-sig') as f:
+                content = f.read()
+            assert r'{\c&H0034D399&}25%{\c&H00FFFFFF&}' in content
+            assert r'{\c&H0034D399&}交付效率{\c&H00FFFFFF&}' in content
+        finally:
+            os.unlink(path)
+
 
 class TestBurnSubtitles:
     """测试字幕烧录命令构造"""
@@ -592,6 +606,7 @@ class TestNarrationPrompt:
         assert 'knowledgeable and patient university professor' in prompt
         assert 'the general public with no technical background' in prompt
         assert 'between 100 and 200 words' in prompt
+        assert 'context, key insight, and transition' in prompt
 
     def test_english_prompt(self):
         prompt = get_narration_generation_prompt(
@@ -755,6 +770,10 @@ class TestExportVideoRoute:
             f'/api/projects/{project_id}/export/video',
             json={
                 'ken_burns_style': 'pan',
+                'director_config': {
+                    'preset': 'training',
+                    'page_pause_ms': 480,
+                },
                 'narration_config': {
                     'speaker_persona': 'confident corporate executive',
                     'min_words': 80,
@@ -768,6 +787,10 @@ class TestExportVideoRoute:
         assert data['narration_config']['min_words'] == 80
         assert data['narration_config']['max_words'] == 120
         assert data['ken_burns_style'] == 'pan'
+        assert data['director_config']['preset'] == 'training'
+        assert data['director_config']['page_pause_ms'] == 480
+        assert data['director_plan']['version'] == 1
+        assert data['director_plan']['pages'][0]['page_kind'] == 'cover'
 
     def test_export_video_default_filename_uses_project_theme(self, client, app, monkeypatch):
         monkeypatch.setattr('services.task_manager.task_manager.submit_task', lambda *args, **kwargs: None)
@@ -785,6 +808,7 @@ class TestExportVideoRoute:
 
         assert task is not None
         assert task.get_progress()['_resume']['kwargs']['filename'] == '视频导出测试.mp4'
+        assert task.get_progress()['_resume']['kwargs']['director_plan']['version'] == 1
 
     def test_export_video_no_pages(self, client, sample_project):
         if not sample_project:

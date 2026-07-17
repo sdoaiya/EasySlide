@@ -1,6 +1,7 @@
 import importlib
 import logging
 import hashlib
+import sqlite3
 
 
 def _reload_app_module():
@@ -44,6 +45,25 @@ def test_create_app_initializes_local_database_tables(monkeypatch, tmp_path):
     data = response.get_json()
     assert data['success'] is True
     assert data['data']['projects'] == []
+
+
+def test_create_app_upgrades_existing_sqlite_without_database_path_env(monkeypatch, tmp_path):
+    db_path = tmp_path / 'legacy-test.db'
+    with sqlite3.connect(db_path) as connection:
+        connection.execute('CREATE TABLE pages (id VARCHAR(36) PRIMARY KEY)')
+
+    monkeypatch.setenv('DATABASE_URL', f'sqlite:///{db_path}')
+    monkeypatch.delenv('DATABASE_PATH', raising=False)
+    monkeypatch.setenv('TESTING', 'true')
+    monkeypatch.setenv('FLASK_ENV', 'testing')
+
+    app_module = _reload_app_module()
+    app_module.create_app()
+
+    with sqlite3.connect(db_path) as connection:
+        columns = {row[1] for row in connection.execute('PRAGMA table_info(pages)')}
+
+    assert 'native_versions' in columns
 
 
 def test_create_app_defaults_werkzeug_log_level_to_info(monkeypatch, tmp_path):

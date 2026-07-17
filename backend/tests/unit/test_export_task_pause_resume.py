@@ -86,7 +86,10 @@ def test_pause_and_resume_active_image_generation_task(client):
     assert assert_success_response(resumed)["data"]["status"] == "PROCESSING"
 
 
-def test_resume_interrupted_image_generation_resubmits_only_missing_pages(client):
+def test_resume_interrupted_image_generation_resubmits_only_missing_pages(app, client):
+    from pathlib import Path
+    from PIL import Image
+
     project = Project(
         id="resume-image-project",
         creation_type="idea",
@@ -109,6 +112,9 @@ def test_resume_interrupted_image_generation_resubmits_only_missing_pages(client
     for page in (completed, pending):
         page.set_outline_content({"title": page.id, "points": []})
         page.set_description_content({"text": page.id})
+    existing_path = Path(app.config['UPLOAD_FOLDER']) / completed.generated_image_path
+    existing_path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new('RGB', (16, 9), 'white').save(existing_path)
     db.session.add_all([project, completed, pending])
     db.session.commit()
     task = Task(project_id=project.id, task_type="GENERATE_IMAGES", status="PAUSED")
@@ -283,6 +289,7 @@ def test_paused_image_generation_stops_before_submitting_more_pages(app, tmp_pat
 
 
 def test_image_generation_task_skips_page_that_already_has_image(app, tmp_path):
+    from PIL import Image
     from services.file_service import FileService
     from services.task_manager import generate_images_task
 
@@ -314,6 +321,9 @@ def test_image_generation_task_skips_page_that_already_has_image(app, tmp_path):
         )
         page.set_outline_content({"title": page.id, "points": []})
         page.set_description_content({"text": page.id})
+        existing_path = tmp_path / page.generated_image_path
+        existing_path.parent.mkdir(parents=True, exist_ok=True)
+        Image.new('RGB', (16, 9), 'white').save(existing_path)
         task = Task(id="skip-existing-during-worker-task", project_id=project.id, task_type="GENERATE_IMAGES", status="PENDING")
         task.set_progress({
             "generation_id": task.id,

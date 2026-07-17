@@ -266,7 +266,7 @@ def _pause_interrupted_export_tasks():
 
 def _ensure_desktop_sqlite_schema(app):
     """Add columns that db.create_all() cannot add to upgraded desktop SQLite DBs."""
-    if not os.getenv('DATABASE_PATH') or not app.config['SQLALCHEMY_DATABASE_URI'].startswith('sqlite:///'):
+    if not app.config['SQLALCHEMY_DATABASE_URI'].startswith('sqlite:///'):
         return
 
     columns = {

@@ -17,6 +17,7 @@ from services.task_manager import (
     generate_single_page_image_task,
     edit_page_image_task,
     get_image_prompt_field_names,
+    prepare_page_for_image_generation,
 )
 from controllers.project_controller import (
     _build_image_generation_settings_prompt,
@@ -361,9 +362,10 @@ def generate_page_image(project_id, page_id):
         force_regenerate = data.get('force_regenerate', False)
         language = data.get('language', current_app.config.get('OUTPUT_LANGUAGE', 'zh'))
         image_density, image_style, image_style_prompt = _resolve_image_generation_options(data)
+        file_service = FileService(current_app.config['UPLOAD_FOLDER'])
         
         # Check if already generated
-        if page.generated_image_path and not force_regenerate:
+        if not force_regenerate and not prepare_page_for_image_generation(page, file_service):
             return bad_request("Image already exists. Set force_regenerate=true to regenerate")
         
         # Get description content
@@ -421,8 +423,6 @@ def generate_page_image(project_id, page_id):
         
         # Initialize services
         ai_service = get_ai_service()
-        
-        file_service = FileService(current_app.config['UPLOAD_FOLDER'])
         
         # Get template path
         ref_image_path = None
