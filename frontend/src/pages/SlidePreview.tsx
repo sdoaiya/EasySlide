@@ -377,10 +377,25 @@ const normalizeImageGenerationSettings = (settings: Partial<ImageGenerationOptio
 
 const loadImageGenerationSettings = (projectId?: string | null): SlideImageGenerationSettings => {
   try {
-    const raw = localStorage.getItem(getImageGenerationSettingsKey(projectId));
-    if (!raw) return DEFAULT_IMAGE_GENERATION_SETTINGS;
-    const parsed = JSON.parse(raw) as Partial<ImageGenerationOptions>;
-    return normalizeImageGenerationSettings(parsed);
+    const storageKey = getImageGenerationSettingsKey(projectId);
+    const raw = localStorage.getItem(storageKey);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<ImageGenerationOptions>;
+      return normalizeImageGenerationSettings(parsed);
+    }
+
+    if (projectId) {
+      const legacyRaw = localStorage.getItem(IMAGE_GENERATION_SETTINGS_KEY);
+      if (legacyRaw) {
+        const parsed = JSON.parse(legacyRaw) as Partial<ImageGenerationOptions>;
+        const migrated = normalizeImageGenerationSettings(parsed);
+        localStorage.setItem(storageKey, JSON.stringify(migrated));
+        localStorage.removeItem(IMAGE_GENERATION_SETTINGS_KEY);
+        return migrated;
+      }
+    }
+
+    return DEFAULT_IMAGE_GENERATION_SETTINGS;
   } catch {
     return DEFAULT_IMAGE_GENERATION_SETTINGS;
   }

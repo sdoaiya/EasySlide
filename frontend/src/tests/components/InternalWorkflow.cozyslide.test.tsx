@@ -210,13 +210,27 @@ describe('EasySlide internal workflow chrome', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.removeItem('slidePreviewImageGenerationSettings');
-    Object.keys(localStorage)
-      .filter(key => key.startsWith('slidePreviewImageGenerationSettings:'))
-      .forEach(key => localStorage.removeItem(key));
+    for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+      const key = localStorage.key(index);
+      if (key?.startsWith('slidePreviewImageGenerationSettings:')) {
+        localStorage.removeItem(key);
+      }
+    }
     localStorage.removeItem('skip1KResolutionWarning');
     mocks.exportTasks = [];
+    mocks.store.currentProject = {
+      id: 'project-1',
+      title: 'EasySlide demo',
+      creation_type: 'ppt_renovation',
+      pages: [],
+      idea_prompt: '',
+      outline_text: '',
+      description_text: '',
+      outline_requirements: '',
+      description_requirements: '',
+      updated_at: '2026-07-02T00:00:00Z',
+    };
     mocks.store.currentProject.pages = [];
-    mocks.store.currentProject.creation_type = 'ppt_renovation';
     mocks.store.activeImageTask = null;
     mocks.store.pageGeneratingTasks = {};
     mocks.store.generateOutlineStream.mockResolvedValue({ complete: true });
@@ -411,6 +425,52 @@ describe('EasySlide internal workflow chrome', () => {
         },
       );
     });
+  });
+
+  it('migrates legacy global image generation settings into the current project once', async () => {
+    const endpoints = await import('@/api/endpoints');
+    vi.mocked(endpoints.getSettings).mockResolvedValue({
+      data: { image_resolution: '2K' },
+    } as any);
+    localStorage.setItem('slidePreviewImageGenerationSettings', JSON.stringify({
+      maxWorkers: 2,
+      useTemplate: false,
+      density: 'rich',
+      style: 'tech',
+      customPrompt: '旧版设置',
+    }));
+    mocks.store.generateImages.mockResolvedValue(undefined);
+    mocks.store.currentProject = {
+      ...mocks.store.currentProject,
+      id: 'legacy-project',
+      project_id: 'legacy-project',
+      pages: [{
+        id: 'legacy-page',
+        page_id: 'legacy-page',
+        order_index: 0,
+        status: 'DESCRIPTION_GENERATED',
+        outline_content: { title: 'Legacy Slide', points: [] },
+        description_content: { text: 'Legacy Desc' },
+      }],
+    };
+
+    renderAt('/project/legacy-project/preview', <SlidePreview />);
+    fireEvent.click(screen.getByRole('button', { name: '开始生成 (1)' }));
+
+    await waitFor(() => {
+      expect(mocks.store.generateImages).toHaveBeenCalledWith(
+        ['legacy-page'],
+        {
+          maxWorkers: 2,
+          useTemplate: false,
+          density: 'rich',
+          style: 'tech',
+          customPrompt: '旧版设置',
+        },
+      );
+    });
+    expect(localStorage.getItem('slidePreviewImageGenerationSettings')).toBeNull();
+    expect(localStorage.getItem('slidePreviewImageGenerationSettings:legacy-project')).toContain('旧版设置');
   });
 
   it('uses the primary image action to pause and resume an active generation task', () => {
