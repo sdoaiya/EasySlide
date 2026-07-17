@@ -618,6 +618,22 @@ describe('EasySlide internal workflow chrome', () => {
     });
   });
 
+  it('labels a missing image page action as start generating this page', () => {
+    mocks.store.currentProject.pages = [{
+      id: 'page-1',
+      page_id: 'page-1',
+      order_index: 0,
+      status: 'DESCRIPTION_GENERATED',
+      outline_content: { title: 'Slide 1', points: [] },
+      description_content: { text: 'Desc 1' },
+    }];
+
+    renderAt('/project/project-1/preview', <SlidePreview />);
+
+    expect(screen.getByRole('button', { name: '开始生成此页' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '生成此页' })).not.toBeInTheDocument();
+  });
+
   it('opens the export task panel after starting a PPTX export', async () => {
     const endpoints = await import('@/api/endpoints');
     mocks.store.currentProject.pages = [{
