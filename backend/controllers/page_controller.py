@@ -11,6 +11,7 @@ from services.image_generation_manifest import (
     build_image_generation_manifest,
     persist_image_generation_manifest,
 )
+from services.image_template_profiles import has_gorden_template_pack
 from services.task_manager import (
     task_manager,
     generate_single_page_image_task,
@@ -425,7 +426,7 @@ def generate_page_image(project_id, page_id):
         
         # 检查是否有模板图片或风格描述
         # 如果都没有，则返回错误
-        if not ref_image_path and not project.template_style:
+        if not ref_image_path and not project.template_style and not has_gorden_template_pack(project.template_pack_id):
             return bad_request("No template image or style description found for project")
         
         # Generate prompt

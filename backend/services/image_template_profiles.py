@@ -51,6 +51,13 @@ GORDEN_TEMPLATE_VISUAL_PROFILES = {
 }
 
 
+def has_gorden_template_pack(template_pack_id: str | None) -> bool:
+    """Return whether a bundled Gorden pack can provide image-mode visual guidance."""
+    if not template_pack_id or not template_pack_id.startswith('gorden-'):
+        return False
+    return template_pack_id.removeprefix('gorden-') in GORDEN_TEMPLATE_VISUAL_PROFILES
+
+
 def infer_image_page_role(page_index: int, total_pages: int, page_data: Mapping[str, Any] | None = None, part: str | None = None) -> str:
     """Infer a stable visual role without changing persisted page data."""
     index = max(1, int(page_index or 1))

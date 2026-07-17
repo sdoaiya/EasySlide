@@ -23,6 +23,7 @@ from services.image_generation_manifest import (
     build_image_generation_manifest,
     persist_image_generation_manifest,
 )
+from services.image_template_profiles import has_gorden_template_pack
 from services.task_manager import (
     task_manager,
     generate_descriptions_task,
@@ -171,7 +172,7 @@ def _submit_image_generation_task(task, project, pages, options=None):
     file_service = FileService(current_app.config['UPLOAD_FOLDER'])
     use_template = options.get('use_template', True)
     ref_image_path = file_service.get_template_path(project.id) if use_template else None
-    if not ref_image_path and not project.template_style:
+    if not ref_image_path and not project.template_style and not has_gorden_template_pack(project.template_pack_id):
         raise ValueError("请先上传模板图片或添加风格描述。")
 
     outline = _reconstruct_outline_from_pages(get_filtered_pages(project.id, None))

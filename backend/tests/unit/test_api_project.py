@@ -400,6 +400,88 @@ class TestImageGenerationConcurrency:
             assert pending_page.status == 'QUEUED'
             submit_task.assert_called_once()
 
+    def test_batch_image_generation_accepts_gorden_template_pack_without_style_text(self, app):
+        from models import db, Page, Project, Task
+        from controllers import project_controller as project_controller_module
+
+        with app.app_context():
+            project = Project(
+                id='proj-batch-gorden-pack-only',
+                creation_type='idea',
+                idea_prompt='test',
+                template_pack_id='gorden-data-viz-deck',
+                image_aspect_ratio='16:9',
+                status='DESCRIPTIONS_GENERATED',
+            )
+            page = Page(
+                id='page-gorden-pack-only',
+                project_id=project.id,
+                order_index=0,
+                status='DESCRIPTION_GENERATED',
+            )
+            page.set_outline_content({'title': page.id, 'points': []})
+            page.set_description_content({'text': page.id})
+            db.session.add_all([project, page])
+            db.session.commit()
+
+            with (
+                patch.object(project_controller_module, 'get_ai_service', return_value=object()),
+                patch.object(project_controller_module.task_manager, 'submit_task') as submit_task,
+            ):
+                response = app.test_client().post(
+                    f'/api/projects/{project.id}/generate/images',
+                    json={'page_ids': [page.id]},
+                )
+
+            data = assert_success_response(response, 202)['data']
+            task = Task.query.get(data['task_id'])
+
+            assert data['total_pages'] == 1
+            assert task.get_progress()['style_snapshot']['template_pack_id'] == 'gorden-data-viz-deck'
+            submit_task.assert_called_once()
+
+    def test_single_page_image_generation_accepts_gorden_template_pack_without_style_text(self, app):
+        from models import db, Page, Project
+        from controllers import page_controller as page_controller_module
+
+        class MinimalAIService:
+            def extract_image_urls_from_markdown(self, _text):
+                return []
+
+        with app.app_context():
+            project = Project(
+                id='proj-single-gorden-pack-only',
+                creation_type='idea',
+                idea_prompt='test',
+                template_pack_id='gorden-data-viz-deck',
+                image_aspect_ratio='16:9',
+                status='DESCRIPTIONS_GENERATED',
+            )
+            page = Page(
+                id='page-single-gorden-pack-only',
+                project_id=project.id,
+                order_index=0,
+                status='DESCRIPTION_GENERATED',
+            )
+            page.set_outline_content({'title': page.id, 'points': []})
+            page.set_description_content({'text': page.id})
+            db.session.add_all([project, page])
+            db.session.commit()
+
+            with (
+                patch.object(page_controller_module, 'get_ai_service', return_value=MinimalAIService()),
+                patch.object(page_controller_module.task_manager, 'submit_task') as submit_task,
+            ):
+                response = app.test_client().post(
+                    f'/api/projects/{project.id}/pages/{page.id}/generate/image',
+                    json={'force_regenerate': True},
+                )
+
+            data = assert_success_response(response, 202)['data']
+
+            assert data['page_id'] == page.id
+            submit_task.assert_called_once()
+
     def test_batch_image_generation_can_resolve_template_pack_per_page(self, app):
         from PIL import Image
         from models import db, Page, Project
