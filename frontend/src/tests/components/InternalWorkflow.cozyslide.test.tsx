@@ -210,6 +210,9 @@ describe('EasySlide internal workflow chrome', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.removeItem('slidePreviewImageGenerationSettings');
+    Object.keys(localStorage)
+      .filter(key => key.startsWith('slidePreviewImageGenerationSettings:'))
+      .forEach(key => localStorage.removeItem(key));
     localStorage.removeItem('skip1KResolutionWarning');
     mocks.exportTasks = [];
     mocks.store.currentProject.pages = [];
@@ -345,6 +348,66 @@ describe('EasySlide internal workflow chrome', () => {
           density: 'rich',
           style: 'tech',
           customPrompt: '蓝绿色科技感',
+        },
+      );
+    });
+  });
+
+  it('keeps image generation settings scoped to the current project', async () => {
+    const endpoints = await import('@/api/endpoints');
+    vi.mocked(endpoints.getSettings).mockResolvedValue({
+      data: { image_resolution: '2K' },
+    } as any);
+    mocks.store.generateImages.mockResolvedValue(undefined);
+    mocks.store.currentProject = {
+      ...mocks.store.currentProject,
+      id: 'project-1',
+      project_id: 'project-1',
+      pages: [{
+        id: 'page-1',
+        page_id: 'page-1',
+        order_index: 0,
+        status: 'DESCRIPTION_GENERATED',
+        outline_content: { title: 'Slide 1', points: [] },
+        description_content: { text: 'Desc 1' },
+      }],
+    };
+
+    const first = renderAt('/project/project-1/preview', <SlidePreview />);
+    fireEvent.click(screen.getByRole('button', { name: '图片生成设置' }));
+    fireEvent.change(screen.getByLabelText('生成并发'), { target: { value: '2' } });
+    fireEvent.change(screen.getByLabelText('图片生成密度'), { target: { value: 'rich' } });
+    fireEvent.change(screen.getByLabelText('图片风格'), { target: { value: 'tech' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存图片生成设置' }));
+    first.unmount();
+
+    mocks.store.generateImages.mockClear();
+    mocks.store.currentProject = {
+      ...mocks.store.currentProject,
+      id: 'project-2',
+      project_id: 'project-2',
+      pages: [{
+        id: 'page-2',
+        page_id: 'page-2',
+        order_index: 0,
+        status: 'DESCRIPTION_GENERATED',
+        outline_content: { title: 'Slide 2', points: [] },
+        description_content: { text: 'Desc 2' },
+      }],
+    };
+
+    renderAt('/project/project-2/preview', <SlidePreview />);
+    fireEvent.click(screen.getByRole('button', { name: '开始生成 (1)' }));
+
+    await waitFor(() => {
+      expect(mocks.store.generateImages).toHaveBeenCalledWith(
+        ['page-2'],
+        {
+          maxWorkers: 4,
+          useTemplate: true,
+          density: 'standard',
+          style: 'theme',
+          customPrompt: '',
         },
       );
     });

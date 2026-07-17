@@ -358,24 +358,29 @@ const DEFAULT_IMAGE_GENERATION_SETTINGS: SlideImageGenerationSettings = {
   customPrompt: '',
 };
 
+const getImageGenerationSettingsKey = (projectId?: string | null) =>
+  projectId ? `${IMAGE_GENERATION_SETTINGS_KEY}:${projectId}` : IMAGE_GENERATION_SETTINGS_KEY;
+
 const clampImageWorkers = (value: unknown) => {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return DEFAULT_IMAGE_GENERATION_SETTINGS.maxWorkers;
   return Math.min(4, Math.max(1, Math.round(numeric)));
 };
 
-const loadImageGenerationSettings = (): SlideImageGenerationSettings => {
+const normalizeImageGenerationSettings = (settings: Partial<ImageGenerationOptions>): SlideImageGenerationSettings => ({
+  maxWorkers: clampImageWorkers(settings.maxWorkers),
+  useTemplate: settings.useTemplate !== false,
+  density: ['sparse', 'standard', 'rich'].includes(String(settings.density)) ? settings.density as SlideImageGenerationSettings['density'] : 'standard',
+  style: ['theme', 'business', 'tech', 'photo', 'flat'].includes(String(settings.style)) ? settings.style as SlideImageGenerationSettings['style'] : 'theme',
+  customPrompt: typeof settings.customPrompt === 'string' ? settings.customPrompt : '',
+});
+
+const loadImageGenerationSettings = (projectId?: string | null): SlideImageGenerationSettings => {
   try {
-    const raw = localStorage.getItem(IMAGE_GENERATION_SETTINGS_KEY);
+    const raw = localStorage.getItem(getImageGenerationSettingsKey(projectId));
     if (!raw) return DEFAULT_IMAGE_GENERATION_SETTINGS;
     const parsed = JSON.parse(raw) as Partial<ImageGenerationOptions>;
-    return {
-      maxWorkers: clampImageWorkers(parsed.maxWorkers),
-      useTemplate: parsed.useTemplate !== false,
-      density: ['sparse', 'standard', 'rich'].includes(String(parsed.density)) ? parsed.density as SlideImageGenerationSettings['density'] : 'standard',
-      style: ['theme', 'business', 'tech', 'photo', 'flat'].includes(String(parsed.style)) ? parsed.style as SlideImageGenerationSettings['style'] : 'theme',
-      customPrompt: typeof parsed.customPrompt === 'string' ? parsed.customPrompt : '',
-    };
+    return normalizeImageGenerationSettings(parsed);
   } catch {
     return DEFAULT_IMAGE_GENERATION_SETTINGS;
   }
@@ -533,8 +538,8 @@ export const SlidePreview: React.FC = () => {
   );
   const [isSavingExportSettings, setIsSavingExportSettings] = useState(false);
   const [showImageGenerationSettings, setShowImageGenerationSettings] = useState(false);
-  const [imageGenerationSettings, setImageGenerationSettings] = useState(loadImageGenerationSettings);
-  const [draftImageGenerationSettings, setDraftImageGenerationSettings] = useState(loadImageGenerationSettings);
+  const [imageGenerationSettings, setImageGenerationSettings] = useState(DEFAULT_IMAGE_GENERATION_SETTINGS);
+  const [draftImageGenerationSettings, setDraftImageGenerationSettings] = useState(DEFAULT_IMAGE_GENERATION_SETTINGS);
   // 画面比例
   const [aspectRatio, setAspectRatio] = useState<string>(
     currentProject?.image_aspect_ratio || '16:9'
@@ -629,6 +634,12 @@ export const SlidePreview: React.FC = () => {
       presentation_topic: prev.presentation_topic || fallbackTopic,
     }));
   }, [currentProject]);
+
+  useEffect(() => {
+    const nextSettings = loadImageGenerationSettings(currentProject?.id || projectId);
+    setImageGenerationSettings(nextSettings);
+    setDraftImageGenerationSettings(nextSettings);
+  }, [currentProject?.id, projectId]);
 
   // 加载项目数据 & 用户模板
   useEffect(() => {
@@ -802,9 +813,9 @@ export const SlidePreview: React.FC = () => {
       customPrompt: draftImageGenerationSettings.customPrompt.trim(),
     };
     setImageGenerationSettings(nextSettings);
-    localStorage.setItem(IMAGE_GENERATION_SETTINGS_KEY, JSON.stringify(nextSettings));
+    localStorage.setItem(getImageGenerationSettingsKey(currentProject?.id || projectId), JSON.stringify(nextSettings));
     setShowImageGenerationSettings(false);
-  }, [draftImageGenerationSettings]);
+  }, [currentProject?.id, draftImageGenerationSettings, projectId]);
 
   const handleGenerateAll = async () => {
     // 先检查分辨率，如果是1K则显示警告
