@@ -127,6 +127,29 @@ def _first_page_title(project):
     return ''
 
 
+def _export_title_from_text(source):
+    value = (source or '').strip()
+    if not value:
+        return ''
+    title = next((line.strip() for line in value.splitlines() if line.strip()), '')
+    if not title:
+        return ''
+
+    title = re.split(r'[，,。；;：:]', title, maxsplit=1)[0].strip()
+    title = re.sub(
+        r'^(?:请|帮我|帮忙|麻烦)?(?:生成|创建|制作|做|设计|输出|写)(?:一份|一个|一套|份|个|套)?',
+        '',
+        title,
+    ).strip()
+    title = re.sub(r'^(?:关于|有关|围绕)', '', title).strip()
+    title = re.sub(
+        r'(?:的(?:简短|完整|详细|中文|英文|商务|演讲|汇报|路演|展示|介绍|分析|主题|项目|方案)?)?\s*(?:PPT|ppt|演示文稿|幻灯片)$',
+        '',
+        title,
+    ).strip()
+    return title
+
+
 def _project_title_filename(project, extension, fallback_filename):
     title = (project.project_title or '').strip()
     if not title:
@@ -135,11 +158,9 @@ def _project_title_filename(project, extension, fallback_filename):
             getattr(project, 'outline_text', None),
             getattr(project, 'description_text', None),
         ):
-            value = (source or '').strip()
-            if value:
-                title = next((line.strip() for line in value.splitlines() if line.strip()), '')
-                if title:
-                    break
+            title = _export_title_from_text(source)
+            if title:
+                break
     if not title:
         title = _first_page_title(project)
     if title:

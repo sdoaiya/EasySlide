@@ -16,6 +16,17 @@ def test_export_filename_uses_project_theme_when_title_is_empty():
     assert _project_title_filename(project, 'pptx', 'presentation_demo.pptx') == '人工智能在制造业的应用.pptx'
 
 
+def test_export_filename_extracts_topic_from_generation_prompt():
+    project = SimpleNamespace(
+        project_title='',
+        idea_prompt='生成一份关于人工智能基础的简短PPT，包含3页内容：什么是AI、AI的应用、AI的未来',
+        outline_text='',
+        description_text='',
+    )
+
+    assert _project_title_filename(project, 'pptx', 'presentation_demo.pptx') == '人工智能基础.pptx'
+
+
 def test_export_filename_falls_back_to_project_id_name_without_topic():
     project = SimpleNamespace(project_title='', idea_prompt='', outline_text='', description_text='')
 
