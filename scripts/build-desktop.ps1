@@ -91,17 +91,15 @@ canvas.save(ico_target, sizes=[(256, 256), (128, 128), (64, 64), (48, 48), (32, 
   }
 
   # Keep the Electron builder cache separate from the user-facing delivery folder.
-  # When running from a Codex worktree, deliver to the repository's main worktree.
-  $mainWorktree = $null
-  $worktreeLines = @(git worktree list --porcelain)
-  for ($i = 0; $i -lt $worktreeLines.Count; $i++) {
-    if ($worktreeLines[$i] -like 'worktree *' -and ($i + 2) -lt $worktreeLines.Count -and $worktreeLines[$i + 2] -eq 'branch refs/heads/main') {
-      $mainWorktree = $worktreeLines[$i].Substring(9)
-      break
-    }
+  # Default to a timestamped folder under the current checkout so Codex worktree
+  # builds are easy to find and never mix with stale artifacts.
+  # Set EASLIDE_RELEASE_DIR explicitly when publishing to an exact location.
+  $releaseRoot = Join-Path (Join-Path $PSScriptRoot '..') 'release'
+  $finalDesktopDist = if ($env:EASLIDE_RELEASE_DIR) {
+    $env:EASLIDE_RELEASE_DIR
+  } else {
+    Join-Path $releaseRoot ("codex-build-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
   }
-  $deliveryRoot = if ($env:EASLIDE_RELEASE_DIR) { $env:EASLIDE_RELEASE_DIR } elseif ($mainWorktree) { $mainWorktree } else { Join-Path $PSScriptRoot '..' }
-  $finalDesktopDist = Join-Path $deliveryRoot 'release'
   try {
     if (Test-Path $finalDesktopDist) {
       Remove-Item -Recurse -Force $finalDesktopDist
