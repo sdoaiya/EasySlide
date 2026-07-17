@@ -544,11 +544,26 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
 
 function nativeExportTitle(project: { project_title?: string; idea_prompt?: string } | null | undefined, slides: NativeSlideSpec[]) {
   const firstSlideTitle = firstText(slides[0]?.props.title) || firstText(slides[0]?.props.titleTop)
-  return firstText(project?.project_title) || firstSlideTitle || firstText(project?.idea_prompt) || 'EasySlide'
+  const meaningfulSlideTitle = isGenericNativeTitle(firstSlideTitle) ? '' : firstSlideTitle
+  return firstText(project?.project_title) || meaningfulSlideTitle || titleFromPrompt(project?.idea_prompt) || 'EasySlide'
 }
 
 function firstText(value: unknown) {
   return typeof value === 'string' ? value.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : ''
+}
+
+function titleFromPrompt(value: unknown) {
+  let title = firstText(value).split(/[，,。；;：:]/, 1)[0]?.trim() || ''
+  title = title
+    .replace(/^(?:请|帮我|帮忙|麻烦)?(?:生成|创建|制作|做|设计|输出|写)(?:一份|一个|一套|份|个|套)?/, '')
+    .replace(/^(?:关于|有关|围绕)/, '')
+    .replace(/(?:的(?:简短|完整|详细|中文|英文|商务|演讲|汇报|路演|展示|介绍|分析|主题|项目|方案)?)?\s*(?:PPT|ppt|演示文稿|幻灯片)$/, '')
+    .trim()
+  return title
+}
+
+function isGenericNativeTitle(title: string) {
+  return ['新页面', 'Untitled', 'New Page'].includes(title)
 }
 
 function nativeExportFilename(title: string, extension: string) {

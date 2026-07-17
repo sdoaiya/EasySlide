@@ -569,6 +569,32 @@ describe('NativeDeckWorkspace', () => {
     ))
   })
 
+  it('extracts the document topic for native export filenames when slide titles are empty', async () => {
+    vi.useRealTimers()
+    previewMocks.store.currentProject = {
+      id: 'project-1',
+      idea_prompt: '生成一份关于人工智能基础的简短PPT，包含3页内容：什么是AI、AI的应用、AI的未来',
+    }
+    render(
+      <NativeDeckWorkspace
+        projectId="project-1"
+        slides={[{ ...slides[0], props: { ...slides[0].props, title: '', titleTop: '' } }]}
+        layoutContracts={layoutContracts}
+        autoSaveDelay={300}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '导出PPTX' }))
+
+    await waitFor(() => expect(nativeApiMocks.completeNativePptxExport).toHaveBeenCalledWith(
+      'project-1',
+      'native-pptx-task-1',
+      expect.any(Blob),
+      expect.any(Object),
+      '人工智能基础.pptx',
+    ))
+  })
+
   it('does not mount hidden export frames while editing', () => {
     renderWorkspace()
 
