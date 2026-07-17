@@ -327,6 +327,25 @@ describe('EasySlide internal workflow chrome', () => {
     expect(screen.queryByRole('button', { name: /批量生成图片/ })).not.toBeInTheDocument();
   });
 
+  it('labels the page edit image action as start generation', () => {
+    mocks.store.currentProject.pages = [{
+      id: 'page-1',
+      page_id: 'page-1',
+      order_index: 0,
+      status: 'COMPLETED',
+      generated_image_path: '/files/page-1.png',
+      outline_content: { title: 'Slide 1', points: [] },
+      description_content: { text: 'Desc 1' },
+    }];
+
+    renderAt('/project/project-1/preview', <SlidePreview />);
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }));
+
+    expect(screen.getByRole('heading', { name: '编辑页面' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '开始生成' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '生成图片' })).not.toBeInTheDocument();
+  });
+
   it('uses saved image generation settings when starting a batch', async () => {
     mocks.store.currentProject.pages = [{
       id: 'page-1',
