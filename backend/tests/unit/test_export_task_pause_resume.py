@@ -508,7 +508,7 @@ def test_resume_native_export_restarts_browser_generation(client, task_type):
     submit_task.assert_not_called()
 
 
-def test_pause_active_exports_only_pauses_async_export_tasks(client):
+def test_pause_active_exports_pauses_async_exports_and_image_generation(client):
     project = Project(id="pause-all-project", creation_type="idea")
     db.session.add(project)
     db.session.commit()
@@ -523,8 +523,8 @@ def test_pause_active_exports_only_pauses_async_export_tasks(client):
     db.session.refresh(editable)
     db.session.refresh(video)
     db.session.refresh(generation)
-    assert data["data"]["paused_count"] == 3
+    assert data["data"]["paused_count"] == 4
     assert editable.status == "PAUSED"
     assert video.status == "PAUSED"
     assert native.status == "PAUSED"
-    assert generation.status == "PROCESSING"
+    assert generation.status == "PAUSED"

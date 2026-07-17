@@ -1508,7 +1508,7 @@ def resume_export_task(project_id, task_id):
 @project_bp.route('/tasks/pause-active-exports', methods=['POST'])
 def pause_active_export_tasks():
     tasks = Task.query.filter(
-        Task.task_type.in_(ASYNC_EXPORT_TASK_TYPES),
+        Task.task_type.in_(PAUSABLE_TASK_TYPES),
         Task.status.in_(['PENDING', 'PROCESSING', 'RUNNING']),
     ).all()
     for task in tasks:
