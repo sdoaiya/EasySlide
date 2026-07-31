@@ -27,7 +27,7 @@ describe('ProjectSettingsModal render mode', () => {
     useProjectStore.setState({ currentProject: { render_mode: 'native' } as never });
     renderModal();
 
-    fireEvent.click(screen.getByRole('button', { name: '导出设置' }));
+    fireEvent.click(screen.getByRole('tab', { name: '导出设置' }));
 
     expect(screen.queryByText('MinerU提取')).not.toBeInTheDocument();
   });
@@ -35,7 +35,7 @@ describe('ProjectSettingsModal render mode', () => {
   it('hides image reconstruction settings for native projects', () => {
     renderModal('native');
 
-    fireEvent.click(screen.getByRole('button', { name: '导出设置' }));
+    fireEvent.click(screen.getByRole('tab', { name: '导出设置' }));
 
     expect(screen.queryByText('内置 Paddle 解析（推荐）')).not.toBeInTheDocument();
     expect(screen.queryByText('MinerU提取')).not.toBeInTheDocument();
@@ -48,7 +48,7 @@ describe('ProjectSettingsModal render mode', () => {
   it('keeps image reconstruction settings for image projects', () => {
     renderModal('image');
 
-    fireEvent.click(screen.getByRole('button', { name: '导出设置' }));
+    fireEvent.click(screen.getByRole('tab', { name: '导出设置' }));
 
     expect(screen.getByText('MinerU提取')).toBeInTheDocument();
     expect(screen.getByText('背景图获取方法')).toBeInTheDocument();
@@ -58,14 +58,26 @@ describe('ProjectSettingsModal render mode', () => {
   it('keeps the title and export save action outside the scroll area at 760px', () => {
     renderModal('native');
 
-    fireEvent.click(screen.getByRole('button', { name: '导出设置' }));
+    fireEvent.click(screen.getByRole('tab', { name: '导出设置' }));
 
     const dialog = screen.getByRole('dialog', { name: '设置' });
     const scrollArea = within(dialog).getByTestId('project-settings-scroll');
     const saveButton = within(dialog).getByRole('button', { name: '保存导出设置' });
 
-    expect(dialog).toHaveClass('h-[min(760px,calc(100vh-2rem))]');
+    expect(within(dialog).getByRole('tablist', { name: '设置' })).toBeInTheDocument();
     expect(scrollArea).not.toContainElement(saveButton);
     expect(within(dialog).getByRole('heading', { name: '设置' })).toBeInTheDocument();
+  });
+
+  it('resets the tab scroll position and keeps the global panel flush with the modal', () => {
+    renderModal('native');
+
+    const scrollArea = screen.getByTestId('project-settings-scroll');
+    scrollArea.scrollTop = 240;
+    fireEvent.click(screen.getByRole('tab', { name: '全局设置' }));
+
+    expect(scrollArea.scrollTop).toBe(0);
+    expect(scrollArea).toHaveClass('p-0');
+    expect(scrollArea.closest('[class~="-mb-7"]')).not.toBeNull();
   });
 });

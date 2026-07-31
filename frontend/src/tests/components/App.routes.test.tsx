@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import App from '@/App';
 import { checkAccessCode, verifyAccessCode } from '@/api/endpoints';
@@ -12,7 +12,6 @@ vi.mock('@/api/endpoints', async () => {
     getSettings: vi.fn().mockResolvedValue({ data: { theme: 'light', language: 'zh', ai_provider_format: 'openai' } }),
     getOpenAIOAuthStatus: vi.fn().mockResolvedValue({ data: { connected: false, account_id: null } }),
     getOpenAIOAuthModels: vi.fn().mockResolvedValue({ data: { text_models: [], image_models: [], models: [] } }),
-    getElevenLabsVoices: vi.fn().mockResolvedValue({ data: { voices: [] } }),
     listUserTemplates: vi.fn().mockResolvedValue({ data: { templates: [] } }),
     checkForUpdates: vi.fn().mockResolvedValue({ data: { status: 'unknown', update_available: false, message: '', repository: '', current: { is_docker: false }, latest: null } }),
   };
@@ -28,23 +27,23 @@ vi.mock('@/store/useProjectStore', () => ({
 }));
 
 describe('EasySlide public routes', () => {
-  it('uses the workspace as the root page for local use', async () => {
+  it('redirects the root page to the canonical home route', async () => {
     window.history.pushState({}, '', '/');
 
     render(<App />);
 
     expect(await screen.findByRole('navigation', { name: '工作台导航' })).toBeInTheDocument();
-    await waitFor(() => expect(window.location.pathname).toBe('/'));
+    await waitFor(() => expect(window.location.pathname).toBe('/home'));
     expect(checkAccessCode).toHaveBeenCalled();
   });
 
-  it('redirects legacy public routes to the app workspace', async () => {
-    window.history.pushState({}, '', '/privacy');
+  it('opens the canonical home route directly', async () => {
+    window.history.pushState({}, '', '/home');
 
     render(<App />);
 
     expect(await screen.findByRole('navigation', { name: '工作台导航' })).toBeInTheDocument();
-    await waitFor(() => expect(window.location.pathname).toBe('/app'));
+    await waitFor(() => expect(window.location.pathname).toBe('/home'));
     expect(checkAccessCode).toHaveBeenCalled();
   });
 
@@ -58,6 +57,27 @@ describe('EasySlide public routes', () => {
     expect(checkAccessCode).toHaveBeenCalled();
   });
 
+  it('keeps the workspace navigation mounted while switching pages', async () => {
+    window.history.pushState({}, '', '/home');
+
+    render(<App />);
+
+    const navigation = await screen.findByRole('navigation', { name: '工作台导航' });
+    fireEvent.click(within(navigation).getByRole('button', { name: '创建项目' }));
+
+    expect(await screen.findByRole('heading', { level: 1, name: '创建项目' })).toBeInTheDocument();
+    expect(screen.getByRole('navigation', { name: '工作台导航' })).toBe(navigation);
+  });
+
+  it('redirects the discarded v2 studio route back to the existing workspace', async () => {
+    window.history.pushState({}, '', '/v2');
+
+    render(<App />);
+
+    expect(await screen.findByRole('navigation', { name: '工作台导航' })).toBeInTheDocument();
+    await waitFor(() => expect(window.location.pathname).toBe('/home'));
+  });
+
   it('returns to the app workspace from the optional local access-code panel', async () => {
     vi.mocked(checkAccessCode).mockResolvedValueOnce({ data: { enabled: true } });
     window.history.pushState({}, '', '/settings');
@@ -67,7 +87,7 @@ describe('EasySlide public routes', () => {
     expect(await screen.findByText('本机访问口令')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '返回工作台' }));
 
-    await waitFor(() => expect(window.location.pathname).toBe('/app'));
+    await waitFor(() => expect(window.location.pathname).toBe('/home'));
   });
 
   it('uses a minimal local access-code panel when access-code protection is explicitly enabled', async () => {

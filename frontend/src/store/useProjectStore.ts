@@ -1,5 +1,5 @@
 ﻿import { create } from 'zustand';
-import type { ImageGenerationOptions, Project, RenderMode, Task } from '@/types';
+import type { ContentWorkspaceKind, ImageGenerationOptions, NativeImageSettings, Page, Project, RenderMode, Task } from '@/types';
 import * as api from '@/api/endpoints';
 import {
   debounce,
@@ -9,6 +9,7 @@ import {
 } from '@/utils';
 import { devLog } from '@/utils/logger';
 import { getT } from '@/utils/i18nHelper';
+import { useExportTasksStore } from './useExportTasksStore';
 
 const storeI18n = {
   zh: {
@@ -79,10 +80,15 @@ const storeI18n = {
 const t = getT(storeI18n);
 const pollingImageTaskIds = new Set<string>();
 
+const pageNeedsImageGeneration = (project: Project, page: Page) =>
+  project.creation_type === 'ppt_renovation' || project.creation_type === 'renovation'
+    ? page.status !== 'COMPLETED'
+    : !page.generated_image_path;
+
 const getUnfinishedImageTaskPageIds = (task: Task, project: Project): string[] => {
   const needsImage = (pageId: string) => {
     const page = project.pages.find(item => item.id === pageId);
-    return Boolean(page && !page.generated_image_path);
+    return Boolean(page && pageNeedsImageGeneration(project, page));
   };
   const manifestPages = Array.isArray(task.progress?.pages) ? task.progress.pages : null;
   if (manifestPages) {
@@ -110,6 +116,7 @@ interface ProjectState {
   // 每个页面的生成任务ID映射 (pageId -> taskId)
   pageGeneratingTasks: Record<string, string>;
   activeImageTask: Task | null;
+  imageQualityReport: NonNullable<Task['progress']> | null;
   // 警告消息
   warningMessage: string | null;
   // 流式大纲生成中
@@ -123,7 +130,7 @@ interface ProjectState {
   setError: (error: string | null) => void;
   
   // 项目操作
-  initializeProject: (type: 'idea' | 'outline' | 'description', content: string, templateImage?: File, templateStyle?: string, referenceFileIds?: string[], aspectRatio?: string, renderMode?: RenderMode, nativeTheme?: string, templatePackId?: string) => Promise<void>;
+  initializeProject: (type: 'idea' | 'outline' | 'description' | 'blank', content: string, templateImage?: File, templateStyle?: string, referenceFileIds?: string[], aspectRatio?: string, renderMode?: RenderMode, nativeTheme?: string, templatePackId?: string, nativeImageSettings?: NativeImageSettings, initialWorkspace?: ContentWorkspaceKind) => Promise<void>;
   syncProject: (projectId?: string) => Promise<Project | undefined>;
   
   // 页面操作
@@ -220,17 +227,20 @@ const debouncedUpdatePage = debounce(
   error: null,
   pageGeneratingTasks: {},
   activeImageTask: null,
+  imageQualityReport: null,
   warningMessage: null,
   isOutlineStreaming: false,
   isDescriptionStreaming: false,
 
   // Setters
-  setCurrentProject: (project) => set({ currentProject: project }),
+  setCurrentProject: (project) => set((state) => state.currentProject?.id !== project?.id
+    ? { currentProject: project, imageQualityReport: null, warningMessage: null }
+    : { currentProject: project }),
   setGlobalLoading: (loading) => set({ isGlobalLoading: loading }),
   setError: (error) => set({ error }),
 
   // 初始化项目
-  initializeProject: async (type, content, templateImage, templateStyle, referenceFileIds, aspectRatio, renderMode = 'image', nativeTheme = 'theme01', templatePackId) => {
+  initializeProject: async (type, content, templateImage, templateStyle, referenceFileIds, aspectRatio, renderMode = 'image', nativeTheme = 'theme01', templatePackId, nativeImageSettings, initialWorkspace = 'ppt') => {
     set({ isGlobalLoading: true, error: null });
     try {
       const request: any = {};
@@ -241,6 +251,9 @@ const debouncedUpdatePage = debounce(
         request.outline_text = content;
       } else if (type === 'description') {
         request.description_text = content;
+      }
+      if (type === 'blank') {
+        request.creation_type = 'blank';
       }
 
       // 添加风格描述（如果有）
@@ -260,6 +273,8 @@ const debouncedUpdatePage = debounce(
       if (renderMode === 'native') {
         request.native_theme = nativeTheme;
       }
+      if (nativeImageSettings) request.native_image_settings = nativeImageSettings;
+      request.initial_workspace = initialWorkspace;
 
       // 1. 创建项目
       const response = await api.createProject(request);
@@ -267,6 +282,26 @@ const debouncedUpdatePage = debounce(
 
       if (!projectId) {
         throw new Error(t('store.createNoId'));
+      }
+
+      const initializationTaskId = (response.data as Project & { task_id?: string })?.task_id;
+      if (initializationTaskId) {
+        const taskKey = `workspace-init-${initializationTaskId}`;
+        const workspaceLabel = initialWorkspace === 'video' ? '视频' : initialWorkspace === 'podcast' ? '播客' : 'PPT';
+        useExportTasksStore.getState().addTask({
+          id: taskKey,
+          taskId: initializationTaskId,
+          projectId,
+          type: 'workspace',
+          status: 'PENDING',
+          progress: {
+            total: 1,
+            completed: 0,
+            current_step: `准备${workspaceLabel}工作区`,
+            workspace_kind: initialWorkspace,
+          },
+        });
+        void useExportTasksStore.getState().pollTask(taskKey, projectId, initializationTaskId);
       }
 
       // 2. 关联参考文件到项目（在生成之前，确保 AI 能读取参考文件）
@@ -296,7 +331,9 @@ const debouncedUpdatePage = debounce(
       const project = normalizeProject(projectResponse.data);
 
       if (project) {
-        set({ currentProject: project });
+        set(get().currentProject?.id !== project.id
+          ? { currentProject: project, imageQualityReport: null, warningMessage: null }
+          : { currentProject: project });
         // 保存到 localStorage
         localStorage.setItem('currentProjectId', project.id!);
       }
@@ -386,7 +423,7 @@ const debouncedUpdatePage = debounce(
   // 本地更新页面（乐观更新）
   updatePageLocal: (pageId, data) => {
     const { currentProject } = get();
-    if (!currentProject) return;
+    if (!currentProject?.id) return;
 
     const updatedPages = currentProject.pages.map((page) =>
       page.id === pageId ? { ...page, ...data } : page
@@ -407,7 +444,7 @@ const debouncedUpdatePage = debounce(
   // 等待防抖完成，然后同步项目状态以确保updated_at更新
   saveAllPages: async () => {
     const { currentProject } = get();
-    if (!currentProject) return;
+    if (!currentProject?.id) return;
 
     // 等待防抖延迟时间（1秒）+ 额外时间确保API调用完成
     await new Promise(resolve => setTimeout(resolve, 1500));
@@ -419,7 +456,7 @@ const debouncedUpdatePage = debounce(
   // 重新排序页面
   reorderPages: async (newOrder) => {
     const { currentProject } = get();
-    if (!currentProject) return;
+    if (!currentProject?.id) return;
 
     // 乐观更新
     const reorderedPages = newOrder
@@ -445,7 +482,7 @@ const debouncedUpdatePage = debounce(
   // 添加新页面
   addNewPage: async () => {
     const { currentProject } = get();
-    if (!currentProject) return;
+    if (!currentProject?.id) return;
 
     try {
       const newPage = {
@@ -465,7 +502,7 @@ const debouncedUpdatePage = debounce(
   // 删除页面
   deletePageById: async (pageId) => {
     const { currentProject } = get();
-    if (!currentProject) return;
+    if (!currentProject?.id) return;
 
     try {
       await api.deletePage(currentProject.id, pageId);
@@ -600,7 +637,7 @@ const debouncedUpdatePage = debounce(
   // 生成大纲（同步操作，不需要轮询）
   generateOutline: async () => {
     const { currentProject } = get();
-    if (!currentProject) return;
+    if (!currentProject?.id) return;
 
     set({ isGlobalLoading: true, error: null });
     try {
@@ -630,7 +667,7 @@ const debouncedUpdatePage = debounce(
   // 流式生成大纲（SSE，逐页渲染）
   generateOutlineStream: async (lockPageCount?: boolean) => {
     const { currentProject } = get();
-    if (!currentProject) return;
+    if (!currentProject?.id) return;
 
     set({ isOutlineStreaming: true, error: null });
 
@@ -642,7 +679,7 @@ const debouncedUpdatePage = debounce(
     // Concurrent queue: pages are pushed by SSE callbacks, drained by a timer loop
     const pageQueue: any[] = [];
     let streamDone = false;
-    let doneData: { total: number; pages: any[]; complete?: boolean } | null = null;
+    let doneData = null as { total: number; pages: any[]; complete?: boolean } | null;
     const STAGGER_MS = 150;
 
     // Start the render loop — runs concurrently with the SSE stream
@@ -718,7 +755,7 @@ const debouncedUpdatePage = debounce(
   // 从描述生成大纲和页面描述（同步操作）
   generateFromDescription: async () => {
     const { currentProject } = get();
-    if (!currentProject) return;
+    if (!currentProject?.id) return;
 
     set({ isGlobalLoading: true, error: null });
     try {
@@ -772,7 +809,7 @@ const debouncedUpdatePage = debounce(
       // Concurrent queue + render loop (like outline streaming)
       const descQueue: api.DescriptionStreamEvent[] = [];
       let streamDone = false;
-      let doneData: { total: number; pages: any[]; warning?: string } | null = null;
+      let doneData = null as { total: number; pages: any[]; warning?: string } | null;
       const STAGGER_MS = 100;
 
       const renderPromise = new Promise<void>((resolve) => {
@@ -927,7 +964,7 @@ const debouncedUpdatePage = debounce(
   // 生成单页描述
   generatePageDescription: async (pageId: string, detailLevel?: string) => {
     const { currentProject } = get();
-    if (!currentProject) return;
+    if (!currentProject?.id) return;
 
     // 如果该页面正在生成，不重复提交
     const targetPage = currentProject.pages.find((p) => p.id === pageId);
@@ -969,7 +1006,7 @@ const debouncedUpdatePage = debounce(
   // 重新生成 PPT 翻新项目的单页（重新解析原 PDF 并提取内容）
   regenerateRenovationPage: async (pageId: string, keepLayout: boolean = false) => {
     const { currentProject } = get();
-    if (!currentProject) return;
+    if (!currentProject?.id) return;
 
     // 如果该页面正在生成，不重复提交
     const targetPage = currentProject.pages.find((p) => p.id === pageId);
@@ -1010,14 +1047,18 @@ const debouncedUpdatePage = debounce(
   // 生成单页图片（用于预览页的手动重新生成）
   generatePageImage: async (pageId: string, forceRegenerate: boolean = false, options?: ImageGenerationOptions) => {
     const { currentProject } = get();
-    if (!currentProject) return;
+    if (!currentProject?.id) return;
 
     if (get().pageGeneratingTasks[pageId]) {
       devLog(`[单页生成] 页面 ${pageId} 正在生成中，跳过重复请求`);
       return;
     }
 
-    set({ error: null, warningMessage: null });
+    set({
+      error: null,
+      warningMessage: null,
+      imageQualityReport: options?.qualityIssues?.length ? get().imageQualityReport : null,
+    });
 
     try {
       const response = await api.generatePageImage(currentProject.id, pageId, forceRegenerate, options);
@@ -1054,14 +1095,14 @@ const debouncedUpdatePage = debounce(
     );
     const targetPageIds = currentProject.pages
       .filter(page => page.id && requestedIds.has(page.id))
-      .filter(page => !page.generated_image_path && !pageGeneratingTasks[page.id!])
+      .filter(page => pageNeedsImageGeneration(currentProject, page) && !pageGeneratingTasks[page.id!])
       .map(page => page.id!);
     if (targetPageIds.length === 0) {
       devLog('[批量生成] 没有待生成页面，已保留现有图片');
       return;
     }
 
-    set({ error: null, warningMessage: null });
+    set({ error: null, warningMessage: null, imageQualityReport: null });
     
     try {
       // 调用批量生成 API
@@ -1134,10 +1175,14 @@ const debouncedUpdatePage = debounce(
 
         if (task.status === 'COMPLETED') {
           stopPolling();
+          const qualityWarningCount = Number(task.progress?.quality_summary?.warnings || 0);
           set({
             pageGeneratingTasks: clearPageTaskMappings(),
             activeImageTask: null,
-            warningMessage: task.progress?.warning_message || null,
+            imageQualityReport: qualityWarningCount > 0 ? task.progress : null,
+            warningMessage: qualityWarningCount > 0
+              ? `图片已生成，其中 ${qualityWarningCount} 页存在质量提醒，请点击底部“质量提醒”查看。`
+              : task.progress?.warning_message || null,
           });
           await syncCurrentProject();
           return;
@@ -1170,7 +1215,7 @@ const debouncedUpdatePage = debounce(
             const nextTasks = { ...get().pageGeneratingTasks };
             pageIds.forEach(id => {
               const page = project.pages.find(item => item.id === id);
-              if (page?.generated_image_path || (page?.status === 'FAILED' && task.status !== 'PAUSED')) {
+              if (!page || !pageNeedsImageGeneration(project, page) || (page.status === 'FAILED' && task.status !== 'PAUSED')) {
                 if (nextTasks[id] === taskId) delete nextTasks[id];
               } else {
                 nextTasks[id] = taskId;
@@ -1231,7 +1276,7 @@ const debouncedUpdatePage = debounce(
     const nextTasks: Record<string, string> = {};
     savedPageIds.forEach(id => {
       const page = project.pages.find(item => item.id === id);
-      if (page && !page.generated_image_path && (page.status !== 'FAILED' || task.status === 'PAUSED')) {
+      if (page && pageNeedsImageGeneration(project, page) && (page.status !== 'FAILED' || task.status === 'PAUSED')) {
         nextTasks[id] = task.task_id;
       }
     });
@@ -1263,7 +1308,7 @@ const debouncedUpdatePage = debounce(
   // 编辑页面图片（异步）
   editPageImage: async (pageId, editPrompt, contextImages) => {
     const { currentProject, pageGeneratingTasks } = get();
-    if (!currentProject) return;
+    if (!currentProject?.id) return;
 
     // 如果该页面正在生成，不重复提交
     if (pageGeneratingTasks[pageId]) {
@@ -1304,7 +1349,7 @@ const debouncedUpdatePage = debounce(
   // 导出PPTX
   exportPPTX: async (pageIds?: string[]) => {
     const { currentProject } = get();
-    if (!currentProject) return;
+    if (!currentProject?.id) return;
 
     set({ isGlobalLoading: true, error: null });
     try {
@@ -1331,7 +1376,7 @@ const debouncedUpdatePage = debounce(
   // 导出PDF
   exportPDF: async (pageIds?: string[]) => {
     const { currentProject } = get();
-    if (!currentProject) return;
+    if (!currentProject?.id) return;
 
     set({ isGlobalLoading: true, error: null });
     try {
@@ -1358,12 +1403,13 @@ const debouncedUpdatePage = debounce(
   // 导出可编辑PPTX（异步任务）
   exportEditablePPTX: async (filename?: string, pageIds?: string[]) => {
     const { currentProject, startAsyncTask } = get();
-    if (!currentProject) return;
+    if (!currentProject?.id) return;
+    const projectId = currentProject.id;
 
     try {
       devLog('[导出可编辑PPTX] 启动异步导出任务...');
       // startAsyncTask 中的 pollTask 会在任务完成时自动处理下载
-      await startAsyncTask(() => api.exportEditablePPTX(currentProject.id, filename, pageIds));
+      await startAsyncTask(() => api.exportEditablePPTX(projectId, filename, pageIds));
       devLog('[导出可编辑PPTX] 异步任务完成');
     } catch (error: any) {
       console.error('[导出可编辑PPTX] 导出失败:', error);

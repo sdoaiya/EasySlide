@@ -1,0 +1,34 @@
+[     822ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://127.0.0.1:5177/node_modules/.vite/deps/chunk-YZVM2MHU.js?v=d77a8e79:21550
+[     995ms] [WARNING] ⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition. @ http://127.0.0.1:5177/node_modules/.vite/deps/react-router-dom.js?v=d77a8e79:4412
+[     996ms] [WARNING] ⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath. @ http://127.0.0.1:5177/node_modules/.vite/deps/react-router-dom.js?v=d77a8e79:4412
+[    1202ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:5177/api/access-code/check:0
+[    1206ms] [ERROR] API Error:  @ http://127.0.0.1:5177/src/api/client.ts:46
+[    1214ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:5177/api/access-code/check:0
+[    1214ms] [ERROR] API Error:  @ http://127.0.0.1:5177/src/api/client.ts:46
+[    1265ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:5177/api/projects/project-1:0
+[    1265ms] [ERROR] API Error:  @ http://127.0.0.1:5177/src/api/client.ts:46
+[    1290ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:5177/api/projects/project-1:0
+[    1291ms] [ERROR] API Error:  @ http://127.0.0.1:5177/src/api/client.ts:46
+[    4309ms] [WARNING] The resource http://127.0.0.1:5177/logo-nav.png was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally. @ http://127.0.0.1:5177/project/project-1/outline:0
+[   85497ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://127.0.0.1:5177/node_modules/.vite/deps/chunk-YZVM2MHU.js?v=d77a8e79:21550
+[   85588ms] [WARNING] ⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition. @ http://127.0.0.1:5177/node_modules/.vite/deps/react-router-dom.js?v=d77a8e79:4412
+[   85588ms] [WARNING] ⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath. @ http://127.0.0.1:5177/node_modules/.vite/deps/react-router-dom.js?v=d77a8e79:4412
+[   85660ms] [LOG] [syncProject] 同步项目数据: {projectId: project-1, pagesCount: 1, status: OUTLINE_GENERATED} @ http://127.0.0.1:5177/src/store/useProjectStore.ts:217
+[   85707ms] [LOG] [syncProject] 同步项目数据: {projectId: project-1, pagesCount: 1, status: OUTLINE_GENERATED} @ http://127.0.0.1:5177/src/store/useProjectStore.ts:217
+[   85783ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:5177/api/reference-files/project/project-1:0
+[   85784ms] [ERROR] API Error:  @ http://127.0.0.1:5177/src/api/client.ts:46
+[   85784ms] [ERROR] Load file list failed: AxiosError @ http://127.0.0.1:5177/src/components/shared/ReferenceFileList.tsx:60
+[   85785ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:5177/api/reference-files/project/project-1:0
+[   85785ms] [ERROR] API Error:  @ http://127.0.0.1:5177/src/api/client.ts:46
+[   85785ms] [ERROR] Load file list failed: AxiosError @ http://127.0.0.1:5177/src/components/shared/ReferenceFileList.tsx:60
+[  199379ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://127.0.0.1:5177/node_modules/.vite/deps/chunk-YZVM2MHU.js?v=d77a8e79:21550
+[  199467ms] [WARNING] ⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition. @ http://127.0.0.1:5177/node_modules/.vite/deps/react-router-dom.js?v=d77a8e79:4412
+[  199467ms] [WARNING] ⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath. @ http://127.0.0.1:5177/node_modules/.vite/deps/react-router-dom.js?v=d77a8e79:4412
+[  199517ms] [LOG] [syncProject] 同步项目数据: {projectId: project-1, pagesCount: 1, status: OUTLINE_GENERATED} @ http://127.0.0.1:5177/src/store/useProjectStore.ts:217
+[  199520ms] [LOG] [syncProject] 同步项目数据: {projectId: project-1, pagesCount: 1, status: OUTLINE_GENERATED} @ http://127.0.0.1:5177/src/store/useProjectStore.ts:217
+[  199583ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:5177/api/reference-files/project/project-1:0
+[  199584ms] [ERROR] API Error:  @ http://127.0.0.1:5177/src/api/client.ts:46
+[  199584ms] [ERROR] Load file list failed: AxiosError @ http://127.0.0.1:5177/src/components/shared/ReferenceFileList.tsx:60
+[  199584ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:5177/api/reference-files/project/project-1:0
+[  199585ms] [ERROR] API Error:  @ http://127.0.0.1:5177/src/api/client.ts:46
+[  199585ms] [ERROR] Load file list failed: AxiosError @ http://127.0.0.1:5177/src/components/shared/ReferenceFileList.tsx:60

@@ -39,7 +39,10 @@ const huashuSlides = [
   },
 }))
 
-async function mockNativeProject(page: Page) {
+async function mockNativeProject(
+  page: Page,
+  onBrowserFrames?: (request: import('@playwright/test').Request) => void,
+) {
   await page.addInitScript(() => localStorage.setItem('hasSeenHelpModal', 'true'))
   await page.route(url => new URL(url).pathname.startsWith('/api/'), async (route) => {
     const pathname = new URL(route.request().url()).pathname
@@ -51,6 +54,93 @@ async function mockNativeProject(page: Page) {
     }
     if (pathname === '/api/output-language') {
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: { language: 'zh' } }) })
+    }
+    if (pathname === `/api/content-projects/${projectId}`) {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          data: {
+            project_id: projectId,
+            last_workspace: 'ppt',
+            pending_sync_count: 0,
+            spine: {
+              id: 'spine-native-workspace',
+              project_id: projectId,
+              revision: 1,
+              status: 'confirmed',
+              content_hash: 'native-workspace-hash',
+              document: { topic: { value: '原生工作区视觉验收' }, sections: [] },
+            },
+            workspaces: [
+              { id: 'ppt-native-workspace', project_id: projectId, kind: 'ppt', state: 'draft', revision: 1, source_kind: 'spine', settings: {} },
+              { id: 'video-native-workspace', project_id: projectId, kind: 'video', state: 'draft', revision: 1, source_kind: 'ppt', settings: {} },
+              { id: 'podcast-native-workspace', project_id: projectId, kind: 'podcast', state: 'uninitialized', revision: 0, source_kind: 'manual', settings: {} },
+            ],
+          },
+        }),
+      })
+    }
+    if (pathname === `/api/projects/${projectId}/narrations`) {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          data: {
+            pages: ['page-1', 'page-2'].map((pageId, index) => ({
+              page_id: pageId,
+              order_index: index,
+              current_version_id: `narration-${index + 1}`,
+              revision: 1,
+              word_count: 10,
+              estimated_seconds: 3,
+              candidate_count: 0,
+            })),
+            total_pages: 2,
+            confirmed_pages: 2,
+            missing_pages: 0,
+            candidate_pages: 0,
+          },
+        }),
+      })
+    }
+    if (pathname === `/api/projects/${projectId}/export/video/preflight`) {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { can_export: true, errors: [], warnings: [] } }),
+      })
+    }
+    if (pathname === `/api/content-projects/${projectId}/workspaces/video/browser-frames`) {
+      onBrowserFrames?.(route.request())
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { attached: true } }),
+      })
+    }
+    if (pathname === `/api/projects/${projectId}/export/native-video`) {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { task_id: 'native-video-task' } }),
+      })
+    }
+    if (pathname === `/api/projects/${projectId}/tasks/native-video-task`) {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          data: {
+            id: 'native-video-task',
+            status: 'COMPLETED',
+            progress: { total: 2, completed: 2, percent: 100 },
+          },
+        }),
+      })
     }
     if (pathname === `/api/projects/${projectId}`) {
       return route.fulfill({
@@ -65,7 +155,7 @@ async function mockNativeProject(page: Page) {
             render_mode: 'native',
             status: 'NATIVE_DECK_GENERATED',
             pages: [
-              { id: 'page-1', page_id: 'page-1', order_index: 0, status: 'NATIVE_GENERATED', outline_content: { title: '原生页面验收', points: [] }, native_layout: 'core01_cover', native_props: { kicker: 'EasySlide', title: '原生页面验收', subtitle: '逐元素可编辑导出' } },
+              { id: 'page-1', page_id: 'page-1', order_index: 0, status: 'NATIVE_GENERATED', outline_content: { title: '原生页面验收', points: [] }, native_layout: 'core01_cover', native_props: { kicker: 'EasySlide', title: '原生页面验收', subtitle: '逐元素可编辑导出', __animation: { elementEnter: 'fade' } } },
               { id: 'page-2', page_id: 'page-2', order_index: 1, status: 'NATIVE_GENERATED', outline_content: { title: '第二页', points: [] }, native_layout: 'core01_end', native_props: { title: '第二页', subtitle: '保持结构化编辑' } },
             ],
           },
@@ -74,6 +164,36 @@ async function mockNativeProject(page: Page) {
     }
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: {} }) })
   })
+}
+
+function inspectBrowserFrameMultipart(request: import('@playwright/test').Request) {
+  const body = request.postDataBuffer()
+  const boundary = request.headers()['content-type']?.match(/boundary=([^;]+)/i)?.[1]
+  if (!body || !boundary) throw new Error('Browser Frames 请求缺少 multipart 内容')
+  const text = body.toString('latin1')
+  const readField = (name: string) => {
+    const match = new RegExp(`name="${name}"\\r\\n\\r\\n([^\\r\\n]+)`).exec(text)
+    if (!match) throw new Error(`Browser Frames 请求缺少 ${name}`)
+    return JSON.parse(match[1])
+  }
+  const marker = 'name="frames"'
+  const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+  const frameCount = text.split(marker).length - 1
+  const pngs: Buffer[] = []
+  let cursor = 0
+  while (pngs.length < frameCount) {
+    const pngStart = body.indexOf(pngSignature, cursor)
+    const pngEnd = body.indexOf(Buffer.from(`\r\n--${boundary}`), pngStart)
+    if (pngStart < 0 || pngEnd <= pngStart) throw new Error('Browser Frames 请求中没有有效 PNG')
+    pngs.push(body.subarray(pngStart, pngEnd))
+    cursor = pngEnd
+  }
+  return {
+    pageIds: readField('page_ids') as string[],
+    frameCounts: readField('frame_counts') as number[],
+    frameCount,
+    pngs,
+  }
 }
 
 async function mockDashiProject(page: Page) {
@@ -203,7 +323,7 @@ for (const viewport of [
     await inspector.getByRole('tab', { name: '内容' }).click()
     await expect(inspector.getByRole('textbox', { name: 'title', exact: true })).toBeVisible()
 
-    await inspector.getByRole('tab', { name: '动效' }).click()
+    await inspector.getByRole('tab', { name: '设计' }).click()
     await inspector.getByText('页面动效').click()
     await inspector.getByRole('combobox', { name: '进入效果' }).selectOption('fade')
     await expect(page.getByRole('button', { name: '重新预览动效' })).toBeEnabled()
@@ -258,6 +378,36 @@ test('DashiAI runtime renders complex props and copied assets', async ({ page })
   }))
   expect(overflow.width).toBeLessThanOrEqual(1)
   expect(overflow.height).toBeLessThanOrEqual(1)
+})
+
+test('native DOM hands progressive PNG frames to the video workspace', async ({ page }, testInfo) => {
+  test.setTimeout(120_000)
+  let captured: ReturnType<typeof inspectBrowserFrameMultipart> | undefined
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await mockNativeProject(page, (request) => { captured = inspectBrowserFrameMultipart(request) })
+  await page.goto(`/project/${projectId}/preview`)
+
+  await expect(page.locator('main .native-slide')).toHaveAttribute('data-native-layout-ready', 'true')
+  await page.getByLabel('导出格式').selectOption('讲解视频')
+  await page.getByRole('button', { name: '导出讲解视频' }).click()
+  await expect(page.getByRole('dialog', { name: '讲解视频设置' })).toBeVisible()
+  await page.getByRole('button', { name: '开始导出视频' }).click()
+  await expect.poll(() => captured?.frameCount || 0, { timeout: 90_000 }).toBeGreaterThan(1)
+
+  expect(captured!.pageIds).toEqual(['page-1', 'page-2'])
+  expect(captured!.frameCounts[0]).toBeGreaterThan(1)
+  expect(captured!.frameCounts[1]).toBe(1)
+  expect(captured!.frameCount).toBe(captured!.frameCounts.reduce((total, count) => total + count, 0))
+  const firstPng = captured!.pngs[0]
+  const finalPng = captured!.pngs[captured!.frameCounts[0] - 1]
+  expect(firstPng.length).toBeGreaterThan(1_000)
+  expect(finalPng.equals(firstPng)).toBe(false)
+  const firstFramePath = testInfo.outputPath('browser-frame-page-1-stage-1.png')
+  const finalFramePath = testInfo.outputPath('browser-frame-page-1-final-stage.png')
+  writeFileSync(firstFramePath, firstPng)
+  writeFileSync(finalFramePath, finalPng)
+  await testInfo.attach('browser-frame-page-1-stage-1', { path: firstFramePath, contentType: 'image/png' })
+  await testInfo.attach('browser-frame-page-1-final-stage', { path: finalFramePath, contentType: 'image/png' })
 })
 
 test('Huashu layouts keep long Chinese copy, media, and visual systems inside the slide', async ({ page }, testInfo) => {

@@ -148,6 +148,14 @@ class FileService:
         
         # Return relative path
         return filepath.relative_to(self.upload_folder).as_posix()
+
+    def save_page_template_image(self, file, project_id: str, page_id: str) -> str:
+        template_dir = self._get_template_dir(project_id)
+        original_filename = secure_filename(file.filename)
+        ext = original_filename.rsplit('.', 1)[1].lower() if '.' in original_filename else 'png'
+        filepath = template_dir / f"{page_id}_template.{ext}"
+        self._save_validated_image_upload(file, filepath)
+        return filepath.relative_to(self.upload_folder).as_posix()
     
     def save_generated_image(self, image: Image.Image, project_id: str,
                            page_id: str, image_format: str = 'PNG',

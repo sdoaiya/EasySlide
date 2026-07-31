@@ -5,7 +5,7 @@ import { NativeImageSettingsDialog } from '@/components/native-deck/NativeImageS
 describe('NativeImageSettingsDialog', () => {
   it('saves density, style, custom prompt, and per-page counts', () => {
     const onSave = vi.fn()
-    render(
+    const { container } = render(
       <NativeImageSettingsDialog
         open
         settings={{ density: 'standard', style: 'theme', composition: 'auto', custom_prompt: '', custom_counts: {} }}
@@ -17,6 +17,10 @@ describe('NativeImageSettingsDialog', () => {
         onSave={onSave}
       />,
     )
+
+    expect(container.innerHTML).not.toContain('bg-black/45')
+    expect(container.innerHTML).toContain('bg-[color:var(--app-surface)]/80')
+    expect(screen.getByRole('button', { name: '保存图片生成设置' })).toHaveClass('bg-[var(--app-primary-action)]')
 
     fireEvent.change(screen.getByLabelText('图片生成密度'), { target: { value: 'custom' } })
     fireEvent.change(screen.getByLabelText('图片风格'), { target: { value: '3d' } })

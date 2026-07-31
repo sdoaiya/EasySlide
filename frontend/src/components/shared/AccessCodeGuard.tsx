@@ -40,11 +40,11 @@ export function AccessCodeGuard({ children }: { children: ReactNode }) {
     setStatus('loading');
     try {
       const res = await checkAccessCode();
-      if (!res.data.enabled) { setStatus('pass'); return; }
+      if (!res.data?.enabled) { setStatus('pass'); return; }
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const v = await verifyAccessCode(saved);
-        if (v.data.valid) { setStatus('pass'); return; }
+        if (v.data?.valid) { setStatus('pass'); return; }
         localStorage.removeItem(STORAGE_KEY);
       }
       setStatus('prompt');
@@ -61,7 +61,7 @@ export function AccessCodeGuard({ children }: { children: ReactNode }) {
     setError('');
     try {
       const res = await verifyAccessCode(code.trim());
-      if (res.data.valid) {
+      if (res.data?.valid) {
         localStorage.setItem(STORAGE_KEY, code.trim());
         setStatus('pass');
       } else {
@@ -75,21 +75,32 @@ export function AccessCodeGuard({ children }: { children: ReactNode }) {
     }
   };
 
-  if (status === 'loading') return null;
+  if (status === 'loading') {
+    return (
+      <main
+        tabIndex={0}
+        aria-busy="true"
+        aria-label="正在加载工作台"
+        className="flex min-h-screen items-center justify-center bg-[var(--app-background)] text-sm text-[var(--app-text-secondary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)]"
+      >
+        正在加载工作台...
+      </main>
+    );
+  }
   if (status === 'pass') return <>{children}</>;
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-10 text-slate-900">
-      <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow-xl shadow-slate-200/70">
+    <div className="flex min-h-screen items-center justify-center bg-[var(--app-background)] px-4 py-10 text-[var(--app-text)]">
+      <div className="w-full max-w-sm rounded-[var(--app-radius-panel)] border border-[var(--app-border)] bg-[var(--app-surface)] p-6 shadow-[var(--app-shadow-soft)]">
         <div className="mb-5 flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-xl font-bold text-slate-950">{t('title')}</h2>
-            <p className="mt-2 text-sm leading-6 text-slate-500">{t('subtitle')}</p>
+            <h2 className="text-xl font-semibold text-[var(--app-text)]">{t('title')}</h2>
+            <p className="mt-2 text-sm leading-6 text-[var(--app-text-secondary)]">{t('subtitle')}</p>
           </div>
           <button
             type="button"
-            onClick={() => navigate('/app')}
-            className="shrink-0 rounded-full border border-slate-200 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+            onClick={() => navigate('/home')}
+            className="shrink-0 rounded-[var(--app-radius-control)] border border-[var(--app-border)] px-3 py-1 text-xs font-medium text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]"
           >
             {t('backHome')}
           </button>
@@ -102,14 +113,14 @@ export function AccessCodeGuard({ children }: { children: ReactNode }) {
             value={code}
             onChange={e => setCode(e.target.value)}
             autoFocus
-            className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm outline-none transition focus:border-sky-300 focus:ring-2 focus:ring-sky-100"
+            className="h-11 w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-4 text-sm outline-none transition focus:border-[var(--app-accent)] focus:ring-2 focus:ring-[color:var(--app-accent-soft)]"
             aria-label={t('label')}
           />
-          {error && <p className="text-sm text-red-500">{error}</p>}
+          {error && <p className="text-sm text-[var(--app-error)]">{error}</p>}
           <button
             type="submit"
             disabled={verifying || !code.trim()}
-            className="h-11 w-full rounded-xl bg-gradient-to-r from-sky-500 to-emerald-400 text-sm font-semibold text-white transition hover:shadow-lg disabled:cursor-not-allowed disabled:bg-none disabled:bg-slate-100 disabled:text-slate-400"
+            className="h-11 w-full rounded-[var(--app-radius-control)] bg-[var(--app-primary-action)] text-sm font-semibold text-[var(--app-surface)] transition hover:bg-[var(--app-primary-action-hover)] disabled:cursor-not-allowed disabled:bg-[var(--app-surface-hover)] disabled:text-[var(--app-text-tertiary)]"
           >
             {verifying ? '...' : t('submit')}
           </button>

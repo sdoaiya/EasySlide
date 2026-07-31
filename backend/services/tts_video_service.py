@@ -8,6 +8,8 @@ TTS Video Service — 将 PPT 页面转换为带旁白的播报视频
   4. ASS 字幕烧录
 """
 import asyncio
+import hashlib
+import json
 import logging
 import os
 import queue
@@ -18,6 +20,9 @@ import threading
 import time
 import unicodedata
 from typing import List, Optional, Callable, Tuple
+
+from services.video_audio_timeline import build_page_audio_timeline
+
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +45,10 @@ _FFMPEG_IDLE_TIMEOUT_SECONDS = 600.0
 
 # 进度输出频率（秒）
 _FFMPEG_PROGRESS_INTERVAL_SECONDS = 1.0
+
+# Bing TTS 的连接偶发抖动时给导出一次恢复机会，最终失败仍由上层策略处理。
+_TTS_MAX_ATTEMPTS = 3
+_TTS_RETRY_BACKOFF_SECONDS = (1.0, 2.0)
 
 
 def _hidden_subprocess_kwargs() -> dict:
@@ -170,9 +179,10 @@ def create_placeholder_frame(
     # 检测可用的 CJK 字体文件路径
     font_file = _detect_cjk_font_file()
     if font_file:
+        ffmpeg_font_file = font_file.replace('\\', '/').replace(':', '\\:')
         drawtext = (
             f"drawtext=text='{safe_title}':"
-            f"fontfile='{font_file}':"
+            f"fontfile='{ffmpeg_font_file}':"
             f"fontsize={font_size}:fontcolor=white:"
             f"x=(w-text_w)/2:y=(h-text_h)/2"
         )
@@ -198,10 +208,13 @@ def create_placeholder_frame(
         output_path,
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=15, **_hidden_subprocess_kwargs())
-    if result.returncode != 0:
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15, **_hidden_subprocess_kwargs())
+    except subprocess.TimeoutExpired:
+        result = None
+    if not result or result.returncode != 0:
         # fallback: 纯色背景（无文字）
-        logger.warning(f"Placeholder with text failed, using plain background: {result.stderr[-200:]}")
+        logger.warning("Placeholder with text failed or timed out, using plain background")
         vf_plain = f"color=c=#1a1a2e:s={width}x{height}:d=1"
         cmd_plain = [
             ffmpeg_path, '-y',
@@ -220,6 +233,8 @@ def _detect_cjk_font_file() -> Optional[str]:
     """检测系统中 CJK 字体文件路径（用于 FFmpeg drawtext fontfile）"""
     # 常见 CJK 字体文件路径
     candidates = [
+        r'C:\Windows\Fonts\msyh.ttc',
+        r'C:\Windows\Fonts\simhei.ttf',
         '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
         '/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc',
         '/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc',
@@ -343,11 +358,118 @@ def get_default_voice(language: str, config: Optional[dict] = None) -> str:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-async def _generate_tts_async(text: str, output_path: str, voice: str, rate: str) -> None:
+async def _generate_tts_async(
+    text: str,
+    output_path: str,
+    voice: str,
+    rate: str,
+    pitch: str = '+0Hz',
+    volume: str = '+0%',
+) -> None:
     """edge-tts 异步语音合成"""
     import edge_tts
-    communicate = edge_tts.Communicate(text, voice, rate=rate)
+    communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch, volume=volume)
     await communicate.save(output_path)
+
+
+def _generate_windows_sapi_audio(
+    text: str,
+    output_path: str,
+    voice: str,
+    rate: str,
+    ffmpeg_path: str,
+) -> None:
+    """Use the built-in Windows speech engine when Bing TTS is unavailable."""
+    locale_match = re.match(r'^([a-z]{2,3}-[A-Z]{2})-', voice)
+    locale = locale_match.group(1) if locale_match else 'zh-CN'
+    male_markers = ('yunxi', 'yunjian', 'yunyang', 'yunfeng', 'yunhao', 'guy', 'ryan', 'davis', 'tony', 'keita', 'naoki')
+    gender = 'Male' if any(marker in voice.lower() for marker in male_markers) else 'Female'
+    rate_match = re.fullmatch(r'([+-]?\d+)%', rate.strip())
+    sapi_rate = max(-10, min(10, round(int(rate_match.group(1)) / 10))) if rate_match else 0
+    text_path = f'{output_path}.sapi.txt'
+    wav_path = f'{output_path}.sapi.wav'
+    script_path = f'{output_path}.sapi.ps1'
+    script = r"""
+param($TextPath, $WavPath, $LocaleName, $GenderName, $SpeechRate)
+    $ErrorActionPreference = 'Stop'
+    Add-Type -AssemblyName System.Speech
+    $synth = [System.Speech.Synthesis.SpeechSynthesizer]::new()
+    try {
+        $culture = [System.Globalization.CultureInfo]::GetCultureInfo($LocaleName)
+        $gender = [System.Enum]::Parse([System.Speech.Synthesis.VoiceGender], $GenderName)
+        $language = $LocaleName.Split('-')[0]
+        try {
+            $installedVoices = $synth.GetInstalledVoices()
+        } catch {
+            throw 'Windows speech voices are unavailable on this device'
+        }
+        $voices = @($installedVoices | Where-Object { $_ -and $_.Enabled })
+        if (-not $voices) { throw 'No Windows speech voice is installed' }
+        $candidates = @($voices | Where-Object {
+            $_ -and $_.VoiceInfo.Culture.Name -eq $culture.Name -and $_.VoiceInfo.Gender -eq $gender
+        })
+        $candidates += @($voices | Where-Object {
+            $_ -and $_.VoiceInfo.Culture.Name.StartsWith($language) -and $_.VoiceInfo.Gender -eq $gender
+        })
+        $candidates += @($voices | Where-Object {
+            $_ -and $_.VoiceInfo.Culture.Name -eq $culture.Name
+        })
+        $candidates += @($voices | Where-Object {
+            $_ -and $_.VoiceInfo.Culture.Name.StartsWith($language)
+        })
+        $candidates += @($voices)
+        $selected = $null
+        foreach ($candidate in $candidates) {
+            try {
+                $synth.SelectVoice($candidate.VoiceInfo.Name)
+                $selected = $candidate
+                break
+            } catch {
+                continue
+            }
+        }
+        if (-not $selected) { throw 'No Windows speech voice is installed' }
+        $synth.Rate = [int]$SpeechRate
+        $synth.SetOutputToWaveFile($WavPath)
+        $text = [System.IO.File]::ReadAllText($TextPath, [System.Text.Encoding]::UTF8)
+        $escapedText = [System.Security.SecurityElement]::Escape($text)
+        $pitch = if ($gender -eq [System.Speech.Synthesis.VoiceGender]::Male) { '-18%' } else { '+8%' }
+        $voiceLocale = $selected.VoiceInfo.Culture.Name
+        $ssml = "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='$voiceLocale'><prosody pitch='$pitch'>$escapedText</prosody></speak>"
+        $synth.SpeakSsml($ssml)
+    } finally {
+        $synth.Dispose()
+    }
+"""
+    try:
+        with open(text_path, 'w', encoding='utf-8') as handle:
+            handle.write(text)
+        with open(script_path, 'w', encoding='utf-8') as handle:
+            handle.write(script)
+        result = subprocess.run(
+            [
+                'powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script_path,
+                text_path, wav_path, locale, gender, str(sapi_rate),
+            ],
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            errors='replace',
+            timeout=120,
+            **_hidden_subprocess_kwargs(),
+        )
+        if result.returncode != 0 or not os.path.isfile(wav_path) or os.path.getsize(wav_path) <= 0:
+            raise RuntimeError((result.stderr or result.stdout or 'Windows speech synthesis failed').strip())
+        _run_ffmpeg_command([
+            ffmpeg_path, '-y', '-i', wav_path, '-vn',
+            '-c:a', 'libmp3lame', '-b:a', '128k', output_path,
+        ], 'Windows local TTS conversion failed')
+    finally:
+        for temp_path in (text_path, wav_path, script_path):
+            try:
+                os.remove(temp_path)
+            except FileNotFoundError:
+                pass
 
 
 def generate_tts_audio_sync(
@@ -356,6 +478,8 @@ def generate_tts_audio_sync(
     voice: str = 'zh-CN-XiaoxiaoNeural',
     rate: str = '+0%',
     ffmpeg_path: str = 'ffmpeg',
+    pitch: str = '+0Hz',
+    volume: str = '+0%',
 ) -> float:
     """
     同步封装：生成 TTS 音频文件（edge-tts）。
@@ -370,498 +494,417 @@ def generate_tts_audio_sync(
     Returns:
         float: 音频时长（秒）
     """
-    loop = asyncio.new_event_loop()
-    try:
-        loop.run_until_complete(_generate_tts_async(text, output_path, voice, rate))
-    finally:
-        loop.close()
-
-    duration = get_audio_duration(output_path, ffmpeg_path)
-    logger.debug(f"TTS audio generated: {output_path} ({duration:.1f}s)")
-    return duration
-
-
-def _format_elevenlabs_api_error(status: Optional[int], err_status: str, msg: str, detail: dict) -> str:
-    lowered = (msg or '').lower()
-    if err_status == 'quota_exceeded' or 'quota' in lowered or 'credits' in lowered:
-        return f"ElevenLabs 免费配额已不足：{msg}"
-    if err_status == 'invalid_api_key' or status == 401:
-        return "ElevenLabs 认证失败，请检查 API Key 是否有效"
-    if (
-        err_status in {'voice_not_found', 'voice_not_found_on_voice_id', 'invalid_voice'}
-        or 'invalid voice' in lowered
-        or 'voice not found' in lowered
-    ):
-        return f"ElevenLabs 声音无效或当前 API Key 无权访问，请在导出视频弹窗重新选择声音：{msg}"
-    if status == 402 or detail.get('code') == 'paid_plan_required':
-        return f"ElevenLabs 该声音需要付费套餐：{msg}"
-    return f"ElevenLabs API 错误 (HTTP {status})：{msg}"
-
-
-def _is_fatal_elevenlabs_tts_error(status: Optional[int], err_status: str, msg: str, detail: dict) -> bool:
-    lowered = (msg or '').lower()
-    return (
-        err_status == 'quota_exceeded'
-        or 'quota' in lowered
-        or 'credits' in lowered
-        or err_status == 'invalid_api_key'
-        or status == 401
-        or err_status in {'voice_not_found', 'voice_not_found_on_voice_id', 'invalid_voice'}
-        or 'invalid voice' in lowered
-        or 'voice not found' in lowered
-        or status == 402
-        or detail.get('code') == 'paid_plan_required'
-    )
-
-
-def _elevenlabs_error_parts(error) -> Tuple[Optional[int], str, str, dict]:
-    status = getattr(error, 'status_code', None)
-    body = getattr(error, 'body', None)
-    detail = body.get('detail', {}) if isinstance(body, dict) else {}
-    detail = detail if isinstance(detail, dict) else {}
-    err_status = detail.get('status', '')
-    msg = detail.get('message') or str(error)
-    return status, err_status, msg, detail
-
-
-def _write_elevenlabs_audio_response(response, output_path: str) -> None:
-    audio = getattr(response, 'audio', None)
-    if audio is None and isinstance(response, dict):
-        audio = response.get('audio')
-    if isinstance(audio, str):
-        import base64
-        audio = base64.b64decode(audio)
-
-    with open(output_path, 'wb') as f:
-        if isinstance(audio, (bytes, bytearray)):
-            f.write(audio)
-            return
-        if isinstance(response, (bytes, bytearray)):
-            f.write(response)
-            return
-        for chunk in response:
-            if chunk:
-                f.write(chunk)
-
-
-def generate_elevenlabs_audio_sync(
-    text: str,
-    output_path: str,
-    api_key: str,
-    voice_id: str,
-    ffmpeg_path: str = 'ffmpeg',
-    speed: float = 1.0,
-) -> Tuple[float, Optional[dict]]:
-    """
-    同步生成 ElevenLabs TTS 音频文件（MP3），并返回字符级对齐时间戳。
-
-    Returns:
-        (duration_seconds, alignment) — alignment 形如
-        {'characters': [...], 'character_start_times_ms': [...], 'character_durations_ms': [...]}
-        若接口未返回对齐信息则为 None。
-    """
-    import base64
-    from elevenlabs.client import ElevenLabs
-    from elevenlabs.core import ApiError as ElevenLabsApiError
-    from elevenlabs import VoiceSettings
-
-    client = ElevenLabs(api_key=api_key)
-    # ElevenLabs 实际接受 speed 范围 0.7–1.2
-    clamped_speed = max(0.7, min(float(speed), 1.2))
-    voice_settings = VoiceSettings(
-        stability=0.75,
-        similarity_boost=0.75,
-        style=0.0,
-        use_speaker_boost=True,
-        speed=clamped_speed,
-    )
-
-    def _convert_with_timestamps(model_id: str):
-        return client.text_to_speech.convert_with_timestamps(
-            text=text,
-            voice_id=voice_id,
-            model_id=model_id,
-            output_format='mp3_44100_128',
-            voice_settings=voice_settings,
-        )
-
-    def _convert_audio_only(model_id: str):
-        return client.text_to_speech.convert(
-            text=text,
-            voice_id=voice_id,
-            model_id=model_id,
-            output_format='mp3_44100_128',
-            voice_settings=voice_settings,
-        )
-
-    alignment_dict: Optional[dict] = None
-    try:
+    last_error = None
+    for attempt in range(_TTS_MAX_ATTEMPTS):
         try:
-            response = _convert_with_timestamps('eleven_v3')
-        except ElevenLabsApiError as e:
-            status, err_status, msg, detail = _elevenlabs_error_parts(e)
-            if _is_fatal_elevenlabs_tts_error(status, err_status, msg, detail):
-                raise RuntimeError(_format_elevenlabs_api_error(status, err_status, msg, detail)) from e
-            logger.warning(f"eleven_v3 时间戳接口不可用，回退到 multilingual_v2: {msg}")
+            if os.path.exists(output_path):
+                os.remove(output_path)
+            loop = asyncio.new_event_loop()
             try:
-                response = _convert_with_timestamps('eleven_multilingual_v2')
-            except ElevenLabsApiError as e2:
-                status, err_status, msg, detail = _elevenlabs_error_parts(e2)
-                if _is_fatal_elevenlabs_tts_error(status, err_status, msg, detail):
-                    raise RuntimeError(_format_elevenlabs_api_error(status, err_status, msg, detail)) from e2
-                logger.warning(f"ElevenLabs 时间戳接口不可用，回退到普通音频合成: {msg}")
-                _write_elevenlabs_audio_response(_convert_audio_only('eleven_multilingual_v2'), output_path)
-                duration = get_audio_duration(output_path, ffmpeg_path)
-                return duration, None
+                if pitch == '+0Hz' and volume == '+0%':
+                    # Keep the legacy four-argument call compatible with local test doubles.
+                    task = _generate_tts_async(text, output_path, voice, rate)
+                else:
+                    task = _generate_tts_async(text, output_path, voice, rate, pitch, volume)
+                loop.run_until_complete(task)
+            finally:
+                loop.close()
 
-        # SDK 内部使用 audio_base_64（Python 属性名）/ audio_base64（JSON 别名）
-        audio_b64 = (
-            getattr(response, 'audio_base_64', None)
-            or getattr(response, 'audio_base64', None)
-        )
-        if audio_b64 is None and isinstance(response, dict):
-            audio_b64 = response.get('audio_base_64') or response.get('audio_base64')
-        if not audio_b64:
-            raise RuntimeError("ElevenLabs 未返回 audio_base64 数据")
+            if not os.path.isfile(output_path) or os.path.getsize(output_path) <= 0:
+                raise RuntimeError('TTS returned an empty audio file')
+            duration = get_audio_duration(output_path, ffmpeg_path)
+            logger.debug(f"TTS audio generated: {output_path} ({duration:.1f}s)")
+            return duration
+        except Exception as error:
+            last_error = error
+            if attempt >= _TTS_MAX_ATTEMPTS - 1:
+                break
+            delay = _TTS_RETRY_BACKOFF_SECONDS[min(attempt, len(_TTS_RETRY_BACKOFF_SECONDS) - 1)]
+            logger.warning(
+                "TTS generation attempt %s/%s failed: %s; retrying in %.1fs",
+                attempt + 1,
+                _TTS_MAX_ATTEMPTS,
+                error,
+                delay,
+            )
+            time.sleep(delay)
 
-        with open(output_path, 'wb') as f:
-            f.write(base64.b64decode(audio_b64))
+    if os.name == 'nt':
+        try:
+            logger.warning(
+                "Edge TTS failed after %s attempts; using Windows local speech for voice %s",
+                _TTS_MAX_ATTEMPTS,
+                voice,
+            )
+            _generate_windows_sapi_audio(text, output_path, voice, rate, ffmpeg_path)
+            duration = get_audio_duration(output_path, ffmpeg_path)
+            logger.info(f"Windows local TTS audio generated: {output_path} ({duration:.1f}s)")
+            return duration
+        except Exception as fallback_error:
+            raise RuntimeError(
+                f"Edge TTS failed after {_TTS_MAX_ATTEMPTS} attempts: {last_error}; "
+                f"Windows local TTS fallback failed: {fallback_error}"
+            ) from fallback_error
 
-        alignment_obj = getattr(response, 'alignment', None)
-        if alignment_obj is None and isinstance(response, dict):
-            alignment_obj = response.get('alignment')
-        if alignment_obj is not None:
-            chars = getattr(alignment_obj, 'characters', None)
-            # SDK 使用 character_start_times_seconds / character_end_times_seconds
-            starts_sec = getattr(alignment_obj, 'character_start_times_seconds', None)
-            ends_sec = getattr(alignment_obj, 'character_end_times_seconds', None)
-            if chars is None and isinstance(alignment_obj, dict):
-                chars = alignment_obj.get('characters')
-                starts_sec = alignment_obj.get('character_start_times_seconds')
-                ends_sec = alignment_obj.get('character_end_times_seconds')
-            if chars and starts_sec and ends_sec and len(chars) == len(starts_sec) == len(ends_sec):
-                alignment_dict = {
-                    'characters': list(chars),
-                    'character_start_times_ms': [int(s * 1000) for s in starts_sec],
-                    'character_durations_ms': [
-                        max(int((e - s) * 1000), 0) for s, e in zip(starts_sec, ends_sec)
-                    ],
-                }
-    except ElevenLabsApiError as e:
-        status, err_status, msg, detail = _elevenlabs_error_parts(e)
-        raise RuntimeError(_format_elevenlabs_api_error(status, err_status, msg, detail)) from e
-
-    duration = get_audio_duration(output_path, ffmpeg_path)
-    logger.debug(
-        f"ElevenLabs audio generated: {output_path} ({duration:.1f}s, alignment={'yes' if alignment_dict else 'no'})"
-    )
-    return duration, alignment_dict
+    raise RuntimeError(f"TTS generation failed after {_TTS_MAX_ATTEMPTS} attempts: {last_error}") from last_error
 
 
-def _slice_audio_by_time(
-    src_path: str,
-    dst_path: str,
-    start_seconds: float,
-    end_seconds: float,
-    ffmpeg_path: str = 'ffmpeg',
-) -> None:
-    """从源音频切出 [start, end] 区间到目标路径（重编码以保证起点精度）。"""
-    if end_seconds <= start_seconds:
-        raise ValueError(f"非法切片区间 [{start_seconds:.3f}, {end_seconds:.3f}]")
-    cmd = [
-        ffmpeg_path, '-y',
-        '-ss', f'{start_seconds:.3f}',
-        '-to', f'{end_seconds:.3f}',
-        '-i', src_path,
-        '-c:a', 'libmp3lame', '-b:a', '128k',
-        dst_path,
-    ]
-    _run_ffmpeg_command(
-        cmd, f"FFmpeg failed to slice audio [{start_seconds:.2f}-{end_seconds:.2f}]"
-    )
+def _rate_percent(value: str) -> int:
+    match = re.fullmatch(r'([+-]?\d+)%', str(value or '').strip())
+    return int(match.group(1)) if match else 0
 
 
-def _find_page_boundaries_sec(
-    page_texts: List[str],
-    full_duration_sec: float,
-    full_alignment: dict,
-    snap_window_sec: float = 2.0,
-) -> List[float]:
-    """
-    返回 N+1 个递增时间点 [t_0, ..., t_N]，t_0=0、t_N=full_duration。
-    内部 N-1 个边界用 "字符比例估算 + 就近最长 pause 吸附" 算法定位：
-
-      1. 按源字符数比例算出每页边界的目标时间；
-      2. 在目标时间 ±snap_window_sec 内寻找最长的 alignment 间隙（gap）；
-      3. 吸附到该间隙的中点；找不到合适 gap 就用纯比例。
-
-    依赖：TTS 在页边界 delimiter（\\n\\n）处会产生比页内常规停顿更长的 pause。
-    实测 ElevenLabs 满足这个假设，且不依赖源字符与 alignment 字符 1:1 对齐。
-    """
-    n_pages = len(page_texts)
-    if n_pages <= 1:
-        return [0.0, full_duration_sec]
-
-    chars_per_page = [len(t) for t in page_texts]
-    total_chars = sum(chars_per_page) or 1
-
-    # 内部边界目标时间（按源字符比例）
-    target_times_sec: List[float] = []
-    cum = 0
-    for c in chars_per_page[:-1]:
-        cum += c
-        target_times_sec.append(full_duration_sec * cum / total_chars)
-
-    starts_ms = full_alignment.get('character_start_times_ms') or []
-    durs_ms = full_alignment.get('character_durations_ms') or []
-
-    # 计算所有相邻字符间的间隙：(gap_size_ms, gap_midpoint_ms)
-    gaps: List[Tuple[float, float]] = []
-    if len(starts_ms) >= 2 and len(durs_ms) >= 2:
-        for i in range(len(starts_ms) - 1):
-            gap_start_ms = starts_ms[i] + durs_ms[i]
-            gap_end_ms = starts_ms[i + 1]
-            gap_size = max(gap_end_ms - gap_start_ms, 0)
-            gap_mid = (gap_start_ms + gap_end_ms) / 2.0
-            gaps.append((gap_size, gap_mid))
-
-    snap_window_ms = snap_window_sec * 1000
-    boundaries_sec: List[float] = [0.0]
-    used_gap_indices: set = set()
-    last_t_ms = 0.0
-
-    for target_t in target_times_sec:
-        target_ms = target_t * 1000
-        best_gap = -1.0
-        best_idx = -1
-        best_mid_ms = target_ms
-        for idx, (gap_size, gap_mid) in enumerate(gaps):
-            if idx in used_gap_indices:
-                continue
-            if gap_mid <= last_t_ms:
-                continue
-            if abs(gap_mid - target_ms) > snap_window_ms:
-                continue
-            if gap_size > best_gap:
-                best_gap = gap_size
-                best_idx = idx
-                best_mid_ms = gap_mid
-        if best_idx >= 0:
-            used_gap_indices.add(best_idx)
-            chosen_ms = best_mid_ms
-        else:
-            chosen_ms = target_ms
-        # 单调保护
-        if chosen_ms <= last_t_ms:
-            chosen_ms = last_t_ms + 100
-        boundaries_sec.append(chosen_ms / 1000.0)
-        last_t_ms = chosen_ms
-
-    final_t = max(full_duration_sec, last_t_ms / 1000.0 + 0.1)
-    boundaries_sec.append(final_t)
-    return boundaries_sec
+def _effective_tts_rate(rate: str, speed: float, delta: str = '+0%') -> str:
+    pct = _rate_percent(rate) + _rate_percent(delta)
+    if abs(speed - 1.0) > 1e-3:
+        pct += int(round((speed - 1.0) * 100))
+    return f"{'+' if pct >= 0 else ''}{pct}%"
 
 
-def _slice_alignment_by_time(
-    full_alignment: dict, t_start_ms: int, t_end_ms: int,
-) -> dict:
-    """提取 [t_start_ms, t_end_ms) 区间内字符的 sub-alignment，时间归零到 t_start_ms。"""
-    chars = full_alignment.get('characters') or []
-    starts = full_alignment.get('character_start_times_ms') or []
-    durs = full_alignment.get('character_durations_ms') or []
-    sub_chars: List[str] = []
-    sub_starts: List[int] = []
-    sub_durs: List[int] = []
-    for c, s, d in zip(chars, starts, durs):
-        if t_start_ms <= s < t_end_ms:
-            sub_chars.append(c)
-            sub_starts.append(max(s - t_start_ms, 0))
-            sub_durs.append(d)
+_DELIVERY_DEFAULTS = {
+    'question': {'rate_delta': '+2%', 'pitch_delta': '+2Hz', 'pause_after_ms': 360},
+    'statement': {'rate_delta': '+0%', 'pitch_delta': '+0Hz', 'pause_after_ms': 250},
+    'emphasis': {'rate_delta': '-2%', 'pitch_delta': '-2Hz', 'pause_after_ms': 520},
+    'conclusion': {'rate_delta': '-3%', 'pitch_delta': '-1Hz', 'pause_after_ms': 620},
+    'transition': {'rate_delta': '+3%', 'pitch_delta': '+1Hz', 'pause_after_ms': 300},
+    'reflective': {'rate_delta': '-4%', 'pitch_delta': '-2Hz', 'pause_after_ms': 700},
+}
+
+
+def _resolve_segment_prosody(segment: dict) -> dict:
+    delivery = str(segment.get('delivery') or '').strip().lower()
+    if delivery not in _DELIVERY_DEFAULTS:
+        delivery = 'transition' if str(segment.get('speaker_id') or 'host') == 'host' else 'statement'
+    defaults = _DELIVERY_DEFAULTS[delivery]
+    try:
+        pause_after_ms = max(120, min(int(segment.get('pause_after_ms', defaults['pause_after_ms'])), 1200))
+    except (TypeError, ValueError):
+        pause_after_ms = defaults['pause_after_ms']
+    pitch_delta = str(segment.get('pitch_delta') or defaults['pitch_delta']).strip()
+    if not re.fullmatch(r'[+-]\d+Hz', pitch_delta):
+        pitch_delta = defaults['pitch_delta']
+    rate_delta = str(segment.get('rate_delta') or defaults['rate_delta']).strip()
+    if not re.fullmatch(r'[+-]\d+%', rate_delta):
+        rate_delta = defaults['rate_delta']
+    volume = str(segment.get('volume') or '+0%').strip()
+    if not re.fullmatch(r'[+-]\d+%', volume):
+        volume = '+0%'
     return {
-        'characters': sub_chars,
-        'character_start_times_ms': sub_starts,
-        'character_durations_ms': sub_durs,
+        'delivery': delivery,
+        'rate_delta': rate_delta,
+        'pitch_delta': pitch_delta,
+        'volume': volume,
+        'pause_after_ms': pause_after_ms,
     }
 
 
-# ElevenLabs 单次合成的字符上限保守阈值（含拼接 delimiter）。
-# multilingual_v2 官方上限 5000，eleven_v3 略高但未公开稳定上限；
-# 取 4500 留出 margin，超出时按页贪婪打包成多个批次。
-_ELEVENLABS_BATCH_CHAR_LIMIT = 4500
+def generate_narration_segments_audio_sync(
+    segments: List[dict],
+    cache_dir: str,
+    working_dir: str,
+    default_voice: str,
+    rate: str,
+    speed: float = 1.0,
+    ffmpeg_path: str = 'ffmpeg',
+    pause_seconds: float = 0.25,
+    return_cache_hit: bool = False,
+) -> tuple:
+    """Generate or reuse segment audio, then concatenate it into one page track."""
+    if not segments:
+        raise ValueError('No narration segments')
+    os.makedirs(cache_dir, exist_ok=True)
+    os.makedirs(working_dir, exist_ok=True)
+    audio_paths = []
+    durations = []
+    cache_hit = True
+    for index, segment in enumerate(segments):
+        text = str(segment.get('_tts_text') or segment.get('text') or '').strip()
+        voice = str(segment.get('voice') or default_voice).strip()
+        segment_rate = str(segment.get('rate') or rate)
+        prosody = _resolve_segment_prosody(segment)
+        effective_rate = _effective_tts_rate(segment_rate, speed, prosody['rate_delta'])
+        segment['_pause_after_seconds'] = prosody['pause_after_ms'] / 1000.0
+        segment_pitch = prosody['pitch_delta']
+        segment_volume = prosody['volume']
+        cache_key = hashlib.sha256(json.dumps({
+            'text': text,
+            'voice': voice,
+            'rate': effective_rate,
+            'pitch': segment_pitch,
+            'volume': segment_volume,
+        }, ensure_ascii=False, sort_keys=True).encode('utf-8')).hexdigest()
+        cache_path = os.path.join(cache_dir, f'{cache_key}.mp3')
+        if os.path.isfile(cache_path) and os.path.getsize(cache_path) > 0:
+            duration = get_audio_duration(cache_path, ffmpeg_path)
+        else:
+            cache_hit = False
+            temp_path = os.path.join(working_dir, f'segment_{index:03d}.mp3')
+            duration = generate_tts_audio_sync(
+                text,
+                temp_path,
+                voice=voice,
+                rate=effective_rate,
+                ffmpeg_path=ffmpeg_path,
+                pitch=segment_pitch,
+                volume=segment_volume,
+            )
+            shutil.copy2(temp_path, cache_path)
+        audio_paths.append(cache_path)
+        durations.append(duration)
+
+    padded_paths = []
+    for index, path in enumerate(audio_paths):
+        padded_path = os.path.join(working_dir, f'padded_segment_{index:03d}.mp3')
+        pad_audio_with_silence(
+            path,
+            padded_path,
+            trailing_seconds=(
+                float(segments[index].get('_pause_after_seconds', pause_seconds))
+                if index < len(audio_paths) - 1 else 0.0
+            ),
+            ffmpeg_path=ffmpeg_path,
+        )
+        padded_paths.append(padded_path)
+
+    concat_file = os.path.join(working_dir, 'segments.concat.txt')
+    output_path = os.path.join(working_dir, 'page_audio.mp3')
+    encoding = 'mbcs' if os.name == 'nt' else 'utf-8'
+    with open(concat_file, 'w', encoding=encoding, errors='replace') as handle:
+        for path in padded_paths:
+            safe_path = os.path.abspath(path).replace('\\', '/').replace("'", "'\\''")
+            handle.write(f"file '{safe_path}'\n")
+    _run_ffmpeg_command([
+        ffmpeg_path, '-y', '-f', 'concat', '-safe', '0', '-i', concat_file,
+        '-c:a', 'libmp3lame', '-b:a', '128k', output_path,
+    ], 'FFmpeg segment audio concat failed')
+    total_duration = get_audio_duration(output_path, ffmpeg_path)
+    result = (output_path, total_duration, durations)
+    return (*result, cache_hit) if return_cache_hit else result
 
 
-def _pack_pages_into_batches(
-    narration_indexes: List[int],
-    page_texts: List[str],
-    char_limit: int,
-    delimiter: str,
-) -> List[List[Tuple[int, str]]]:
-    """
-    把连续的 narration 页贪婪打包成 N 个批次，每批拼接后字符数 ≤ char_limit。
-
-    单页若本身已超 char_limit，独占一批（让 ElevenLabs 自己处理或在调用时报错）。
-    """
-    batches: List[List[Tuple[int, str]]] = []
-    cur: List[Tuple[int, str]] = []
-    cur_chars = 0
-    delim_len = len(delimiter)
-    for idx, text in zip(narration_indexes, page_texts):
-        added = len(text) + (delim_len if cur else 0)
-        if cur and cur_chars + added > char_limit:
-            batches.append(cur)
-            cur = []
-            cur_chars = 0
-            added = len(text)
-        cur.append((idx, text))
-        cur_chars += added
-    if cur:
-        batches.append(cur)
-    return batches
+_FISH_DELIVERY_EMOTIONS = {
+    'question': 'curious',
+    'emphasis': 'emphasis',
+    'conclusion': 'confident',
+    'reflective': 'calm',
+    'transition': 'warm',
+}
+_FISH_PAGE_EMOTIONS = {
+    'cover': 'confident',
+    'chapter': 'confident',
+    'data': 'confident',
+    'process': 'calm',
+    'summary': 'confident',
+}
+_FISH_PRESET_EMOTIONS = {
+    'business': 'confident',
+    'training': 'warm',
+    'launch': 'excited',
+    'brief': 'calm',
+}
 
 
-def _synthesize_batch_and_split(
-    batch_indexes: List[int],
-    batch_texts: List[str],
-    tmp_dir: str,
-    batch_slug: str,
-    batch_label: str,
-    api_key: str,
-    voice_id: str,
-    ffmpeg_path: str,
+def _fish_emotion_tag(
+    segment: dict,
+    page_direction: dict,
+    director_preset: str,
+    emotion_director: Optional[dict] = None,
+) -> str:
+    emotion_director = emotion_director if isinstance(emotion_director, dict) else {}
+    explicit = str(emotion_director.get('emotion') or '').strip().lower()
+    if explicit in {'curious', 'emphasis', 'confident', 'calm', 'warm', 'excited'}:
+        return f'[{explicit}]'
+    delivery = str(segment.get('delivery') or '').strip().lower()
+    emotion = _FISH_DELIVERY_EMOTIONS.get(delivery)
+    if not emotion:
+        page_kind = str((page_direction or {}).get('page_kind') or '').strip().lower()
+        emotion = _FISH_PAGE_EMOTIONS.get(page_kind)
+    if not emotion:
+        relationship = str(emotion_director.get('relationship') or 'neutral').strip().lower()
+        emotion = {
+            'host_guest': 'warm',
+            'mentor': 'confident',
+            'debate': 'emphasis',
+        }.get(relationship)
+    if not emotion:
+        emotion = _FISH_PRESET_EMOTIONS.get(str(director_preset or '').strip().lower(), 'warm')
+    intensity = str(emotion_director.get('intensity') or 'standard').strip().lower()
+    if intensity == 'gentle':
+        emotion = {'excited': 'warm', 'emphasis': 'calm', 'confident': 'warm'}.get(emotion, emotion)
+    elif intensity == 'strong':
+        emotion = {'calm': 'confident', 'warm': 'excited', 'confident': 'emphasis'}.get(emotion, emotion)
+    return f'[{emotion}]'
+
+
+def build_fish_narration_request(
+    segments: List[dict],
+    *,
+    speakers: Optional[List[dict]] = None,
+    narration_mode: str = 'single',
+    auto_emotion: bool = True,
+    page_direction: Optional[dict] = None,
+    director_preset: str = 'business',
+    emotion_director: Optional[dict] = None,
+) -> dict:
+    """Build Fish Audio's native one-request multi-speaker protocol for one page."""
+    from services.narration_service import MAX_FISH_TTS_CHARACTERS_PER_PAGE
+
+    ordered_speakers = [item for item in (speakers or []) if isinstance(item, dict)][:4]
+    speaker_indexes = {
+        str(item.get('id') or '').strip(): index
+        for index, item in enumerate(ordered_speakers)
+        if str(item.get('id') or '').strip()
+    }
+    reference_ids = [str(item.get('voice') or '').strip() for item in ordered_speakers]
+
+    if narration_mode == 'dialogue':
+        if not 2 <= len(ordered_speakers) <= 4:
+            raise RuntimeError('Fish Audio 多人旁白需要配置 2-4 位角色。')
+        if any(not reference_id for reference_id in reference_ids):
+            raise RuntimeError('Fish Audio 多人旁白的每位角色都必须选择克隆声音。')
+
+    chunks = []
+    used_speaker_indexes = set()
+    for segment in segments:
+        source_text = str(segment.get('text') or '').strip()
+        text = str(segment.get('_tts_text') or source_text).strip()
+        if not text:
+            continue
+        if re.search(r'<\|\s*speaker\s*:', source_text, flags=re.IGNORECASE) or re.search(r'<\|\s*speaker\s*:', text, flags=re.IGNORECASE):
+            raise RuntimeError('Fish Audio 旁白正文不能包含说话人控制标记。')
+        if re.search(r'\[[a-z][a-z _-]{1,30}\]', source_text) or re.search(r'\[[a-z][a-z _-]{1,30}\]', text):
+            raise RuntimeError('Fish Audio 旁白正文不能包含情绪控制标记。')
+        prefix = ''
+        if narration_mode == 'dialogue':
+            speaker_id = str(segment.get('speaker_id') or '').strip()
+            if speaker_id not in speaker_indexes:
+                raise RuntimeError(f'Fish Audio 旁白包含未配置的角色: {speaker_id or "unknown"}')
+            speaker_index = speaker_indexes[speaker_id]
+            used_speaker_indexes.add(speaker_index)
+            prefix = f'<|speaker:{speaker_index}|>'
+        emotion = _fish_emotion_tag(
+            segment,
+            page_direction or {},
+            director_preset,
+            emotion_director,
+        ) if auto_emotion else ''
+        chunks.append(f'{prefix}{emotion}{text}')
+
+    if not chunks:
+        raise RuntimeError('Fish Audio 没有可合成的旁白文本。')
+    if sum(len(re.sub(r'\s+', '', str(segment.get('_tts_text') or segment.get('text') or ''))) for segment in segments) > MAX_FISH_TTS_CHARACTERS_PER_PAGE:
+        raise RuntimeError(f'Fish Audio 单页旁白不能超过 {MAX_FISH_TTS_CHARACTERS_PER_PAGE} 个字符。')
+    if narration_mode == 'dialogue' and used_speaker_indexes != set(range(len(ordered_speakers))):
+        raise RuntimeError('Fish Audio 多人旁白的每位已配置角色都必须实际发言。')
+
+    return {
+        'text': ''.join(chunks),
+        'reference_ids': reference_ids,
+    }
+
+
+def fish_narration_cache_key(
+    *,
+    text: str,
+    reference_ids: List[str],
     speed: float,
-) -> List[Tuple[str, dict, float]]:
-    """
-    一批连续页：拼接 → 一次 ElevenLabs 调用 → 按字符 alignment 切回单页。
+    model: str,
+    auto_emotion: bool,
+) -> str:
+    payload = {
+        'provider': 'fish_audio',
+        'schema_version': 1,
+        'model': model,
+        'text': text,
+        'reference_ids': reference_ids,
+        'speed': round(max(0.5, min(float(speed), 2.0)), 3),
+        'auto_emotion': bool(auto_emotion),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode('utf-8')
+    ).hexdigest()
 
-    返回与 batch_indexes 同长的 (audio_path, sub_alignment, duration) 列表。
-    alignment 缺失或某页未对齐时直接 raise，由上层 fail-fast 中断导出。
 
-    切片边界：第 j 页 [t_j, t_{j+1})，最后一页到全曲末。delimiter 的自然停顿
-    分配给前一页尾部，相邻页拼接时不丢失停顿。
-    """
-    if not batch_texts:
+def _estimate_fish_segment_durations(segments: List[dict], total_duration: float) -> List[float]:
+    visible_segments = [segment for segment in segments if str(segment.get('text') or '').strip()]
+    if not visible_segments:
         return []
-
-    # 单页批次：直接合成、不切片
-    if len(batch_texts) == 1:
-        page_idx = batch_indexes[0]
-        audio_path = os.path.join(tmp_dir, f'audio_{page_idx:03d}.mp3')
-        duration, alignment = generate_elevenlabs_audio_sync(
-            batch_texts[0], audio_path,
-            api_key=api_key, voice_id=voice_id,
-            ffmpeg_path=ffmpeg_path, speed=speed,
-        )
-        if not alignment:
-            raise RuntimeError(
-                f"ElevenLabs 未返回字符级 alignment（batch {batch_label}），无法定位字幕时间，已停止导出"
-            )
-        return [(audio_path, alignment, duration)]
-
-    delimiter = '\n\n'
-    full_text = delimiter.join(batch_texts)
-    full_audio_path = os.path.join(tmp_dir, f'audio_full_{batch_slug}.mp3')
-
-    duration_full, full_alignment = generate_elevenlabs_audio_sync(
-        full_text, full_audio_path,
-        api_key=api_key, voice_id=voice_id,
-        ffmpeg_path=ffmpeg_path, speed=speed,
-    )
-
-    if not full_alignment:
-        raise RuntimeError(
-            f"ElevenLabs 未返回字符级 alignment（batch {batch_label}），无法做整段切片，已停止导出"
-        )
-
-    chars = full_alignment.get('characters') or []
-    starts_ms = full_alignment.get('character_start_times_ms') or []
-    durs_ms = full_alignment.get('character_durations_ms') or []
-    if not chars or len(chars) != len(starts_ms) or len(chars) != len(durs_ms):
-        raise RuntimeError(
-            f"ElevenLabs alignment 数据不完整（batch {batch_label}），已停止导出"
-        )
-
-    boundaries_sec = _find_page_boundaries_sec(
-        batch_texts, full_duration_sec=duration_full, full_alignment=full_alignment,
-    )
-
-    results: List[Tuple[str, dict, float]] = []
-    for j in range(len(batch_texts)):
-        t_start = boundaries_sec[j]
-        t_end = boundaries_sec[j + 1]
-        page_idx = batch_indexes[j]
-
-        page_audio_path = os.path.join(tmp_dir, f'audio_{page_idx:03d}.mp3')
-        _slice_audio_by_time(
-            full_audio_path, page_audio_path, t_start, t_end, ffmpeg_path=ffmpeg_path,
-        )
-        page_duration = get_audio_duration(page_audio_path, ffmpeg_path=ffmpeg_path)
-
-        sub_alignment = _slice_alignment_by_time(
-            full_alignment, int(t_start * 1000), int(t_end * 1000),
-        )
-        results.append((page_audio_path, sub_alignment, page_duration))
-
-    logger.info(
-        f"batch {batch_label} 整段合成完成：{len(batch_texts)} 页 → 1 次 ElevenLabs 调用，"
-        f"全曲 {duration_full:.1f}s，边界吸附 {len(boundaries_sec) - 2} 处"
-    )
-    return results
+    weights = [max(1, len(re.sub(r'\s+', '', str(segment.get('text') or '')))) for segment in visible_segments]
+    total_weight = sum(weights)
+    durations = [total_duration * weight / total_weight for weight in weights[:-1]]
+    durations.append(max(0.0, total_duration - sum(durations)))
+    for segment in visible_segments:
+        segment['_pause_after_seconds'] = 0.0
+    return durations
 
 
-def _generate_elevenlabs_whole_and_split(
-    pages_data: List[dict],
-    narration_indexes: List[int],
-    tmp_dir: str,
+def generate_fish_narration_audio_sync(
+    *,
+    segments: List[dict],
+    speakers: Optional[List[dict]],
+    narration_mode: str,
+    cache_dir: str,
+    working_dir: str,
     api_key: str,
-    voice_id: str,
-    ffmpeg_path: str,
-    speed: float,
-    progress_callback: Optional[Callable[[str, str, int], None]] = None,
-) -> List[Tuple[str, dict, float]]:
-    """
-    把所有非空 narration 页按字符上限切成若干批次，每批一次合成 + 切片回单页。
+    speed: float = 1.0,
+    model: str = 's2.1-pro-free',
+    api_base: str = 'https://api.fish.audio',
+    auto_emotion: bool = True,
+    page_direction: Optional[dict] = None,
+    director_preset: str = 'business',
+    emotion_director: Optional[dict] = None,
+    ffmpeg_path: str = 'ffmpeg',
+    return_cache_hit: bool = False,
+    request_timeout: tuple[float, float] = (15, 300),
+    total_timeout: float | None = None,
+) -> tuple:
+    """Generate one Fish Audio track per page, including native 2-4 speaker dialogue."""
+    from services.fish_audio_service import synthesize
 
-    返回与 narration_indexes 同长的列表，每项 (audio_path, sub_alignment, duration)。
-    任何 alignment 缺失 / 页未对齐 / API 错误都直接 raise（fail-fast，不回退到逐页）。
-    """
-    delimiter = '\n\n'
-    page_texts = [
-        _strip_invisible_unicode(
-            (pages_data[i].get('narration_text') or '').strip(), keep_newlines=True,
-        )
-        for i in narration_indexes
-    ]
-    if not all(page_texts):
-        raise RuntimeError("整段合成：存在空 narration，无法构造完整文本")
-
-    batches = _pack_pages_into_batches(
-        narration_indexes, page_texts,
-        char_limit=_ELEVENLABS_BATCH_CHAR_LIMIT, delimiter=delimiter,
+    if not api_key:
+        raise RuntimeError('Fish Audio API Key 未配置，请先在设置中保存并验证。')
+    request_data = build_fish_narration_request(
+        segments,
+        speakers=speakers,
+        narration_mode=narration_mode,
+        auto_emotion=auto_emotion,
+        page_direction=page_direction,
+        director_preset=director_preset,
+        emotion_director=emotion_director,
     )
-
-    results_by_index: dict = {}
-    for b_idx, batch in enumerate(batches):
-        batch_indexes = [pair[0] for pair in batch]
-        batch_texts = [pair[1] for pair in batch]
-        slug = f"{b_idx + 1:03d}of{len(batches):03d}"
-        label = f"{b_idx + 1}/{len(batches)}"
-        if progress_callback:
-            total_chars = sum(len(t) for t in batch_texts)
-            progress_callback(
-                "TTS",
-                f"整段合成第 {label} 批（{len(batch)} 页 / {total_chars} 字）",
-                22,
-            )
-        batch_results = _synthesize_batch_and_split(
-            batch_indexes, batch_texts, tmp_dir,
-            batch_slug=slug, batch_label=label,
-            api_key=api_key, voice_id=voice_id,
-            ffmpeg_path=ffmpeg_path, speed=speed,
+    os.makedirs(cache_dir, exist_ok=True)
+    os.makedirs(working_dir, exist_ok=True)
+    cache_key = fish_narration_cache_key(
+        text=request_data['text'],
+        reference_ids=request_data['reference_ids'],
+        speed=speed,
+        model=model,
+        auto_emotion=auto_emotion,
+    )
+    cache_path = os.path.join(cache_dir, f'fish_{cache_key}.mp3')
+    cache_hit = os.path.isfile(cache_path) and os.path.getsize(cache_path) > 0
+    if not cache_hit:
+        temp_path = os.path.join(working_dir, 'fish_page_audio.mp3')
+        reference_id: str | List[str] | None
+        if narration_mode == 'dialogue':
+            reference_id = request_data['reference_ids']
+        else:
+            reference_id = request_data['reference_ids'][0] if request_data['reference_ids'] else None
+        synthesize(
+            api_key=api_key,
+            text=request_data['text'],
+            output_path=temp_path,
+            reference_id=reference_id,
+            speed=speed,
+            model=model,
+            api_base=api_base,
+            timeout=request_timeout,
+            total_timeout=total_timeout,
         )
-        for idx, r in zip(batch_indexes, batch_results):
-            results_by_index[idx] = r
-
-    return [results_by_index[i] for i in narration_indexes]
+        shutil.copy2(temp_path, cache_path)
+    duration = get_audio_duration(cache_path, ffmpeg_path)
+    result = (cache_path, duration, _estimate_fish_segment_durations(segments, duration))
+    return (*result, cache_hit) if return_cache_hit else result
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -879,6 +922,12 @@ KEN_BURNS_EFFECT_STYLES = {
 # 轻量动效参数：既保留镜头感，也避免把边缘文字裁出屏幕
 KEN_BURNS_MAX_ZOOM = 1.08
 KEN_BURNS_PAN_CANVAS_SCALE = 1.08
+KEN_BURNS_INTENSITY_ZOOM = {
+    'minimal': 1.03,
+    'subtle': 1.12,
+    'standard': 1.16,
+    'legacy': KEN_BURNS_MAX_ZOOM,
+}
 
 
 def resolve_ken_burns_effect(page_index: int, motion_style: str = 'auto') -> str:
@@ -924,6 +973,7 @@ def create_ken_burns_clip(
     idle_timeout: float = _FFMPEG_IDLE_TIMEOUT_SECONDS,
     fade_in_seconds: float = 0.0,
     fade_out_seconds: float = 0.0,
+    motion_intensity: str = 'legacy',
 ) -> None:
     """OpenCV 逐帧渲染 Ken Burns 动效，pipe rawvideo 给 FFmpeg 编码。
     用 _prepare_canvas 适配任意画幅，getRectSubPix 实现浮点精度裁切。"""
@@ -934,8 +984,8 @@ def create_ken_burns_clip(
     if src is None:
         raise FileNotFoundError(f"Cannot read image: {image_path}")
 
-    max_zoom = KEN_BURNS_MAX_ZOOM
-    pan_canvas_scale = KEN_BURNS_PAN_CANVAS_SCALE
+    max_zoom = KEN_BURNS_INTENSITY_ZOOM.get(motion_intensity, KEN_BURNS_MAX_ZOOM)
+    pan_canvas_scale = max(KEN_BURNS_PAN_CANVAS_SCALE, max_zoom)
     canvas_scale = max(max_zoom, pan_canvas_scale)
     canvas_w = int(width * canvas_scale)
     canvas_h = int(height * canvas_scale)
@@ -988,22 +1038,30 @@ def create_ken_burns_clip(
 
             if effect_type == 'zoom_in':
                 z = 1.0 + (max_zoom - 1.0) * t
-                cx, cy = iw / 2.0, ih / 2.0
+                if motion_intensity == 'legacy':
+                    cx, cy = iw / 2.0, ih / 2.0
+                else:
+                    cx = iw / 2.0 + (t - 0.5) * iw * 0.08
+                    cy = ih / 2.0 + (0.5 - t) * ih * 0.04
             elif effect_type == 'zoom_out':
                 z = max_zoom - (max_zoom - 1.0) * t
-                cx, cy = iw / 2.0, ih / 2.0
+                if motion_intensity == 'legacy':
+                    cx, cy = iw / 2.0, ih / 2.0
+                else:
+                    cx = iw / 2.0 + (0.5 - t) * iw * 0.08
+                    cy = ih / 2.0 + (t - 0.5) * ih * 0.04
             elif effect_type == 'pan_right':
-                z = 1.0
+                z = 1.0 + (max_zoom - 1.0) * 0.35 if motion_intensity != 'legacy' else 1.0
                 min_cx = max(width / 2.0, slide_x + slide_w - width / 2.0)
                 max_cx = min(iw - width / 2.0, slide_x + width / 2.0)
                 cx = min_cx + max(max_cx - min_cx, 0.0) * t
-                cy = ih / 2.0
+                cy = ih / 2.0 + ((t - 0.5) * ih * 0.035 if motion_intensity != 'legacy' else 0.0)
             elif effect_type == 'pan_left':
-                z = 1.0
+                z = 1.0 + (max_zoom - 1.0) * 0.35 if motion_intensity != 'legacy' else 1.0
                 min_cx = max(width / 2.0, slide_x + slide_w - width / 2.0)
                 max_cx = min(iw - width / 2.0, slide_x + width / 2.0)
                 cx = max_cx - max(max_cx - min_cx, 0.0) * t
-                cy = ih / 2.0
+                cy = ih / 2.0 + ((0.5 - t) * ih * 0.035 if motion_intensity != 'legacy' else 0.0)
             else:
                 z = 1.0 + (max_zoom - 1.0) * t
                 cx, cy = iw / 2.0, ih / 2.0
@@ -1043,6 +1101,7 @@ def create_silent_clip(
     idle_timeout: float = _FFMPEG_IDLE_TIMEOUT_SECONDS,
     fade_in_seconds: float = 0.0,
     fade_out_seconds: float = 0.0,
+    motion_intensity: str = 'legacy',
 ) -> None:
     """创建无声视频片段（用于没有旁白的页面）"""
     if enable_ken_burns:
@@ -1052,6 +1111,7 @@ def create_silent_clip(
             width=width, height=height, fps=fps,
             effect_type=effect_type, ffmpeg_path=ffmpeg_path, idle_timeout=idle_timeout,
             fade_in_seconds=fade_in_seconds, fade_out_seconds=fade_out_seconds,
+            motion_intensity=motion_intensity,
         )
         cmd = [
             ffmpeg_path, '-y',
@@ -1229,74 +1289,6 @@ def _split_narration_to_sentences(text: str) -> List[str]:
     return result if result else [text.strip()]
 
 
-def _build_timed_subtitle_entries_from_alignment(
-    narration_text: str,
-    page_start: float,
-    alignment: dict,
-) -> List[dict]:
-    """
-    使用 ElevenLabs 字符级对齐时间戳生成字幕条目，比按字符比例估算更精准。
-
-    走两路指针：sentence 字符序列 vs alignment.characters 序列，
-    匹配相同字符（忽略空白），用首字符 start 与尾字符 start+duration 作为字幕区间。
-    """
-    sentences = _split_narration_to_sentences(narration_text)
-    if not sentences:
-        return []
-
-    chars = alignment.get('characters') or []
-    starts = alignment.get('character_start_times_ms') or []
-    durs = alignment.get('character_durations_ms') or []
-    if not chars or len(chars) != len(starts) or len(chars) != len(durs):
-        return []
-
-    entries: List[dict] = []
-    align_idx = 0
-    n = len(chars)
-
-    for sent in sentences:
-        target = sent
-        # 跳过对齐序列开头的空白字符
-        while align_idx < n and not chars[align_idx].strip():
-            align_idx += 1
-        if align_idx >= n:
-            break
-
-        sent_start_idx = align_idx
-        # 在对齐序列中匹配该句子的字符（按非空白字符逐个对齐）
-        ti = 0
-        i = align_idx
-        last_match_idx = align_idx
-        while i < n and ti < len(target):
-            tch = target[ti]
-            ach = chars[i]
-            if not tch.strip():
-                ti += 1
-                continue
-            if not ach.strip():
-                i += 1
-                continue
-            # 不区分大小写匹配，宽松一点处理标点变体
-            if tch == ach or tch.lower() == ach.lower():
-                last_match_idx = i
-                i += 1
-                ti += 1
-            else:
-                # 对齐序列里如果出现额外字符（如规范化插入），跳过它
-                i += 1
-
-        sent_end_idx = last_match_idx
-        start_ms = starts[sent_start_idx]
-        end_ms = starts[sent_end_idx] + durs[sent_end_idx]
-        entries.append({
-            'start': page_start + start_ms / 1000.0,
-            'end': page_start + end_ms / 1000.0,
-            'text': sent,
-        })
-        align_idx = i
-
-    return entries
-
 
 def _build_timed_subtitle_entries(
     narration_text: str,
@@ -1332,6 +1324,83 @@ def _build_timed_subtitle_entries(
     if entries:
         entries[-1]['end'] = page_start + page_duration
 
+    return entries
+
+
+def _build_asr_subtitle_entries(
+    segments: List[dict],
+    asr_segments: List[dict],
+    *,
+    page_start: float,
+    speakers: Optional[List[dict]] = None,
+) -> List[dict]:
+    """Use ASR time boundaries while keeping the authored script as subtitle text."""
+    timeline = []
+    for item in asr_segments or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            start = max(0.0, float(item.get('start') or 0))
+            end = max(start, float(item.get('end') or start))
+        except (TypeError, ValueError):
+            continue
+        timeline.append({
+            'start': start,
+            'end': end,
+            'weight': max(1, len(re.sub(r'\s+', '', str(item.get('text') or '')))),
+        })
+    if not timeline:
+        return []
+
+    authored = []
+    speaker_names = {
+        str(item.get('id')): str(item.get('name') or item.get('id'))
+        for item in (speakers or [])
+        if isinstance(item, dict) and item.get('id')
+    }
+    for segment in segments:
+        speaker = speaker_names.get(
+            str(segment.get('speaker_id') or ''),
+            str(segment.get('speaker_id') or ''),
+        )
+        for sentence in _split_narration_to_sentences(str(segment.get('text') or '').strip()):
+            if sentence:
+                authored.append({
+                    'text': sentence,
+                    'speaker': speaker,
+                    'weight': max(1, len(re.sub(r'\s+', '', sentence))),
+                })
+    if not authored:
+        return []
+
+    timeline_weight = sum(item['weight'] for item in timeline)
+    authored_weight = sum(item['weight'] for item in authored)
+
+    def time_at(ratio: float) -> float:
+        target = max(0.0, min(ratio, 1.0)) * timeline_weight
+        cursor = 0.0
+        for item in timeline:
+            next_cursor = cursor + item['weight']
+            if target <= next_cursor or item is timeline[-1]:
+                local = (target - cursor) / item['weight']
+                local = max(0.0, min(local, 1.0))
+                return page_start + item['start'] + (item['end'] - item['start']) * local
+            cursor = next_cursor
+        return page_start + timeline[-1]['end']
+
+    entries = []
+    cursor = 0
+    for item in authored:
+        start_ratio = cursor / authored_weight
+        cursor += item['weight']
+        entries.append({
+            'start': time_at(start_ratio),
+            'end': time_at(cursor / authored_weight),
+            'text': item['text'],
+            'speaker': item['speaker'],
+        })
+    entries[0]['start'] = page_start + timeline[0]['start']
+    entries[-1]['end'] = page_start + timeline[-1]['end']
     return entries
 
 
@@ -1459,9 +1528,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             start = _format_ass_time(entry['start'])
             end = _format_ass_time(entry['end'])
             text = _sanitize_ass_dialogue_text(entry['text'])
+            speaker = _sanitize_ass_dialogue_text(str(entry.get('speaker') or ''))
             if subtitle_mode == 'highlight':
                 text = _highlight_ass_keywords(text)
-            f.write(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text}\n")
+            f.write(f"Dialogue: 0,{start},{end},Default,{speaker},0,0,0,,{text}\n")
 
 
 def _highlight_ass_keywords(text: str) -> str:
@@ -1473,7 +1543,7 @@ def _highlight_ass_keywords(text: str) -> str:
 
 def _strip_invisible_unicode(text: str, keep_newlines: bool = False) -> str:
     """
-    去除不可见 Unicode 控制类字符，避免在 ASS 解析或 TTS alignment 中产生干扰。
+    去除不可见 Unicode 控制类字符，避免在 ASS 解析中产生干扰。
 
     过滤所有 Cc/Cf/Co/Cs/Cn 类，以及行/段分隔符 U+2028/U+2029。
     keep_newlines=True 时保留 \n / \r / \t（用于 TTS 输入，保留语义换行）。
@@ -1585,6 +1655,94 @@ def mux_video_audio(
     _run_ffmpeg_command(cmd, "FFmpeg mux failed", idle_timeout=idle_timeout)
 
 
+def _legacy_mix_audio_cues(
+    narration_path: Optional[str],
+    output_path: str,
+    cue_assets: List[dict],
+    *,
+    duration: float,
+    ffmpeg_path: str = 'ffmpeg',
+) -> float:
+    """Mix frozen page BGM/SFX assets into the narration track."""
+    if not cue_assets and narration_path:
+        shutil.copy2(narration_path, output_path)
+        return get_audio_duration(output_path, ffmpeg_path)
+    if duration <= 0:
+        raise ValueError('Audio cue mix duration must be positive')
+
+    inputs = [ffmpeg_path, '-y']
+    if narration_path:
+        inputs.extend(['-i', narration_path])
+        narration_input = '[0:a]'
+        cue_index = 1
+    else:
+        inputs.extend(['-f', 'lavfi', '-t', f'{duration:.3f}', '-i', 'anullsrc=r=48000:cl=stereo'])
+        narration_input = '[0:a]'
+        cue_index = 1
+    filters = [f'{narration_input}aresample=async=1:first_pts=0,apad=pad_dur={duration:.3f},atrim=duration={duration:.3f}[voice]']
+    mix_labels = ['[voice]']
+    for index, asset in enumerate(cue_assets, start=cue_index):
+        path = asset.get('path')
+        if not isinstance(path, str) or not os.path.isfile(path):
+            raise FileNotFoundError(f"Audio cue asset is unavailable: {asset.get('asset_ref')}")
+        expected_hash = asset.get('sha256')
+        if expected_hash:
+            hasher = hashlib.sha256()
+            with open(path, 'rb') as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b''):
+                    hasher.update(chunk)
+            if hasher.hexdigest() != expected_hash:
+                raise ValueError(f"Audio cue asset changed after snapshot: {asset.get('asset_ref')}")
+        cue = asset.get('cue') or asset
+        kind = str(cue.get('kind') or 'sfx')
+        if kind not in {'bgm', 'sfx'}:
+            raise ValueError(f'Unsupported audio cue kind: {kind}')
+        offset_ms = int(cue.get('offset_ms') or 0)
+        gain_db = float(cue.get('gain_db') or 0)
+        if offset_ms < 0 or offset_ms > int(round(duration * 1000)):
+            raise ValueError('Audio cue offset is outside the page duration')
+        if kind == 'bgm':
+            inputs.extend(['-stream_loop', '-1'])
+        inputs.extend(['-i', path])
+        delay = f'adelay={offset_ms}|{offset_ms}:all=1' if offset_ms else 'anull'
+        label = f'[cue{index}]'
+        filters.append(
+            f'[{index}:a]{delay},atrim=duration={duration:.3f},'
+            f'volume={gain_db:.2f}dB,asetpts=N/SR/TB{label}'
+        )
+        mix_labels.append(label)
+    filters.append(
+        f'{"".join(mix_labels)}amix=inputs={len(mix_labels)}:duration=first:'
+        'dropout_transition=0:normalize=0[mixed]'
+    )
+    command = inputs + [
+        '-filter_complex', ';'.join(filters),
+        '-map', '[mixed]', '-c:a', 'libmp3lame', '-b:a', '128k', output_path,
+    ]
+    _run_ffmpeg_command(command, 'FFmpeg audio cue mix failed')
+    return get_audio_duration(output_path, ffmpeg_path)
+
+
+def mix_audio_cues(
+    narration_path: Optional[str],
+    output_path: str,
+    cue_assets: List[dict],
+    *,
+    duration: float,
+    ffmpeg_path: str = 'ffmpeg',
+) -> float:
+    """Use the shared manifest mixer for video workspace and legacy callers."""
+    from services.audio_mix_service import mix_audio_cues as mix_manifest_audio_cues
+
+    return mix_manifest_audio_cues(
+        narration_path,
+        output_path,
+        cue_assets,
+        duration=duration,
+        ffmpeg_path=ffmpeg_path,
+    )
+
+
 def composite_video(
     clip_paths: List[str],
     output_path: str,
@@ -1609,8 +1767,12 @@ def composite_video(
 
     # 创建 concat 列表文件 — 使用绝对路径并验证文件确实存在于临时目录
     concat_file = output_path + '.concat.txt'
+    # FFmpeg concat demuxer 在 Windows 上用系统 ANSI 代码页（cp936/GBK）解析文件内容，
+    # 若用 UTF-8 写入中文路径会出现乱码导致 "Error opening input: Invalid argument"。
+    # 其他平台用 UTF-8。
+    concat_encoding = 'mbcs' if os.name == 'nt' else 'utf-8'
     try:
-        with open(concat_file, 'w') as f:
+        with open(concat_file, 'w', encoding=concat_encoding, errors='replace') as f:
             for path in clip_paths:
                 # 安全检查：路径不能包含换行符（防止 concat 文件注入）
                 safe_path = os.path.abspath(path)
@@ -1647,6 +1809,261 @@ def composite_video(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+def _timeline_page_id(page: dict, page_index: int) -> str:
+    return str(page.get('page_id') or page_index)
+
+
+def _save_page_audio_artifact(audio_path: Optional[str], directory: str, page_id: str):
+    if not audio_path:
+        return None
+    source = os.path.abspath(audio_path)
+    if not os.path.isfile(source) or os.path.getsize(source) <= 0:
+        raise ValueError('页面旁白音频文件无效')
+    digest = hashlib.sha256()
+    with open(source, 'rb') as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b''):
+            digest.update(chunk)
+    target_dir = os.path.abspath(directory)
+    os.makedirs(target_dir, exist_ok=True)
+    page_key = hashlib.sha256(page_id.encode('utf-8')).hexdigest()[:16]
+    target = os.path.join(target_dir, f'audio_{page_key}.mp3')
+    if os.path.abspath(source) != os.path.abspath(target):
+        temporary = f'{target}.tmp'
+        shutil.copy2(source, temporary)
+        os.replace(temporary, target)
+    return {'page_id': page_id, 'path': target, 'sha256': digest.hexdigest()}
+
+
+def _prepare_timeline_segments(page: dict, segments: List[dict], page_index: int) -> List[dict]:
+    raw_segments = page.get('narration_segments')
+    if isinstance(raw_segments, str):
+        try:
+            raw_segments = json.loads(raw_segments)
+        except (TypeError, json.JSONDecodeError):
+            raw_segments = []
+    raw_segments = raw_segments if isinstance(raw_segments, list) else []
+    page_id = _timeline_page_id(page, page_index)
+    prepared = []
+    for index, segment in enumerate(segments):
+        raw_index = int(segment.get('segment_index', index))
+        raw = raw_segments[raw_index] if 0 <= raw_index < len(raw_segments) else {}
+        raw = raw if isinstance(raw, dict) else {}
+        item = dict(segment)
+        item['id'] = str(
+            segment.get('id')
+            or segment.get('segment_id')
+            or raw.get('segment_id')
+            or raw.get('id')
+            or f'{page_id}:segment:{raw_index + 1}'
+        ).strip()
+        prepared.append(item)
+    return prepared
+
+
+def _page_audio_padding_ms(
+    *,
+    page: dict,
+    page_index: int,
+    page_position: int,
+    total_pages: int,
+    page_direction: dict,
+    preferences: dict,
+) -> tuple[int, int]:
+    audio_direction = page_direction.get('audio') if isinstance(page_direction.get('audio'), dict) else {}
+    planned_pause_ms = max(int(round(float(audio_direction.get('pause_before_ms') or 0))), 0)
+    page_override = preferences['page_overrides'].get(
+        str(page.get('page_id') or page_index),
+        preferences['page_overrides'].get(str(page_index), {}),
+    )
+    pause_seconds = {'short': 0.1, 'normal': 0.25, 'long': 0.5}.get(
+        str(page_override.get('pause') or preferences['emotion_director'].get('pause') or 'normal'),
+        0.25,
+    )
+    default_leading_ms = int(round(
+        (_LEADING_PAD_SECONDS if page_position == 0 else pause_seconds) * 1000
+    ))
+    trailing_ms = int(round(_TRAILING_PAD_SECONDS * 1000)) if page_position == total_pages - 1 else 0
+    return max(default_leading_ms, planned_pause_ms), trailing_ms
+
+
+def _asr_aligned_boundaries(
+    segments: List[dict],
+    asr_result: Optional[dict],
+    audio_duration_ms: int,
+    transcript_matched: bool,
+) -> Optional[List[dict]]:
+    raw_boundaries = asr_result.get('segments') if isinstance(asr_result, dict) else None
+    if not transcript_matched or not isinstance(raw_boundaries, list) or len(raw_boundaries) != len(segments):
+        return None
+    boundaries = []
+    previous_end = 0
+    for segment, item in zip(segments, raw_boundaries):
+        if not isinstance(item, dict) or not str(item.get('text') or '').strip():
+            return None
+        try:
+            start_ms = int(round(float(item.get('start')) * 1000))
+            end_ms = int(round(float(item.get('end')) * 1000))
+        except (TypeError, ValueError):
+            return None
+        if start_ms < previous_end or end_ms <= start_ms or end_ms > audio_duration_ms:
+            return None
+        boundaries.append({
+            'segment_id': segment['id'],
+            'start_ms': start_ms,
+            'end_ms': end_ms,
+        })
+        previous_end = end_ms
+    return boundaries
+
+
+def _build_page_tts_timeline(
+    *,
+    page_id: str,
+    segments: List[dict],
+    audio_duration: float,
+    segment_durations: List[float],
+    padding_before_ms: int,
+    padding_after_ms: int,
+    provider: str,
+    asr_result: Optional[dict] = None,
+    transcript_matched: bool = False,
+) -> tuple[dict, Optional[str]]:
+    audio_duration_ms = int(round(max(0.0, float(audio_duration)) * 1000))
+    aligned_boundaries = _asr_aligned_boundaries(
+        segments,
+        asr_result,
+        audio_duration_ms,
+        transcript_matched,
+    )
+    if aligned_boundaries is not None:
+        return build_page_audio_timeline(
+            page_id,
+            segments,
+            audio_duration_ms=audio_duration_ms,
+            padding_before_ms=padding_before_ms,
+            padding_after_ms=padding_after_ms,
+            timing_quality='aligned',
+            segment_boundaries=aligned_boundaries,
+        ), None
+
+    if provider != 'fish_audio' and len(segment_durations) == len(segments):
+        duration_ms = [int(round(max(0.0, float(value)) * 1000)) for value in segment_durations]
+        pause_ms = []
+        for segment in segments[:-1]:
+            if segment.get('pause_after_ms') is not None:
+                pause_ms.append(int(round(float(segment['pause_after_ms']))))
+            elif segment.get('_pause_after_seconds') is not None:
+                pause_ms.append(int(round(float(segment['_pause_after_seconds']) * 1000)))
+            else:
+                pause_ms.append(0)
+        drift_ms = audio_duration_ms - sum(duration_ms) - sum(pause_ms)
+        # Rounding N durations, N-1 pauses, and the page total can differ by at most N ms.
+        rounding_limit_ms = max(1, len(segments))
+        if abs(drift_ms) <= rounding_limit_ms and duration_ms and duration_ms[-1] + drift_ms >= 0:
+            duration_ms[-1] += drift_ms
+            return build_page_audio_timeline(
+                page_id,
+                segments,
+                audio_duration_ms=audio_duration_ms,
+                padding_before_ms=padding_before_ms,
+                padding_after_ms=padding_after_ms,
+                timing_quality='segment_exact',
+                segment_durations_ms=duration_ms,
+            ), None
+        warning = (
+            f'Edge 音频实测时长与分段边界相差 {drift_ms}ms，超过毫秒舍入上限 '
+            f'{rounding_limit_ms}ms，已降级为粗粒度时间线。'
+        )
+    else:
+        warning = None
+
+    return build_page_audio_timeline(
+        page_id,
+        segments,
+        audio_duration_ms=audio_duration_ms,
+        padding_before_ms=padding_before_ms,
+        padding_after_ms=padding_after_ms,
+        timing_quality='estimated',
+    ), warning
+
+
+def _speaker_display_name(segment: dict, speakers: Optional[List[dict]]) -> str:
+    return next(
+        (
+            str(item.get('name') or item.get('id'))
+            for item in (speakers or [])
+            if isinstance(item, dict) and item.get('id') == segment.get('speaker_id')
+        ),
+        str(segment.get('speaker_id') or ''),
+    )
+
+
+def _prepare_native_motion_manifest(
+    page: dict,
+    audio_timeline: dict,
+    narration_segments: list[dict],
+    page_direction: dict,
+    directory: str,
+):
+    scene_ref = page.get('scene_manifest_ref')
+    bundle_ref = page.get('native_scene_bundle_ref')
+    if not scene_ref or not bundle_ref:
+        return None, None
+
+    from services.motion_manifest import save_motion_manifest
+    from services.native_scene_bundle import load_native_scene_bundle
+    from services.scene_manifest import load_scene_manifest
+    from services.video_director import build_motion_manifest
+
+    scene_manifest = load_scene_manifest(scene_ref, page.get('page_id'))
+    load_native_scene_bundle(
+        bundle_ref,
+        page.get('page_id'),
+        scene_ref.get('sha256'),
+    )
+    motion_manifest = build_motion_manifest(
+        scene_manifest,
+        scene_ref['sha256'],
+        audio_timeline,
+        narration_segments,
+        page_direction,
+        page.get('native_animation'),
+    )
+    reference = save_motion_manifest(
+        motion_manifest,
+        directory,
+        scene_manifest,
+        expected_page_id=page.get('page_id'),
+        expected_scene_sha256=scene_ref['sha256'],
+        audio_timeline=audio_timeline,
+    )
+    return motion_manifest, reference
+
+
+def _build_timeline_subtitle_entries(
+    segments: List[dict],
+    timeline: dict,
+    *,
+    page_start: float,
+    speakers: Optional[List[dict]] = None,
+) -> List[dict]:
+    entries = []
+    for segment, boundary in zip(segments, timeline.get('segments') or []):
+        start = page_start + boundary['start_ms'] / 1000.0
+        end = page_start + boundary['end_ms'] / 1000.0
+        text = str(segment.get('text') or '').strip()
+        speaker = _speaker_display_name(segment, speakers)
+        if timeline.get('timing_quality') == 'segment_exact':
+            page_entries = _build_timed_subtitle_entries(text, start, max(0.0, end - start))
+            for item in page_entries:
+                item['speaker'] = speaker
+            entries.extend(page_entries)
+        elif text:
+            # Estimated/aligned timelines never claim sentence-level precision.
+            entries.append({'start': start, 'end': end, 'text': text, 'speaker': speaker})
+    return entries
+
+
 def generate_narration_video(
     pages_data: List[dict],
     output_path: str,
@@ -1661,10 +2078,24 @@ def generate_narration_video(
     progress_callback: Optional[Callable[[str, str, int], None]] = None,
     silent_duration: float = 0,
     fail_fast: bool = False,
-    elevenlabs_config: Optional[dict] = None,
     speed: float = 1.0,
+    narration_mode: str = 'single',
+    speakers: Optional[List[dict]] = None,
     director_plan: Optional[dict] = None,
-) -> None:
+    tts_provider: str = 'edge',
+    fish_api_key: str = '',
+    fish_model: str = 's2.1-pro-free',
+    auto_emotion: bool = True,
+    pronunciation_lexicon: Optional[List[dict]] = None,
+    narration_preferences: Optional[dict] = None,
+    language: str = 'zh',
+    hyperframes_enabled: bool = False,
+    hyperframes_executable: Optional[str] = None,
+    artifact_directory: Optional[str] = None,
+    project_id: Optional[str] = None,
+    narration_snapshot_path: Optional[str] = None,
+    narration_snapshot_hash: Optional[str] = None,
+) -> dict:
     """
     完整的播报视频生成流水线。
 
@@ -1689,6 +2120,12 @@ def generate_narration_video(
     if not pages_data:
         raise ValueError("No pages to process")
 
+    tts_provider = str(tts_provider or 'edge').strip().lower()
+    if tts_provider not in {'edge', 'fish_audio'}:
+        raise ValueError(f'Unsupported TTS provider: {tts_provider}')
+    if tts_provider == 'fish_audio' and not fish_api_key:
+        raise RuntimeError('Fish Audio API Key 未配置，请先在设置中保存并验证。')
+
     # 检查 ffmpeg
     if not check_ffmpeg_available(ffmpeg_path):
         raise RuntimeError(
@@ -1696,7 +2133,10 @@ def generate_narration_video(
             "Please install FFmpeg to use video export."
         )
 
-    requires_subtitles = any((page.get('narration_text') or '').strip() for page in pages_data)
+    requires_subtitles = any(
+        (page.get('narration_text') or '').strip() or page.get('narration_segments')
+        for page in pages_data
+    )
     if requires_subtitles and not check_ffmpeg_ass_filter_available(ffmpeg_path):
         raise RuntimeError(
             "当前 FFmpeg 不支持 ASS 字幕烧录（缺少 libass / ass filter）。"
@@ -1704,13 +2144,35 @@ def generate_narration_video(
             "请安装或重装支持 ASS 字幕的 FFmpeg 后重试。"
         )
 
+    from services.narration_service import (
+        apply_pronunciation_lexicon,
+        compare_asr_transcript,
+        has_dialogue_speakers,
+        normalize_narration_preferences,
+        normalize_narration_segments,
+        segments_to_text,
+    )
+
     if silent_duration <= 0:
         silent_duration = _DEFAULT_SILENT_DURATION
 
-    tmp_dir = output_path + '_tmp'
+    # 临时目录用 ASCII 名（基于输出路径的 hash），避免 Windows 下 FFmpeg concat demuxer
+    # 用 ANSI 代码页解析文件内容时，中文路径变成乱码导致 "Error opening input"。
+    import hashlib
+    tmp_dir_name = '_tmp_' + hashlib.md5(output_path.encode('utf-8')).hexdigest()[:16]
+    tmp_dir = os.path.join(os.path.dirname(os.path.abspath(output_path)), tmp_dir_name)
     os.makedirs(tmp_dir, exist_ok=True)
+    manifest_dir = artifact_directory or tmp_dir
 
     try:
+        started_at = time.monotonic()
+        preferences = normalize_narration_preferences(narration_preferences)
+        asr_requested = (
+            tts_provider == 'fish_audio'
+            and (preferences['quality_check'] or preferences['subtitle_timing'] == 'asr')
+        )
+        quality_pages = []
+        quality_warnings = []
         total = len(pages_data)
         directed_pages = {
             int(item.get('page_index', index)): item
@@ -1725,86 +2187,264 @@ def generate_narration_video(
         # 先统一生成所有 TTS 音频，获取每页实际时长
         page_durations: List[float] = []
         audio_paths: List[Optional[str]] = []
-        alignments: List[Optional[dict]] = []
+        page_audio_timelines: List[dict] = []
+        page_segments: List[List[dict]] = []
+        page_motion_manifests: List[Optional[dict]] = []
+        page_audio_timeline_refs: List[dict] = []
+        page_audio_refs: List[Optional[dict]] = []
+        page_motion_manifest_refs: List[Optional[dict]] = []
         silent_page_indexes: List[int] = []
-
-        # 整段合成快路径：ElevenLabs 且至少 2 页有 narration 时，按字符上限拆批
-        # 一批一合成 + 切片回单页，解决"逐页冷启动"导致的页间割裂感。
-        # 失败（alignment 缺失 / 某页未对齐 / API 错）直接 raise，fail-fast，不回退。
-        narration_indexes = [
-            idx for idx, p in enumerate(pages_data)
-            if (p.get('narration_text') or '').strip()
-        ]
-        whole_text_results: Optional[dict] = None
-        if (
-            elevenlabs_config and elevenlabs_config.get('api_key')
-            and len(narration_indexes) >= 2
-        ):
-            try:
-                whole_text_pairs = _generate_elevenlabs_whole_and_split(
-                    pages_data, narration_indexes, tmp_dir,
-                    api_key=elevenlabs_config['api_key'],
-                    voice_id=elevenlabs_config.get('voice_id') or 'JBFqnCBsd6RMkjVDRZzb',
-                    ffmpeg_path=ffmpeg_path,
-                    speed=speed,
-                    progress_callback=progress_callback,
-                )
-                whole_text_results = dict(zip(narration_indexes, whole_text_pairs))
-            except RuntimeError as e:
-                logger.warning(f"ElevenLabs 整段合成失败，回退到逐页合成: {e}")
-                whole_text_results = None
+        cache_dir = os.path.join(os.path.dirname(os.path.abspath(output_path)), 'audio_cache')
+        speaker_voices = {
+            str(item.get('id')): str(item.get('voice') or voice)
+            for item in (speakers or [])
+            if isinstance(item, dict) and item.get('id')
+        }
+        fish_speakers = list(speakers or [])
+        if tts_provider == 'fish_audio' and not fish_speakers and voice:
+            fish_speakers = [{'id': 'host', 'name': '旁白', 'voice': voice}]
+        speaker_aliases = {
+            str(item.get('name')).strip(): str(item.get('id')).strip()
+            for item in (speakers or [])
+            if isinstance(item, dict) and item.get('id') and item.get('name')
+        }
+        configured_speaker_ids = set(speaker_voices)
+        if narration_mode == 'dialogue' and len(configured_speaker_ids) < 2:
+            raise RuntimeError('双人旁白缺少至少两位有效角色音色配置。')
 
         for i, page in enumerate(pages_data):
             narration = page.get('narration_text')
+            allow_silent = bool(page.get('allow_silent'))
+            segments = normalize_narration_segments(
+                page.get('narration_segments'),
+                fallback_text=narration,
+                default_voice=voice,
+                default_rate=rate,
+            )
             page_idx = page.get('page_index', i)
+            page_override = preferences['page_overrides'].get(
+                str(page.get('page_id') or page_idx),
+                preferences['page_overrides'].get(str(page_idx), {}),
+            )
+            emotion_director = {**preferences['emotion_director'], **page_override}
+            for segment in segments:
+                segment['_tts_text'] = apply_pronunciation_lexicon(
+                    segment.get('text'),
+                    pronunciation_lexicon,
+                )
 
             audio_path = None
-            alignment: Optional[dict] = None
-            duration = silent_duration
-            if narration and narration.strip():
-                if whole_text_results is not None and i in whole_text_results:
-                    audio_path, alignment, duration = whole_text_results[i]
-                else:
-                    audio_path = os.path.join(tmp_dir, f'audio_{i:03d}.mp3')
-                    try:
-                        if elevenlabs_config and elevenlabs_config.get('api_key'):
-                            duration, alignment = generate_elevenlabs_audio_sync(
-                                narration, audio_path,
-                                api_key=elevenlabs_config['api_key'],
-                                voice_id=elevenlabs_config.get('voice_id') or 'JBFqnCBsd6RMkjVDRZzb',
-                                ffmpeg_path=ffmpeg_path,
-                                speed=speed,
-                            )
-                        else:
-                            # edge-tts 用 rate 字符串：speed=1.1 → "+10%"
-                            effective_rate = rate
-                            if abs(speed - 1.0) > 1e-3:
-                                pct = int(round((speed - 1.0) * 100))
-                                effective_rate = f"{'+' if pct >= 0 else ''}{pct}%"
-                            duration = generate_tts_audio_sync(
-                                narration, audio_path, voice=voice, rate=effective_rate, ffmpeg_path=ffmpeg_path,
-                            )
-                    except Exception as e:
-                        if fail_fast:
+            scene_duration_ms = page.get('duration_ms')
+            duration = (
+                float(scene_duration_ms) / 1000.0
+                if isinstance(scene_duration_ms, (int, float))
+                and not isinstance(scene_duration_ms, bool)
+                and scene_duration_ms > 0
+                else silent_duration
+            )
+            segment_durations: List[float] = []
+            if segments:
+                try:
+                    if narration_mode == 'dialogue' and not has_dialogue_speakers(segments):
+                        raise RuntimeError(f'第 {page_idx + 1} 页缺少有效的双人旁白分段。')
+                    for segment in segments:
+                        speaker_id = str(segment.get('speaker_id') or '').strip()
+                        segment['speaker_id'] = speaker_aliases.get(speaker_id, speaker_id or 'host')
+                        if narration_mode == 'dialogue' and segment['speaker_id'] not in configured_speaker_ids:
                             raise RuntimeError(
-                                f"第 {page_idx + 1} 页旁白语音生成失败，当前项目未开启“允许返回半成品”，已停止导出: {e}"
-                            ) from e
+                                f"第 {page_idx + 1} 页包含未配置的旁白角色: {segment['speaker_id']}"
+                            )
+                        if narration_mode == 'dialogue':
+                            # Dialogue role voices are authoritative over stale segment metadata.
+                            segment['voice'] = speaker_voices.get(segment['speaker_id'], segment.get('voice') or voice)
+                        elif not segment.get('voice'):
+                            segment['voice'] = speaker_voices.get(segment['speaker_id'], voice)
+                    working_dir = os.path.join(tmp_dir, f'page_{i:03d}')
+                    if tts_provider == 'fish_audio':
+                        base_speed = 1.0 + (_rate_percent(rate) / 100.0)
+                        pace_factor = {
+                            'slow': 0.92,
+                            'normal': 1.0,
+                            'fast': 1.08,
+                        }.get(str(emotion_director.get('pace') or 'normal'), 1.0)
+                        fish_speed = max(0.5, min(base_speed * speed * pace_factor, 2.0))
+                        audio_path, duration, segment_durations = generate_fish_narration_audio_sync(
+                            segments=segments,
+                            speakers=fish_speakers,
+                            narration_mode=narration_mode,
+                            cache_dir=cache_dir,
+                            working_dir=working_dir,
+                            api_key=fish_api_key,
+                            speed=fish_speed,
+                            model=fish_model,
+                            auto_emotion=auto_emotion,
+                            page_direction=directed_pages.get(page_idx, {}),
+                            director_preset=str((director_plan or {}).get('preset') or 'business'),
+                            emotion_director=emotion_director,
+                            ffmpeg_path=ffmpeg_path,
+                        )
+                    else:
+                        audio_path, duration, segment_durations = generate_narration_segments_audio_sync(
+                            segments,
+                            cache_dir=cache_dir,
+                            working_dir=working_dir,
+                            default_voice=voice,
+                            rate=rate,
+                            speed=speed,
+                            ffmpeg_path=ffmpeg_path,
+                        )
+                except Exception as e:
+                    if fail_fast or narration_mode == 'dialogue':
+                        raise RuntimeError(
+                            f"第 {page_idx + 1} 页旁白语音生成失败，当前项目未开启“允许返回半成品”，已停止导出: {e}"
+                        ) from e
 
-                        logger.warning(f"TTS failed for page {page_idx}: {e}, using silent clip")
-                        audio_path = None
-                        alignment = None
-                        duration = silent_duration
-                        silent_page_indexes.append(page_idx + 1)
+                    logger.warning(f"TTS failed for page {page_idx}: {e}, using silent clip")
+                    audio_path = None
+                    duration = silent_duration
+                    segment_durations = []
+                    silent_page_indexes.append(page_idx + 1)
             else:
-                if fail_fast:
+                if not allow_silent and (fail_fast or narration_mode == 'dialogue'):
                     raise RuntimeError(
                         f"第 {page_idx + 1} 页缺少旁白文本，当前项目未开启“允许返回半成品”，无法导出视频。"
                     )
-                silent_page_indexes.append(page_idx + 1)
+                if not allow_silent:
+                    silent_page_indexes.append(page_idx + 1)
 
+            asr_result = None
+            transcript_matched = False
+            quality_page = {'page_index': page_idx}
+            if page.get('scene_level'):
+                quality_page['scene_level'] = page['scene_level']
+                quality_page['scene_level_reason'] = page.get('scene_level_reason') or ''
+            if audio_path and asr_requested:
+                try:
+                    from services.fish_audio_service import transcribe
+
+                    asr_result = transcribe(
+                        api_key=fish_api_key,
+                        audio_path=audio_path,
+                        language=language,
+                        include_timestamps=True,
+                    )
+                    comparison = compare_asr_transcript(segments_to_text(segments), asr_result.get('text'))
+                    issues = []
+                    if not str(asr_result.get('text') or '').strip():
+                        issues.append('empty_transcript')
+                    if not comparison['matched']:
+                        issues.append('transcript_mismatch')
+                    if duration > 0 and float(asr_result.get('duration') or 0) <= 0:
+                        issues.append('invalid_asr_duration')
+                    transcript_matched = comparison['matched'] and not issues
+                    quality_page.update({
+                        'similarity': comparison['similarity'],
+                        'matched': comparison['matched'],
+                        'issues': issues,
+                        'asr_duration': asr_result.get('duration', 0),
+                    })
+                    if preferences['strict_quality_check'] and issues:
+                        raise RuntimeError(f'第 {page_idx + 1} 页 ASR 质检未通过：{", ".join(issues)}')
+                except Exception as exc:
+                    if preferences['strict_quality_check']:
+                        raise
+                    quality_warnings.append(f'第 {page_idx + 1} 页 ASR 质检不可用：{exc}')
+                    logger.warning('ASR quality check failed for page %s: %s', page_idx + 1, exc)
+                    asr_result = None
+
+            cue_assets = [
+                {**asset, 'cue': cue}
+                for cue, asset in zip(
+                    page.get('audio_cues') or [],
+                    page.get('audio_cue_assets') or [],
+                )
+            ]
+            if (page.get('audio_cues') or []) and len(cue_assets) != len(page.get('audio_cues') or []):
+                raise ValueError('Video audio cue assets are missing from the frozen export snapshot')
+            if cue_assets or (page.get('audio_cues') or []):
+                mixed_audio_path = os.path.join(tmp_dir, f'audio_mixed_{i:03d}.mp3')
+                mix_audio_cues(
+                    audio_path,
+                    mixed_audio_path,
+                    cue_assets,
+                    duration=duration,
+                    ffmpeg_path=ffmpeg_path,
+                )
+                audio_path = mixed_audio_path
+
+            timeline_segments = _prepare_timeline_segments(page, segments, page_idx)
+            if audio_path:
+                padding_before_ms, padding_after_ms = _page_audio_padding_ms(
+                    page=page,
+                    page_index=page_idx,
+                    page_position=i,
+                    total_pages=total,
+                    page_direction=directed_pages.get(page_idx, {}),
+                    preferences=preferences,
+                )
+                audio_timeline, timing_warning = _build_page_tts_timeline(
+                    page_id=_timeline_page_id(page, page_idx),
+                    segments=timeline_segments,
+                    audio_duration=duration,
+                    segment_durations=segment_durations,
+                    padding_before_ms=padding_before_ms,
+                    padding_after_ms=padding_after_ms,
+                    provider=tts_provider,
+                    asr_result=asr_result,
+                    transcript_matched=transcript_matched,
+                )
+                if timing_warning:
+                    quality_warnings.append(f'第 {page_idx + 1} 页：{timing_warning}')
+            else:
+                audio_timeline = build_page_audio_timeline(
+                    _timeline_page_id(page, page_idx),
+                    [],
+                    audio_duration_ms=0,
+                    padding_before_ms=0,
+                    padding_after_ms=int(round(duration * 1000)),
+                    timing_quality='estimated',
+                )
+            quality_page['timing_quality'] = audio_timeline['timing_quality']
+            audio_ref = _save_page_audio_artifact(
+                audio_path,
+                manifest_dir,
+                _timeline_page_id(page, page_idx),
+            )
+            if audio_ref:
+                quality_page['audio_sha256'] = audio_ref['sha256']
+            from services.video_audio_timeline import save_audio_timeline
+
+            audio_timeline_ref = save_audio_timeline(
+                audio_timeline,
+                manifest_dir,
+                expected_page_id=_timeline_page_id(page, page_idx),
+            )
+            quality_page['audio_timeline_sha256'] = audio_timeline_ref['sha256']
+            try:
+                motion_manifest, motion_manifest_ref = _prepare_native_motion_manifest(
+                    page,
+                    audio_timeline,
+                    timeline_segments,
+                    directed_pages.get(page_idx, {}),
+                    manifest_dir,
+                )
+            except Exception as exc:
+                motion_manifest = None
+                motion_manifest_ref = None
+                warning = f'第 {page_idx + 1} 页元素动画准备失败，已保留浏览器帧回退：{exc}'
+                quality_warnings.append(warning)
+                logger.warning(warning)
+            if motion_manifest_ref:
+                quality_page['motion_manifest_sha256'] = motion_manifest_ref['sha256']
+            quality_pages.append(quality_page)
             page_durations.append(duration)
             audio_paths.append(audio_path)
-            alignments.append(alignment)
+            page_audio_timelines.append(audio_timeline)
+            page_audio_timeline_refs.append(audio_timeline_ref)
+            page_audio_refs.append(audio_ref)
+            page_segments.append(timeline_segments)
+            page_motion_manifests.append(motion_manifest)
+            page_motion_manifest_refs.append(motion_manifest_ref)
 
             if progress_callback:
                 pct = int(20 + (i + 1) / total * 30)  # 20-50%
@@ -1822,27 +2462,33 @@ def generate_narration_video(
 
         # ── Phase B: 视频片段 + 字幕条目 ──
         for i, page in enumerate(pages_data):
-            image_path = page['image_path']
-            narration = page.get('narration_text')
+            segments = page_segments[i]
             page_idx = page.get('page_index', i)
             page_direction = directed_pages.get(page_idx, {})
+            audio_direction = page_direction.get('audio') if isinstance(page_direction.get('audio'), dict) else {}
             motion = page_direction.get('motion') if isinstance(page_direction.get('motion'), dict) else {}
-            effect = motion.get('effect') or resolve_ken_burns_effect(page_idx, ken_burns_style)
-            audio_duration = page_durations[i]
+            if enable_ken_burns:
+                # Explicit user style wins over the director's automatic choice.
+                effect = (
+                    resolve_ken_burns_effect(page_idx, ken_burns_style)
+                    if ken_burns_style != 'auto'
+                    else motion.get('effect') or resolve_ken_burns_effect(page_idx, ken_burns_style)
+                )
+            else:
+                effect = 'static'
+            motion_intensity = str(motion.get('intensity') or 'legacy')
             audio_path = audio_paths[i]
-            alignment = alignments[i]
-            stage_image_paths = [
-                path for path in (page.get('stage_image_paths') or [])
-                if isinstance(path, str) and os.path.isfile(path)
-            ]
-
+            audio_timeline = page_audio_timelines[i]
             # 整片头/尾的静音 padding 与画面淡入/淡出
             is_first = (i == 0)
-            is_last = (i == total - 1)
-            audio_direction = page_direction.get('audio') if isinstance(page_direction.get('audio'), dict) else {}
-            planned_pause = max(float(audio_direction.get('pause_before_ms') or 0) / 1000.0, 0.0)
-            leading_pad = max(_LEADING_PAD_SECONDS if is_first else 0.0, planned_pause)
-            trailing_pad = _TRAILING_PAD_SECONDS if is_last else 0.0
+            leading_pad = (
+                audio_timeline['padding']['before_ms'] / 1000.0
+                if audio_paths[i] else 0.0
+            )
+            trailing_pad = (
+                audio_timeline['padding']['after_ms'] / 1000.0
+                if audio_paths[i] else 0.0
+            )
             transition = page_direction.get('transition') if isinstance(page_direction.get('transition'), dict) else {}
             transition_fade = min(float(transition.get('duration_ms') or 0) / 1000.0, 0.35)
             fade_in_seconds = max(leading_pad if is_first else 0.0, transition_fade if not is_first and transition.get('type') == 'fade' else 0.0)
@@ -1857,55 +2503,58 @@ def generate_narration_video(
                 )
                 audio_path = padded_audio
 
-            display_duration = audio_duration + leading_pad + trailing_pad
+            display_duration = audio_timeline['duration_ms'] / 1000.0
 
             # 收集字幕条目（字幕仅覆盖真实语音区间，避开首/末静音）
-            sub_start = cumulative_time + leading_pad
-            if narration and narration.strip() and audio_paths[i]:
-                if alignment:
-                    page_subs = _build_timed_subtitle_entries_from_alignment(
-                        narration.strip(), sub_start, alignment,
-                    )
-                else:
-                    page_subs = _build_timed_subtitle_entries(
-                        narration.strip(), sub_start, audio_duration,
-                    )
-                subtitle_entries.extend(page_subs)
+            if segments and audio_paths[i]:
+                subtitle_entries.extend(_build_timeline_subtitle_entries(
+                    segments,
+                    audio_timeline,
+                    page_start=cumulative_time,
+                    speakers=speakers,
+                ))
             cumulative_time += display_duration
 
-            if audio_paths[i]:
-                video_clip = os.path.join(tmp_dir, f'video_{i:03d}.mp4')
-                if len(stage_image_paths) > 1:
-                    create_staged_clip(
-                        stage_image_paths,
-                        video_clip,
-                        display_duration,
-                        width=width,
-                        height=height,
-                        fps=fps,
-                        ffmpeg_path=ffmpeg_path,
-                    )
-                elif effect != 'static' and (enable_ken_burns or director_plan):
-                    create_ken_burns_clip(
-                        image_path, video_clip, display_duration,
-                        width=width, height=height, fps=fps,
-                        effect_type=effect, ffmpeg_path=ffmpeg_path,
-                        fade_in_seconds=fade_in_seconds,
-                        fade_out_seconds=trailing_pad,
-                    )
-                else:
-                    create_static_clip(
-                        image_path, video_clip, display_duration,
-                        width=width, height=height, fps=fps,
-                        ffmpeg_path=ffmpeg_path,
-                        fade_in_seconds=fade_in_seconds,
-                        fade_out_seconds=trailing_pad,
-                    )
+            from services.video_visual_renderer import render_page_visual
 
-                # Mux video + audio
+            visual_path = os.path.join(
+                tmp_dir,
+                f"{'video' if audio_paths[i] else 'silent'}_{i:03d}.mp4",
+            )
+            visual_result = render_page_visual(
+                page=page,
+                motion_manifest=page_motion_manifests[i],
+                output_path=visual_path,
+                output_root=tmp_dir,
+                duration=display_duration,
+                width=width,
+                height=height,
+                fps=fps,
+                ffmpeg_path=ffmpeg_path,
+                effect=effect,
+                enable_ken_burns=enable_ken_burns,
+                fade_in_seconds=fade_in_seconds,
+                fade_out_seconds=trailing_pad,
+                motion_intensity=motion_intensity,
+                include_silent_audio=not bool(audio_paths[i]),
+                hyperframes_enabled=hyperframes_enabled,
+                hyperframes_executable=hyperframes_executable,
+            )
+            quality_pages[i]['visual_renderer'] = visual_result['renderer']
+            if visual_result.get('fallback_from'):
+                quality_pages[i]['fallback_from'] = visual_result['fallback_from']
+                quality_pages[i]['fallback_reason'] = visual_result.get('fallback_reason')
+            visual_warnings = list(visual_result.get('warnings') or [])
+            if visual_warnings:
+                quality_warnings.extend(
+                    f'第 {page_idx + 1} 页：{warning}'
+                    for warning in visual_warnings
+                )
+
+            if audio_paths[i]:
                 muxed_path = os.path.join(tmp_dir, f'muxed_{i:03d}.mp4')
                 mux_video_audio(
-                    video_clip,
+                    visual_path,
                     audio_path,
                     muxed_path,
                     ffmpeg_path=ffmpeg_path,
@@ -1913,33 +2562,39 @@ def generate_narration_video(
                 )
                 muxed_clips.append(muxed_path)
             else:
-                # 静音片段（含无声音轨以保证 concat 兼容）
-                silent_path = os.path.join(tmp_dir, f'silent_{i:03d}.mp4')
-                if len(stage_image_paths) > 1:
-                    create_staged_clip(
-                        stage_image_paths,
-                        silent_path,
-                        display_duration,
-                        width=width,
-                        height=height,
-                        fps=fps,
-                        ffmpeg_path=ffmpeg_path,
-                        include_silent_audio=True,
-                    )
-                else:
-                    create_silent_clip(
-                        image_path, silent_path, duration=display_duration,
-                        width=width, height=height, fps=fps,
-                        effect_type=effect, enable_ken_burns=effect != 'static' and (enable_ken_burns or bool(director_plan)),
-                        ffmpeg_path=ffmpeg_path,
-                        fade_in_seconds=fade_in_seconds,
-                        fade_out_seconds=trailing_pad,
-                    )
-                muxed_clips.append(silent_path)
+                muxed_clips.append(visual_path)
 
             if progress_callback:
                 pct = int(50 + (i + 1) / total * 30)  # 50-80%
                 progress_callback("视频", f"已生成第 {i+1}/{total} 页视频片段", pct)
+
+        render_snapshot_ref = None
+        if project_id and narration_snapshot_path and narration_snapshot_hash:
+            from services.video_export_snapshot import create_video_render_snapshot
+
+            render_snapshot_ref = create_video_render_snapshot(
+                directory=manifest_dir,
+                project_id=project_id,
+                narration_snapshot_path=narration_snapshot_path,
+                narration_snapshot_hash=narration_snapshot_hash,
+                pages=[{
+                    'page_id': _timeline_page_id(page, page.get('page_index', index)),
+                    'audio_timeline': page_audio_timeline_refs[index],
+                    'audio_track': page_audio_refs[index],
+                    'motion_manifest': page_motion_manifest_refs[index],
+                    'scene_manifest': page.get('scene_manifest_ref'),
+                    'native_scene_bundle': page.get('native_scene_bundle_ref'),
+                    'visual_renderer': quality_pages[index]['visual_renderer'],
+                    'fallback_from': quality_pages[index].get('fallback_from'),
+                    'fallback_reason': quality_pages[index].get('fallback_reason'),
+                } for index, page in enumerate(pages_data)],
+                renderer_config={
+                    'width': width,
+                    'height': height,
+                    'fps': fps,
+                    'hyperframes_enabled': hyperframes_enabled,
+                },
+            )
 
         # ── Phase C: 拼接视频 ──
         if progress_callback:
@@ -1962,6 +2617,25 @@ def generate_narration_video(
 
         if progress_callback:
             progress_callback("完成", "视频导出完成", 100)
+
+        return {
+            'provider': tts_provider,
+            'model': fish_model if tts_provider == 'fish_audio' else 'edge-tts',
+            'characters': sum(
+                len(re.sub(r'\s+', '', str(segment.get('text') or '')))
+                for segments in page_segments for segment in segments
+            ),
+            'requests': sum(1 for path in audio_paths if path),
+            'duration_seconds': round(sum(page_durations), 2),
+            'elapsed_seconds': round(time.monotonic() - started_at, 2),
+            'retry_count': 0,
+            'quality_pages': quality_pages,
+            'warnings': quality_warnings,
+            'render_snapshot': (
+                {'path': render_snapshot_ref['path'], 'sha256': render_snapshot_ref['sha256']}
+                if render_snapshot_ref else None
+            ),
+        }
 
     finally:
         # 清理临时目录

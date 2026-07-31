@@ -5,6 +5,7 @@ Unit tests for FileParserService provider-specific behavior.
 import os
 import tempfile
 import io
+import json
 import zipfile
 import requests
 from pathlib import Path
@@ -12,6 +13,7 @@ from unittest.mock import MagicMock, patch
 
 from PIL import Image
 
+from services.ai_providers.ocr.paddle_ocr_provider import PaddleOCRProvider
 from services.file_parser_service import FileParserService
 
 
@@ -167,3 +169,29 @@ def test_download_markdown_retries_incomplete_download(tmp_path):
     assert request.call_count == 2
     sleep.assert_called_once_with(2)
     assert (tmp_path / 'runtime_uploads' / 'mineru_files' / extract_id / 'full.md').exists()
+
+
+def test_paddle_ocr_result_persists_images_and_rewrites_markdown_urls(tmp_path):
+    response = MagicMock()
+    response.text = json.dumps({
+        'result': {
+            'layoutParsingResults': [{
+                'markdown': {
+                    'text': '![图表](imgs/chart.png)',
+                    'images': {'imgs/chart.png': 'data:image/png;base64,aW1hZ2U='},
+                },
+            }],
+        },
+    })
+    response.raise_for_status.return_value = None
+    image_dir = tmp_path / 'uploads' / 'mineru_files' / 'extract123'
+
+    with patch('services.ai_providers.ocr.paddle_ocr_provider.requests.get', return_value=response):
+        result = PaddleOCRProvider('token')._load_jsonl_result(
+            'https://example.test/result.jsonl',
+            image_dir=image_dir,
+            image_url_prefix='/files/mineru/extract123',
+        )
+
+    assert result['markdown_content'] == '![图表](/files/mineru/extract123/imgs/chart.png)'
+    assert (image_dir / 'imgs' / 'chart.png').read_bytes() == b'image'

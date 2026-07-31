@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
-import { X, FileText, Settings as SettingsIcon, Download, Sparkles, HelpCircle } from 'lucide-react';
-import { Button, Textarea } from '@/components/shared';
+import React, { useEffect, useRef, useState } from 'react';
+import { FileText, Settings as SettingsIcon, Download, Sparkles, HelpCircle } from 'lucide-react';
+import { Button, Modal, Textarea } from '@/components/shared';
 import { useT } from '@/hooks/useT';
 import { Settings } from '@/pages/Settings';
 import { useProjectStore } from '@/store/useProjectStore';
@@ -143,6 +143,21 @@ export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
   const projectRenderMode = useProjectStore((state) => state.currentProject?.render_mode ?? 'image');
   const effectiveRenderMode = renderMode ?? projectRenderMode;
   const [activeTab, setActiveTab] = useState<SettingsTab>('project');
+  const tabPanelRef = useRef<HTMLDivElement>(null);
+  const tabs: SettingsTab[] = ['project', 'export', 'global'];
+  useEffect(() => {
+    if (tabPanelRef.current) tabPanelRef.current.scrollTop = 0;
+  }, [activeTab]);
+  const handleTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, tab: SettingsTab) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    const offset = event.key === 'ArrowRight' ? 1 : -1;
+    const nextTab = tabs[(tabs.indexOf(tab) + offset + tabs.length) % tabs.length];
+    setActiveTab(nextTab);
+    requestAnimationFrame(() => {
+      document.querySelector<HTMLButtonElement>(`[data-settings-tab="${nextTab}"]`)?.focus();
+    });
+  };
 
   const EXTRACTOR_METHOD_OPTIONS: { value: ExportExtractorMethod; labelKey: string; descKey: string }[] = [
     { value: 'hybrid', labelKey: 'projectSettings.extractorHybrid', descKey: 'projectSettings.extractorHybridDesc' },
@@ -155,58 +170,58 @@ export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
     { value: 'baidu', labelKey: 'projectSettings.backgroundBaidu', descKey: 'projectSettings.backgroundBaiduDesc', usesAI: false },
   ];
 
-  if (!isOpen) return null;
-
   return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="project-settings-title"
-        className="bg-white dark:bg-background-secondary rounded-xl shadow-2xl w-full max-w-5xl h-[min(760px,calc(100vh-2rem))] flex flex-col overflow-hidden"
-      >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-border-primary flex-shrink-0">
-          <h2 id="project-settings-title" className="text-xl font-bold text-gray-900 dark:text-foreground-primary">{t('projectSettings.title')}</h2>
-          <button
-            onClick={onClose}
-            className="p-2 hover:bg-gray-100 dark:hover:bg-background-hover rounded-lg transition-colors"
-            aria-label={t('common.close')}
-          >
-            <X size={20} />
-          </button>
-        </div>
-
-        <div className="flex-1 flex overflow-hidden min-h-0">
-          <aside className="w-64 bg-gray-50 dark:bg-background-primary border-r border-gray-200 dark:border-border-primary flex-shrink-0">
-            <nav className="p-4 space-y-2">
+    <Modal isOpen={isOpen} onClose={onClose} title={t('projectSettings.title')} size="full">
+      <div className="-mb-7 flex h-[min(680px,calc(100vh-9rem))] min-h-0 flex-col">
+        <div className="flex min-h-0 flex-1 overflow-hidden">
+          <aside className="w-[216px] flex-shrink-0 border-r border-[var(--app-border)] bg-[var(--app-surface-secondary)]">
+            <nav role="tablist" aria-label={t('projectSettings.title')} className="space-y-1 p-3">
               <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab === 'project'}
+                tabIndex={activeTab === 'project' ? 0 : -1}
+                data-settings-tab="project"
                 onClick={() => setActiveTab('project')}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
+                onKeyDown={(event) => handleTabKeyDown(event, 'project')}
+                className={`flex min-h-10 w-full items-center gap-3 rounded-[var(--app-radius-control)] px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)] ${
                   activeTab === 'project'
-                    ? 'bg-cyan-600 text-white shadow-md'
-                    : 'bg-white dark:bg-background-secondary text-gray-700 dark:text-foreground-secondary hover:bg-gray-100 dark:hover:bg-background-hover'
+                    ? 'bg-[var(--app-surface)] text-[var(--app-text)] shadow-[var(--app-shadow-control)]'
+                    : 'text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]'
                 }`}
               >
                 <FileText size={20} />
                 <span className="font-medium">{t('projectSettings.projectConfig')}</span>
               </button>
               <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab === 'export'}
+                tabIndex={activeTab === 'export' ? 0 : -1}
+                data-settings-tab="export"
                 onClick={() => setActiveTab('export')}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
+                onKeyDown={(event) => handleTabKeyDown(event, 'export')}
+                className={`flex min-h-10 w-full items-center gap-3 rounded-[var(--app-radius-control)] px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)] ${
                   activeTab === 'export'
-                    ? 'bg-cyan-600 text-white shadow-md'
-                    : 'bg-white dark:bg-background-secondary text-gray-700 dark:text-foreground-secondary hover:bg-gray-100 dark:hover:bg-background-hover'
+                    ? 'bg-[var(--app-surface)] text-[var(--app-text)] shadow-[var(--app-shadow-control)]'
+                    : 'text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]'
                 }`}
               >
                 <Download size={20} />
                 <span className="font-medium">{t('projectSettings.exportConfig')}</span>
               </button>
               <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab === 'global'}
+                tabIndex={activeTab === 'global' ? 0 : -1}
+                data-settings-tab="global"
                 onClick={() => setActiveTab('global')}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
+                onKeyDown={(event) => handleTabKeyDown(event, 'global')}
+                className={`flex min-h-10 w-full items-center gap-3 rounded-[var(--app-radius-control)] px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)] ${
                   activeTab === 'global'
-                    ? 'bg-cyan-600 text-white shadow-md'
-                    : 'bg-white dark:bg-background-secondary text-gray-700 dark:text-foreground-secondary hover:bg-gray-100 dark:hover:bg-background-hover'
+                    ? 'bg-[var(--app-surface)] text-[var(--app-text)] shadow-[var(--app-shadow-control)]'
+                    : 'text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]'
                 }`}
               >
                 <SettingsIcon size={20} />
@@ -215,31 +230,36 @@ export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
             </nav>
           </aside>
 
-          <div data-testid="project-settings-scroll" className="flex-1 overflow-y-auto p-6">
+          <div
+            ref={tabPanelRef}
+            role="tabpanel"
+            data-testid="project-settings-scroll"
+            className={`min-w-0 flex-1 overflow-y-auto ${activeTab === 'global' ? 'p-0' : 'p-6'}`}
+          >
             {activeTab === 'project' ? (
               <div className="max-w-3xl space-y-6">
                 <div>
-                  <h3 className="text-lg font-semibold text-gray-900 dark:text-foreground-primary mb-4">{t('projectSettings.projectConfigTitle')}</h3>
-                  <p className="text-sm text-gray-600 dark:text-foreground-tertiary mb-6">
+                  <h3 className="text-lg font-semibold text-[var(--app-text)] mb-4">{t('projectSettings.projectConfigTitle')}</h3>
+                  <p className="text-sm text-[var(--app-text-secondary)] mb-6">
                     {t('projectSettings.projectConfigDesc')}
                   </p>
                 </div>
 
                 {/* 画面比例 */}
-                <div className="pb-6 border-b border-gray-200 dark:border-border-primary space-y-4">
+                <div className="space-y-4 border-b border-[var(--app-border)] pb-6">
                   <div>
                     <div className="flex items-center gap-2 mb-2">
-                      <h4 className="text-base font-semibold text-gray-900 dark:text-foreground-primary">{t('projectSettings.aspectRatio')}</h4>
+                      <h4 className="text-base font-semibold text-[var(--app-text)]">{t('projectSettings.aspectRatio')}</h4>
                       <div className="relative group">
-                        <button type="button" className="p-1 -m-1 rounded-full focus:outline-none focus:ring-2 focus:ring-cyan-500">
-                          <HelpCircle size={16} className="text-gray-400 dark:text-foreground-tertiary cursor-help" />
+                        <button type="button" className="p-1 -m-1 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--app-accent-soft)]">
+                          <HelpCircle size={16} className="cursor-help text-[var(--app-text-tertiary)]" />
                         </button>
-                        <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-64 p-2 bg-gray-900 dark:bg-gray-700 text-white text-xs rounded-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible group-focus-within:opacity-100 group-focus-within:visible transition-all z-10 pointer-events-none">
+                        <div className="invisible pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 w-64 -translate-x-1/2 rounded-[var(--app-radius-control)] bg-[var(--app-primary-action)] p-2 text-xs text-[var(--app-surface)] opacity-0 transition-all group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100">
                           {t('projectSettings.aspectRatioHelp')}
                         </div>
                       </div>
                     </div>
-                    <p className="text-sm text-gray-600 dark:text-foreground-tertiary">
+                    <p className="text-sm text-[var(--app-text-secondary)]">
                       {hasImages ? t('projectSettings.aspectRatioLocked') : t('projectSettings.aspectRatioDesc')}
                     </p>
                   </div>
@@ -250,10 +270,10 @@ export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
                         type="button"
                         disabled={hasImages}
                         onClick={() => onAspectRatioChange?.(opt.value)}
-                        className={`px-4 py-2 text-sm font-medium rounded-lg border-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                        className={`rounded-[var(--app-radius-control)] border-2 px-4 py-2 text-sm font-medium transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
                           aspectRatio === opt.value
-                            ? 'border-cyan-500 bg-cyan-50 dark:bg-background-secondary text-cyan-700 dark:text-cyan-300'
-                            : 'border-gray-200 dark:border-border-primary text-gray-700 dark:text-foreground-secondary hover:border-gray-300 dark:hover:border-gray-500 bg-white dark:bg-background-secondary'
+                            ? 'border-[var(--app-primary-action)] bg-[var(--app-surface-muted)] text-[var(--app-primary-action)]'
+                            : 'border-[var(--app-border)] bg-[var(--app-surface)] text-[var(--app-text-secondary)] hover:border-[var(--app-border-strong)] hover:bg-[var(--app-surface-hover)]'
                         }`}
                       >
                         {opt.label}
@@ -273,10 +293,10 @@ export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
                   )}
                 </div>
 
-                <div className="pb-6 border-b border-gray-200 dark:border-border-primary space-y-4">
+                <div className="space-y-4 border-b border-[var(--app-border)] pb-6">
                   <div>
-                    <h4 className="text-base font-semibold text-gray-900 dark:text-foreground-primary mb-2">{t('projectSettings.extraRequirements')}</h4>
-                    <p className="text-sm text-gray-600 dark:text-foreground-tertiary">
+                    <h4 className="text-base font-semibold text-[var(--app-text)] mb-2">{t('projectSettings.extraRequirements')}</h4>
+                    <p className="text-sm text-[var(--app-text-secondary)]">
                       {t('projectSettings.extraRequirementsDesc')}
                     </p>
                   </div>
@@ -300,8 +320,8 @@ export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
 
                 <div className="space-y-4">
                   <div>
-                    <h4 className="text-base font-semibold text-gray-900 dark:text-foreground-primary mb-2">{t('projectSettings.styleDescription')}</h4>
-                    <p className="text-sm text-gray-600 dark:text-foreground-tertiary">
+                    <h4 className="text-base font-semibold text-[var(--app-text)] mb-2">{t('projectSettings.styleDescription')}</h4>
+                    <p className="text-sm text-[var(--app-text-secondary)]">
                       {t('projectSettings.styleDescriptionDesc')}
                     </p>
                   </div>
@@ -323,9 +343,10 @@ export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
                       {isSavingTemplateStyle ? t('shared.saving') : t('projectSettings.saveStyleDescription')}
                     </Button>
                   </div>
-                  <div className="pl-4 border-l-4 border-blue-300 dark:border-blue-600">
-                    <p className="text-xs text-gray-700 dark:text-foreground-secondary">
-                      💡 <strong>{t('projectSettings.tip')}：</strong>{t('projectSettings.styleTip')}
+                  <div className="rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-3 py-2">
+                    <p className="flex items-start gap-2 text-xs text-[var(--app-text-secondary)]">
+                      <HelpCircle size={14} className="mt-0.5 flex-shrink-0 text-[var(--app-accent)]" />
+                      <span><strong>{t('projectSettings.tip')}：</strong>{t('projectSettings.styleTip')}</span>
                     </p>
                   </div>
                 </div>
@@ -333,7 +354,7 @@ export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
             ) : activeTab === 'export' ? (
               <div className="max-w-3xl space-y-6">
                 <h3
-                  className="text-lg font-semibold text-gray-900 dark:text-foreground-primary"
+                  className="text-lg font-semibold text-[var(--app-text)]"
                   title={t('projectSettings.editablePptxExportDesc')}
                 >
                   {t('projectSettings.editablePptxExport')}
@@ -341,18 +362,18 @@ export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
 
                 <ExportDirectorySetting />
 
-                {effectiveRenderMode === 'image' && <div className="pb-6 border-b border-gray-200 dark:border-border-primary space-y-4">
+                {effectiveRenderMode === 'image' && <div className="space-y-4 border-b border-[var(--app-border)] pb-6">
                   <div>
-                    <h4 className="text-base font-semibold text-gray-900 dark:text-foreground-primary" title={t('projectSettings.extractorMethodDesc')}>{t('projectSettings.extractorMethod')}</h4>
+                    <h4 className="text-base font-semibold text-[var(--app-text)]" title={t('projectSettings.extractorMethodDesc')}>{t('projectSettings.extractorMethod')}</h4>
                   </div>
                   <div className="space-y-3">
                     {EXTRACTOR_METHOD_OPTIONS.map((option) => (
                       <label
                         key={option.value}
-                        className={`flex items-start gap-3 p-4 rounded-lg border-2 cursor-pointer transition-all ${
+                        className={`flex cursor-pointer items-start gap-3 rounded-[var(--app-radius-control)] border-2 p-4 transition-all ${
                           exportExtractorMethod === option.value
-                            ? 'border-cyan-500 bg-cyan-50 dark:bg-background-secondary'
-                            : 'border-gray-200 dark:border-border-primary hover:border-gray-300 dark:hover:border-gray-500 bg-white dark:bg-background-secondary'
+                            ? 'border-[var(--app-primary-action)] bg-[var(--app-surface-muted)]'
+                            : 'border-[var(--app-border)] bg-[var(--app-surface)] hover:border-[var(--app-border-strong)]'
                         }`}
                       >
                         <input
@@ -363,28 +384,28 @@ export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
                           onChange={(e) => onExportExtractorMethodChange?.(e.target.value as ExportExtractorMethod)}
                           aria-label={t(option.labelKey)}
                           title={t(option.descKey)}
-                          className="mt-1 w-4 h-4 text-cyan-600 focus:ring-cyan-500"
+                          className="mt-1 h-4 w-4 accent-[var(--app-accent)]"
                         />
                         <div className="flex-1">
-                          <div className="font-medium text-gray-900 dark:text-foreground-primary">{t(option.labelKey)}</div>
+                          <div className="font-medium text-[var(--app-text)]">{t(option.labelKey)}</div>
                         </div>
                       </label>
                     ))}
                   </div>
                 </div>}
 
-                {effectiveRenderMode === 'image' && <div className="pb-6 border-b border-gray-200 dark:border-border-primary space-y-4">
+                {effectiveRenderMode === 'image' && <div className="space-y-4 border-b border-[var(--app-border)] pb-6">
                   <div>
-                    <h4 className="text-base font-semibold text-gray-900 dark:text-foreground-primary" title={t('projectSettings.backgroundMethodDesc')}>{t('projectSettings.backgroundMethod')}</h4>
+                    <h4 className="text-base font-semibold text-[var(--app-text)]" title={t('projectSettings.backgroundMethodDesc')}>{t('projectSettings.backgroundMethod')}</h4>
                   </div>
                   <div className="space-y-3">
                     {INPAINT_METHOD_OPTIONS.map((option) => (
                       <label
                         key={option.value}
-                        className={`flex items-start gap-3 p-4 rounded-lg border-2 cursor-pointer transition-all ${
+                        className={`flex cursor-pointer items-start gap-3 rounded-[var(--app-radius-control)] border-2 p-4 transition-all ${
                           exportInpaintMethod === option.value
-                            ? 'border-cyan-500 bg-cyan-50 dark:bg-background-secondary'
-                            : 'border-gray-200 dark:border-border-primary hover:border-gray-300 dark:hover:border-gray-500 bg-white dark:bg-background-secondary'
+                            ? 'border-[var(--app-primary-action)] bg-[var(--app-surface-muted)]'
+                            : 'border-[var(--app-border)] bg-[var(--app-surface)] hover:border-[var(--app-border-strong)]'
                         }`}
                       >
                         <input
@@ -395,13 +416,13 @@ export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
                           onChange={(e) => onExportInpaintMethodChange?.(e.target.value as ExportInpaintMethod)}
                           aria-label={t(option.labelKey)}
                           title={t(option.descKey)}
-                          className="mt-1 w-4 h-4 text-cyan-600 focus:ring-cyan-500"
+                          className="mt-1 h-4 w-4 accent-[var(--app-accent)]"
                         />
                         <div className="flex-1">
                           <div className="flex items-center gap-2">
-                            <span className="font-medium text-gray-900 dark:text-foreground-primary">{t(option.labelKey)}</span>
+                            <span className="font-medium text-[var(--app-text)]">{t(option.labelKey)}</span>
                             {option.usesAI && (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-cyan-100 dark:bg-cyan-900/30 text-cyan-800 dark:text-cyan-300">
+                              <span className="inline-flex items-center gap-1 rounded-[var(--app-radius-control)] bg-[var(--app-surface-muted)] px-2 py-0.5 text-xs font-medium text-[var(--app-accent)]">
                                 <Sparkles size={12} />
                                 {t('projectSettings.usesAiModel')}
                               </span>
@@ -414,7 +435,7 @@ export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
                 </div>}
 
                 <div className="space-y-4">
-                  <h4 className="text-base font-semibold text-gray-900 dark:text-foreground-primary" title={t('projectSettings.errorHandlingDesc')}>{t('projectSettings.errorHandling')}</h4>
+                  <h4 className="text-base font-semibold text-[var(--app-text)]" title={t('projectSettings.errorHandlingDesc')}>{t('projectSettings.errorHandling')}</h4>
                   {effectiveRenderMode === 'image' && <label className="flex items-start gap-3 cursor-pointer">
                     <input
                       type="checkbox"
@@ -422,10 +443,10 @@ export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
                       onChange={(e) => onExportHighFidelityEditableChange?.(e.target.checked)}
                       aria-label={t('projectSettings.highFidelityEditable')}
                       title={t('projectSettings.highFidelityEditableDesc')}
-                      className="mt-1 w-4 h-4 text-cyan-600 focus:ring-cyan-500 rounded"
+                      className="mt-1 h-4 w-4 rounded accent-[var(--app-accent)]"
                     />
                     <div className="flex-1">
-                      <div className="font-medium text-gray-900 dark:text-foreground-primary">{t('projectSettings.highFidelityEditable')}</div>
+                      <div className="font-medium text-[var(--app-text)]">{t('projectSettings.highFidelityEditable')}</div>
                     </div>
                   </label>}
                   <label className="flex items-start gap-3 cursor-pointer">
@@ -435,35 +456,35 @@ export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
                       onChange={(e) => onExportAllowPartialChange?.(e.target.checked)}
                       aria-label={t('projectSettings.allowPartialResult')}
                       title={`${t('projectSettings.allowPartialResultDesc')} ${t('projectSettings.allowPartialResultWarning')}`}
-                      className="mt-1 w-4 h-4 text-red-500 focus:ring-red-500 rounded"
+                      className="mt-1 h-4 w-4 rounded accent-[var(--app-danger)]"
                     />
                     <div className="flex-1">
-                      <div className="font-medium text-gray-900 dark:text-foreground-primary">{t('projectSettings.allowPartialResult')}</div>
+                      <div className="font-medium text-[var(--app-text)]">{t('projectSettings.allowPartialResult')}</div>
                     </div>
                   </label>
                 </div>
               </div>
             ) : (
-              <div className="max-w-4xl">
-                <div className="mb-6">
-                  <h3 className="text-lg font-semibold text-gray-900 dark:text-foreground-primary mb-2">{t('projectSettings.globalConfigTitle')}</h3>
-                  <p className="text-sm text-gray-600 dark:text-foreground-tertiary">
+              <div className="max-w-none">
+                <div className="mb-6 px-6 pt-6">
+                  <h3 className="text-lg font-semibold text-[var(--app-text)] mb-2">{t('projectSettings.globalConfigTitle')}</h3>
+                  <p className="text-sm text-[var(--app-text-secondary)]">
                     {t('projectSettings.globalConfigDesc')}
                   </p>
                 </div>
-                <Settings />
+                <Settings embedded />
               </div>
             )}
           </div>
         </div>
         {activeTab === 'export' && onSaveExportSettings && (
-          <div className="flex flex-shrink-0 justify-end border-t border-gray-200 px-6 py-3 dark:border-border-primary">
+          <div className="flex flex-shrink-0 justify-end border-t border-[var(--app-border)] px-6 py-3">
             <Button variant="primary" onClick={onSaveExportSettings} disabled={isSavingExportSettings}>
               {isSavingExportSettings ? t('shared.saving') : t('projectSettings.saveExportSettings')}
             </Button>
           </div>
         )}
       </div>
-    </div>
+    </Modal>
   );
 };

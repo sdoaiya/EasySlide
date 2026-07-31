@@ -66,6 +66,7 @@ function renderEditor() {
       <Routes>
         <Route path="/project/:projectId/detail" element={<DetailEditor />} />
         <Route path="/project/:projectId/preview" element={<div>预览页面</div>} />
+        <Route path="/project/:projectId/ppt/editor" element={<div>预览页面</div>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -91,24 +92,25 @@ describe('DetailEditor compact layout', () => {
     expect(screen.getByTestId('detail-editor-scroll-region')).toHaveClass('flex-1', 'min-h-0', 'overflow-y-auto');
   });
 
-  it('keeps previous and next actions outside the scrolling region', () => {
+  it('keeps previous and next actions floating outside the scrolling region', () => {
     renderEditor();
 
     const scrollRegion = screen.getByTestId('detail-editor-scroll-region');
     const footer = screen.getByTestId('detail-editor-footer');
     expect(scrollRegion).not.toContainElement(footer);
-    expect(scrollRegion).toHaveClass('pb-24');
-    expect(footer).toHaveClass('fixed', 'bottom-5', 'left-1/2', '-translate-x-1/2', 'z-50', 'pointer-events-none', 'max-w-xl');
+    expect(scrollRegion).toHaveClass('pb-20');
+    expect(footer).toHaveClass('fixed', 'bottom-0', 'pointer-events-none');
     const footerBar = screen.getByTestId('detail-editor-footer-bar');
-    expect(footerBar).toHaveClass('pointer-events-auto', 'rounded-2xl', 'shadow-[0_16px_45px_rgba(15,23,42,0.18)]');
+    expect(footerBar).toHaveClass('min-h-[44px]', 'max-w-5xl');
+    expect(footerBar).toHaveClass('rounded-[var(--app-radius-panel)]', 'shadow-[var(--app-shadow-floating)]');
     expect(footerBar).toContainElement(screen.getByRole('button', { name: '上一步' }));
-    expect(footerBar).toContainElement(screen.getByRole('button', { name: '开始生成' }));
+    expect(footerBar).toContainElement(screen.getByRole('button', { name: '下一步' }));
   });
 
   it('keeps image projects on the existing direct preview flow', async () => {
     renderEditor();
 
-    fireEvent.click(screen.getByRole('button', { name: '开始生成' }));
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
 
     expect(await screen.findByText('预览页面')).toBeInTheDocument();
     expect(mocks.generateNativeDeck).not.toHaveBeenCalled();
@@ -118,12 +120,19 @@ describe('DetailEditor compact layout', () => {
     mocks.store.currentProject.render_mode = 'native';
     renderEditor();
 
-    fireEvent.click(screen.getByRole('button', { name: '生成页面' }));
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
 
     expect(await screen.findByText('预览页面')).toBeInTheDocument();
     expect(mocks.generateNativeDeck).not.toHaveBeenCalled();
     expect(mocks.getTaskStatus).not.toHaveBeenCalled();
     expect(mocks.store.syncProject).not.toHaveBeenCalled();
     expect(localStorage.getItem('nativeDeckGenerationTask:project-1')).toBeNull();
+  });
+
+  it('disables the next action when the project has no pages', () => {
+    mocks.store.currentProject.pages = [];
+    renderEditor();
+
+    expect(screen.getByRole('button', { name: '下一步' })).toBeDisabled();
   });
 });

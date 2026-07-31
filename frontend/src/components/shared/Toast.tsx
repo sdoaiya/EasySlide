@@ -13,7 +13,7 @@ export const Toast: React.FC<ToastProps> = ({
   message,
   type = 'info',
   onClose,
-  duration = type === 'error' ? 5000 : 3000,
+  duration = type === 'error' ? 0 : type === 'success' ? 2000 : type === 'warning' ? 5000 : 3000,
 }) => {
   const onCloseRef = React.useRef(onClose);
   onCloseRef.current = onClose;
@@ -33,25 +33,27 @@ export const Toast: React.FC<ToastProps> = ({
   };
 
   const styles = {
-    success: 'bg-green-500 text-white',
-    error: 'bg-red-500 text-white',
-    info: 'bg-gray-900 dark:bg-background-hover text-white',
-    warning: 'bg-amber-500 text-white',
+    success: 'border-[color:var(--app-success)]/25 bg-[var(--app-surface)] text-[var(--app-text)]',
+    error: 'border-[color:var(--app-error)]/30 bg-[var(--app-surface)] text-[var(--app-text)]',
+    info: 'border-[var(--app-border)] bg-[var(--app-surface)] text-[var(--app-text)]',
+    warning: 'border-[color:var(--app-warning)]/30 bg-[var(--app-surface)] text-[var(--app-text)]',
   };
 
   return (
     <div
       className={cn(
-        'flex items-center gap-3 px-4 py-3 rounded-lg shadow-lg',
-        'animate-in slide-in-from-right transition-all duration-300',
+        'flex max-w-[420px] items-center gap-3 rounded-[var(--app-radius-card)] border px-4 py-3 shadow-[var(--app-shadow-soft)]',
+        'transition-[opacity,transform] duration-200',
         styles[type]
       )}
     >
       {icons[type]}
       <span className="flex-1">{message}</span>
       <button
+        type="button"
+        aria-label="关闭通知"
         onClick={onClose}
-        className="hover:opacity-75 transition-opacity"
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--app-radius-control)] text-[var(--app-text-tertiary)] transition-colors hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--app-accent-soft)]"
       >
         <X size={18} />
       </button>

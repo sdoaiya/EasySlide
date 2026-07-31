@@ -7,7 +7,18 @@ import type { NativeSlideSpec } from '@/native-deck/types'
 import { buildNativeMediaPrompt, collectNativeMediaSlots, compressNativeMediaUpload, createNativeMediaSlot, getNativeMediaValue, runNativeMediaQueue, setNativeMediaValue, type NativeMediaSlot } from '@/native-deck/nativeMedia'
 import type { NativeLayoutContract } from './NativeDeckPropertyPanel'
 
-const DEFAULT_SETTINGS: NativeImageSettings = { density: 'standard', style: 'theme', composition: 'auto', custom_prompt: '', custom_counts: {} }
+const DEFAULT_SETTINGS: NativeImageSettings = {
+  density: 'standard',
+  style: 'theme',
+  composition: 'auto',
+  palette: 'default',
+  custom_palette: {},
+  chart_theme: 'clean',
+  media_style: 'auto',
+  tone: 'strategy',
+  custom_prompt: '',
+  custom_counts: {},
+}
 
 export function useNativeMediaGeneration({ projectId, slides, contracts, onSlideUpdate }: {
   projectId: string

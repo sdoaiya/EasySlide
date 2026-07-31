@@ -2,8 +2,23 @@ import { test, expect } from '@playwright/test'
 import { seedProjectWithImages } from './helpers/seed-project'
 
 test.describe('Settings navigation and preview multi-select', () => {
-  test('mock: settings back button returns to previous page and preview multi-select bar stays pinned', async ({ page }) => {
+  test('mock: settings home navigation works and preview multi-select bar stays outside the scroller', async ({ page }) => {
     const projectId = 'preview-settings-mock'
+    const pages = Array.from({ length: 14 }, (_, index) => ({
+      id: `p${index + 1}`,
+      page_id: `p${index + 1}`,
+      order_index: index,
+      status: 'COMPLETED',
+      generated_image_path: `/files/mock/${index + 1}.png`,
+      generated_image_url: `/files/mock/${index + 1}.png`,
+      outline_content: {
+        title: `Slide ${index + 1}`,
+        points: index === 12 ? Array.from({ length: 16 }, (_, pointIndex) => `第 ${pointIndex + 1} 条较长的大纲内容，用来验证固定宽度下的自动换行`) : [],
+      },
+      description_content: {
+        text: index === 12 ? '这是一段较长的页面描述内容，用来验证属性栏宽度固定且文字只在区域内部换行。'.repeat(5) : `Desc ${index + 1}`,
+      },
+    }))
 
     await page.route(url => new URL(url).pathname.startsWith('/api/'), async (route) => {
       const url = new URL(route.request().url())
@@ -28,7 +43,6 @@ test.describe('Settings navigation and preview multi-select', () => {
               max_description_workers: 5,
               max_image_workers: 8,
               output_language: 'zh',
-              elevenlabs_api_key_length: 0,
             },
           }),
         })
@@ -53,16 +67,42 @@ test.describe('Settings navigation and preview multi-select', () => {
               id: projectId,
               idea_prompt: '多选固定条测试',
               status: 'COMPLETED',
-              pages: Array.from({ length: 14 }, (_, index) => ({
-                id: `p${index + 1}`,
-                page_id: `p${index + 1}`,
-                order_index: index,
-                status: 'COMPLETED',
-                generated_image_path: `/files/mock/${index + 1}.png`,
-                generated_image_url: `/files/mock/${index + 1}.png`,
-                outline_content: { title: `Slide ${index + 1}`, points: [] },
-                description_content: { text: `Desc ${index + 1}` },
-              })),
+              pages,
+            },
+          }),
+        })
+      }
+
+      if (url.pathname === `/api/content-projects/${projectId}`) {
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              project_id: projectId,
+              project_title: '多选固定条测试',
+              spine: {
+                revision: 1,
+                status: 'confirmed',
+                document: {
+                  topic: { value: '多选固定条测试' },
+                  sources: [{ kind: 'prompt', content: '多选固定条测试' }],
+                  sections: [],
+                },
+              },
+              workspaces: [{
+                id: `${projectId}-ppt`,
+                project_id: projectId,
+                kind: 'ppt',
+                state: 'ready',
+                stage: 'COMPLETED',
+                revision: 1,
+                current_version_id: `${projectId}-v1`,
+                source_kind: 'manual',
+                source_revision: 1,
+                settings: { render_mode: 'image', image_aspect_ratio: '16:9' },
+              }],
             },
           }),
         })
@@ -76,7 +116,7 @@ test.describe('Settings navigation and preview multi-select', () => {
         })
       }
 
-      if (url.pathname.includes('/materials') || url.pathname.includes('/image-versions') || url.pathname.includes('/voices')) {
+      if (url.pathname.includes('/materials') || url.pathname.includes('/image-versions')) {
         return route.fulfill({
           status: 200,
           contentType: 'application/json',
@@ -106,36 +146,38 @@ test.describe('Settings navigation and preview multi-select', () => {
     await page.goto(`/project/${projectId}/preview`)
     await page.waitForLoadState('networkidle')
 
-    await page.locator('button:has-text("导出")').first().click()
-    await page.locator('button:has-text("导出为讲解视频")').click()
-    await page.getByRole('button', { name: '高级配置' }).click()
-    await page.getByLabel('使用 ElevenLabs 语音合成').check()
-    await page.getByRole('button', { name: '前往设置' }).click()
+    await page.goto('/settings')
 
     await expect(page).toHaveURL(/\/settings$/)
-    await page.getByRole('button', { name: '返回首页' }).click()
-    await expect(page).toHaveURL(new RegExp(`/project/${projectId}/preview$`))
+    await page.getByRole('button', { name: '首页' }).click()
+    await expect(page).toHaveURL(/\/home$/)
+    await page.goto(`/project/${projectId}/preview`)
 
-    const thumbScroller = page.locator('aside .overflow-y-auto').first()
-    const stickyBar = thumbScroller.locator('button:has-text("多选")').first()
-    const stickyBarRow = stickyBar.locator('..')
-    const before = await stickyBar.boundingBox()
+    const pageRail = page.getByRole('complementary', { name: '页面栏' })
+    const thumbScroller = pageRail.getByTestId('slide-thumbnail-scroll')
+    const multiSelectBar = pageRail.getByTestId('slide-multiselect-toolbar')
+    const before = await multiSelectBar.boundingBox()
     expect(before).not.toBeNull()
-    await expect(stickyBarRow).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+    await expect(thumbScroller.getByTestId('slide-multiselect-toolbar')).toHaveCount(0)
+    await expect(multiSelectBar).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
 
     await thumbScroller.evaluate((el) => { el.scrollTop = 800 })
     await page.waitForTimeout(150)
 
-    await stickyBar.click()
-    const after = await stickyBar.boundingBox()
+    await multiSelectBar.getByRole('button', { name: '多选' }).click()
+    const after = await multiSelectBar.boundingBox()
     expect(after).not.toBeNull()
     expect(Math.abs((after?.y ?? 0) - (before?.y ?? 0))).toBeLessThan(4)
   })
 
-  test('integration: settings back returns to preview and multi-select stays visible while scrolling', async ({ page }) => {
+  test('integration: settings home navigation works and multi-select stays outside the scroller', async ({ page }) => {
     const frontendUrl = process.env.BASE_URL || 'http://localhost:3011'
     const frontendPort = parseInt(new URL(frontendUrl).port || '3011', 10)
     const backendUrl = `http://localhost:${frontendPort + 2000}`
+    const backendAvailable = await fetch(`${backendUrl}/api/settings`)
+      .then(() => true)
+      .catch(() => false)
+    test.skip(!backendAvailable, 'backend server is not available for integration seeding')
 
     const { projectId } = await seedProjectWithImages(backendUrl, 14)
 
@@ -143,27 +185,25 @@ test.describe('Settings navigation and preview multi-select', () => {
       await page.goto(`/project/${projectId}/preview`)
       await page.waitForLoadState('networkidle')
 
-      await page.locator('button:has-text("导出")').first().click()
-      await page.locator('button:has-text("导出为讲解视频")').click()
-      await page.getByRole('button', { name: '高级配置' }).click()
-      await page.getByLabel('使用 ElevenLabs 语音合成').check()
-      await page.getByRole('button', { name: '前往设置' }).click()
+      await page.goto('/settings')
 
       await expect(page).toHaveURL(/\/settings$/)
-      await page.getByRole('button', { name: '返回首页' }).click()
-      await expect(page).toHaveURL(new RegExp(`/project/${projectId}/preview$`))
+      await page.getByRole('button', { name: '首页' }).click()
+      await expect(page).toHaveURL(/\/home$/)
+      await page.goto(`/project/${projectId}/preview`)
 
-      const thumbScroller = page.locator('aside .overflow-y-auto').first()
-      const multiSelectToggle = thumbScroller.locator('button:has-text("多选")').first()
-      const stickyBarRow = multiSelectToggle.locator('..')
-      const before = await multiSelectToggle.boundingBox()
+      const pageRail = page.getByRole('complementary', { name: '页面栏' })
+      const thumbScroller = pageRail.getByTestId('slide-thumbnail-scroll')
+      const multiSelectBar = pageRail.getByTestId('slide-multiselect-toolbar')
+      const before = await multiSelectBar.boundingBox()
       expect(before).not.toBeNull()
-      await expect(stickyBarRow).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+      await expect(thumbScroller.getByTestId('slide-multiselect-toolbar')).toHaveCount(0)
+      await expect(multiSelectBar).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
 
       await thumbScroller.evaluate((el) => { el.scrollTop = 900 })
       await page.waitForTimeout(150)
 
-      const after = await multiSelectToggle.boundingBox()
+      const after = await multiSelectBar.boundingBox()
       expect(after).not.toBeNull()
       expect(Math.abs((after?.y ?? 0) - (before?.y ?? 0))).toBeLessThan(4)
     } finally {

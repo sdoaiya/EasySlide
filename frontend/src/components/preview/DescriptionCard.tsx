@@ -163,20 +163,20 @@ export const DescriptionCard: React.FC<DescriptionCardProps> = React.memo(({
     <>
       <Card className="p-0 overflow-hidden flex flex-col">
         {/* 标题栏 */}
-        <div className="bg-cyan-50 dark:bg-background-hover px-4 py-3 border-b border-gray-100 dark:border-border-primary">
+        <div className="border-b border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="font-semibold text-gray-900 dark:text-foreground-primary">{t('descriptionCard.page', { num: index + 1 })}</span>
+              <span className="font-semibold text-[var(--app-text)]">{t('descriptionCard.page', { num: index + 1 })}</span>
               {index === 0 && (
                 <span
-                  className="text-xs px-1.5 py-0.5 bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-300 rounded"
+                  className="rounded bg-[var(--app-accent-soft)] px-1.5 py-0.5 text-xs text-[var(--app-accent)]"
                   title={t('descriptionCard.coverPageTooltip')}
                 >
                   {t('descriptionCard.coverPage')}
                 </span>
               )}
               {page.part && (
-                <span className="text-xs px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded">
+                <span className="rounded-[var(--app-radius-control)] bg-[var(--app-accent-soft)] px-2 py-0.5 text-xs text-[var(--app-accent)]">
                   {page.part}
                 </span>
               )}
@@ -192,12 +192,12 @@ export const DescriptionCard: React.FC<DescriptionCardProps> = React.memo(({
               <Skeleton className="h-4 w-full" />
               <Skeleton className="h-4 w-full" />
               <Skeleton className="h-4 w-3/4" />
-              <div className="text-center py-4 text-gray-500 dark:text-foreground-tertiary text-sm">
+              <div className="py-4 text-center text-sm text-[var(--app-text-tertiary)]">
                 {t('common.generating')}
               </div>
             </div>
           ) : text ? (
-            <div className="text-sm text-gray-700 dark:text-foreground-secondary">
+            <div className="text-sm text-[var(--app-text-secondary)]">
               <Markdown>{text}</Markdown>
               {allFieldNames.map(name => {
                 const value = extraFields[name];
@@ -206,34 +206,34 @@ export const DescriptionCard: React.FC<DescriptionCardProps> = React.memo(({
                 const FieldIcon = FIELD_ICONS[name] || Tag;
                 const notInImagePrompt = imagePromptFields && !imagePromptFields.includes(name);
                 return (
-                  <div key={name} className="mt-3 pt-3 border-t border-gray-100 dark:border-border-primary">
-                    <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-foreground-tertiary mb-1">
+                  <div key={name} className="mt-3 border-t border-[var(--app-border)] pt-3">
+                    <div className="mb-1 flex items-center gap-1.5 text-xs text-[var(--app-text-tertiary)]">
                       <FieldIcon size={12} />
                       <span className="font-medium">{name}</span>
                       {notInImagePrompt && (
                         <span className="relative group/nip">
                           <ImageOff size={11} className="opacity-50" />
-                          <span className="absolute left-1/2 -translate-x-1/2 bottom-full mb-1.5 w-max max-w-40 px-2 py-1 text-[10px] leading-snug text-gray-600 dark:text-foreground-secondary bg-white dark:bg-background-primary border border-gray-200 dark:border-border-primary rounded-md shadow-md opacity-0 pointer-events-none group-hover/nip:opacity-100 transition-opacity z-50">
+                          <span className="absolute left-1/2 -translate-x-1/2 bottom-full mb-1.5 w-max max-w-40 px-2 py-1 text-[10px] leading-snug border border-[var(--app-border)] bg-[var(--app-surface)] text-[var(--app-text-secondary)] shadow-[var(--app-shadow-soft)] rounded-[var(--app-radius-control)] opacity-0 pointer-events-none group-hover/nip:opacity-100 transition-opacity z-50">
                             {t('descriptionCard.notInImagePrompt')}
                           </span>
                         </span>
                       )}
                     </div>
-                    <div className="text-xs text-gray-500 dark:text-foreground-tertiary"><Markdown>{value}</Markdown></div>
+                    <div className="text-xs text-[var(--app-text-tertiary)]"><Markdown>{value}</Markdown></div>
                   </div>
                 );
               })}
             </div>
           ) : (
-            <div className="text-center py-8 text-gray-400 dark:text-foreground-tertiary">
-              <div className="flex text-3xl mb-2 justify-center"><FileText className="text-gray-400 dark:text-foreground-tertiary" size={48} /></div>
+            <div className="py-8 text-center text-[var(--app-text-tertiary)]">
+              <div className="flex text-3xl mb-2 justify-center"><FileText className="text-[var(--app-text-tertiary)]" size={48} /></div>
               <p className="text-sm">{t('descriptionCard.noDescription')}</p>
             </div>
           )}
         </div>
 
         {/* 操作栏 */}
-        <div className="border-t border-gray-100 dark:border-border-primary px-4 py-3 flex justify-end gap-2 mt-auto">
+        <div className="mt-auto flex justify-end gap-2 border-t border-[var(--app-border)] px-4 py-3">
           <Button
             variant="ghost"
             size="sm"
@@ -308,6 +308,7 @@ export const DescriptionCard: React.FC<DescriptionCardProps> = React.memo(({
         onClose={() => setIsMaterialSelectorOpen(false)}
         onSelect={handleMaterialSelect}
         multiple
+        mediaKindFilter={['image']}
       />
     </>
   );

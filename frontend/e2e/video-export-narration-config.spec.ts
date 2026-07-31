@@ -17,6 +17,44 @@ test.describe('Video export narration config', () => {
         })
       }
 
+      if (url.pathname === `/api/projects/${projectId}/export/video/preflight`) {
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              can_export: true,
+              errors: [],
+              warnings: [],
+              total_pages: 1,
+              pages_with_narration: 1,
+              missing_images: [],
+              missing_narration: [],
+            },
+          }),
+        })
+      }
+
+      if (url.pathname === `/api/projects/${projectId}/narrations`) {
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              pages: [
+                {
+                  page_id: 'p1',
+                  current_version_id: 'narration-version-p1',
+                  locked: false,
+                },
+              ],
+            },
+          }),
+        })
+      }
+
       if (url.pathname === `/api/projects/${projectId}/tasks/video-task-1`) {
         return route.fulfill({
           status: 200,
@@ -61,6 +99,43 @@ test.describe('Video export narration config', () => {
         })
       }
 
+      if (url.pathname === `/api/content-projects/${projectId}`) {
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              project_id: projectId,
+              last_workspace: 'ppt',
+              pending_sync_count: 0,
+              spine: {
+                id: 'spine-video-export-config',
+                project_id: projectId,
+                revision: 1,
+                status: 'confirmed',
+                content_hash: 'video-export-config-hash',
+                document: {
+                  topic: { value: 'Nvidia annual report and roadmap' },
+                  sections: [],
+                },
+              },
+              workspaces: [
+                {
+                  id: 'ppt-video-export-config',
+                  project_id: projectId,
+                  kind: 'ppt',
+                  state: 'confirmed',
+                  revision: 1,
+                  source_kind: 'legacy',
+                  settings: {},
+                },
+              ],
+            },
+          }),
+        })
+      }
+
       if (url.pathname === '/api/settings') {
         return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: {} }) })
       }
@@ -84,9 +159,9 @@ test.describe('Video export narration config', () => {
     await page.locator('button:has-text("导出")').first().click()
     await page.locator('button:has-text("导出为讲解视频")').click()
 
-    await page.locator('select').nth(0).selectOption('confident corporate executive')
-    await page.locator('select').nth(1).selectOption('potential investors and venture capitalists')
-    await page.locator('select').nth(2).selectOption('inspiring, passionate, and persuasive')
+    await page.locator('select:has(option[value="confident corporate executive"])').selectOption('confident corporate executive')
+    await page.locator('select:has(option[value="potential investors and venture capitalists"])').selectOption('potential investors and venture capitalists')
+    await page.locator('select:has(option[value="inspiring, passionate, and persuasive"])').selectOption('inspiring, passionate, and persuasive')
     await page.locator('button:has-text("高级配置")').click()
     await page.locator('input[type="text"]').fill('our company 2025 annual financial report and 2026 strategic plan')
     await page.locator('input[type="number"]').nth(0).fill('80')
@@ -94,7 +169,9 @@ test.describe('Video export narration config', () => {
     await page.locator('button:has-text("开始导出")').click()
 
     await expect.poll(() => exportPayload).not.toBeNull()
-    expect(exportPayload.generate_narration).toBe(true)
+    expect(exportPayload.generate_narration).toBe(false)
+    expect(exportPayload.narration_policy).toBe('confirmed_only')
+    expect(exportPayload.narration_version_map).toEqual({ p1: 'narration-version-p1' })
     expect(exportPayload.presentation_topic).toBe('our company 2025 annual financial report and 2026 strategic plan')
     expect(exportPayload.narration_config).toMatchObject({
       speaker_persona: 'confident corporate executive',

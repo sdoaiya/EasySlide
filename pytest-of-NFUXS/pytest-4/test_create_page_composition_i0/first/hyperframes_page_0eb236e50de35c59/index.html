@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>EasySlide page composition</title>
+  <style>
+    *{box-sizing:border-box}
+    html,body{width:100%;height:100%;margin:0;overflow:hidden}
+    [data-composition-id="easyslide-page-0eb236e50de35c59"]{position:relative;width:1920px;height:1080px;overflow:hidden}
+    #hyperframes-stage{position:absolute;inset:0;width:1920px;height:1080px;transform-origin:center center}
+    .native-slide{background:#fff}.chart{mask-image:url("data:image/svg+xml;base64,AA==")}
+  </style>
+</head>
+<body>
+  <main id="hyperframes-root" data-composition-id="easyslide-page-0eb236e50de35c59" data-start="0" data-duration="12" data-track-index="0" data-width="1920" data-height="1080">
+    <div id="hyperframes-stage"><div class="native-slide" data-page-id="page-1"><h1 data-motion-id="title">标题</h1><p data-motion-id="body">正文</p><img data-motion-id="image" src="data:image/png;base64,AA=="><strong data-motion-id="number">42%</strong><div data-motion-id="chart"><span style="height:42%"></span></div></div></div>
+  </main>
+  <script>window.gsap={timeline:()=>({from(){return this},fromTo(){return this},to(){return this}})};</script>
+  <script>
+    window.__timelines = window.__timelines || {};
+    const compositionId = "easyslide-page-0eb236e50de35c59";
+    const motions = [{"duration":0.5,"easing":"power3.out","effect":"fade_in","element_id":"title","start":0.0},{"duration":0.5,"easing":"power3.out","effect":"fade_up","element_id":"body","start":1.0},{"duration":0.5,"easing":"power3.out","effect":"slide_in","element_id":"image","start":2.0},{"duration":0.5,"easing":"power3.out","effect":"scale_in","element_id":"number","start":3.0},{"duration":0.5,"easing":"power3.out","effect":"mask_reveal","element_id":"title","start":4.0},{"duration":0.5,"easing":"power3.out","effect":"chart_reveal","element_id":"chart","start":5.0},{"duration":0.5,"easing":"power3.out","effect":"count_up","element_id":"number","start":6.0},{"duration":0.5,"easing":"power3.out","effect":"highlight","element_id":"body","start":7.0},{"duration":0.5,"easing":"power3.out","effect":"drift","element_id":"image","start":8.0}];
+    const camera = {"duration":12.0,"preset":"pan_left","start":0.0};
+    const motionElements = new Map(
+      Array.from(document.querySelectorAll('[data-motion-id]')).map((element) => [element.dataset.motionId, element])
+    );
+    const timeline = gsap.timeline({ paused: true });
+
+    function addCountUp(target, motion) {
+      const original = target.textContent || '';
+      const match = original.match(/-?\d+(?:\.\d+)?/);
+      if (!match) {
+        timeline.from(target, { opacity: 0, duration: motion.duration, ease: motion.easing }, motion.start);
+        return;
+      }
+      const decimals = (match[0].split('.')[1] || '').length;
+      const state = { value: 0 };
+      const prefix = original.slice(0, match.index);
+      const suffix = original.slice(match.index + match[0].length);
+      timeline.fromTo(state, { value: 0 }, {
+        value: Number(match[0]),
+        duration: motion.duration,
+        ease: motion.easing,
+        onUpdate: () => { target.textContent = prefix + state.value.toFixed(decimals) + suffix; },
+      }, motion.start);
+    }
+
+    function addEffect(target, motion) {
+      const timing = { duration: motion.duration, ease: motion.easing };
+      switch (motion.effect) {
+        case 'fade_in': timeline.from(target, { opacity: 0, ...timing }, motion.start); break;
+        case 'fade_up': timeline.from(target, { y: 48, opacity: 0, ...timing }, motion.start); break;
+        case 'slide_in': timeline.from(target, { x: -64, opacity: 0, ...timing }, motion.start); break;
+        case 'scale_in': timeline.from(target, { scale: 0.92, opacity: 0, ...timing }, motion.start); break;
+        case 'mask_reveal': timeline.from(target, { clipPath: 'inset(0 100% 0 0)', ...timing }, motion.start); break;
+        case 'chart_reveal': timeline.from(target, { scaleY: 0, transformOrigin: 'bottom center', ...timing }, motion.start); break;
+        case 'count_up': addCountUp(target, motion); break;
+        case 'highlight': timeline.from(target, { scale: 1.03, filter: 'brightness(1.2)', ...timing }, motion.start); break;
+        case 'drift': timeline.from(target, { x: -20, opacity: 0.92, ...timing }, motion.start); break;
+      }
+    }
+
+    function addCameraMotion(stage, motion) {
+      const timing = { duration: motion.duration, ease: 'none' };
+      switch (motion.preset) {
+        case 'static': break;
+        case 'subtle_push': timeline.fromTo(stage, { scale: 1 }, { scale: 1.035, ...timing }, motion.start); break;
+        case 'pan_left': timeline.fromTo(stage, { x: 0 }, { x: -24, ...timing }, motion.start); break;
+        case 'pan_right': timeline.fromTo(stage, { x: 0 }, { x: 24, ...timing }, motion.start); break;
+      }
+    }
+
+    for (const motion of motions) addEffect(motionElements.get(motion.element_id), motion);
+    addCameraMotion(document.getElementById('hyperframes-stage'), camera);
+    window.__timelines[compositionId] = timeline;
+  </script>
+</body>
+</html>

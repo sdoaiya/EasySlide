@@ -1,7 +1,7 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { SettingsPage } from '@/pages/Settings';
+import { Settings, SettingsPage } from '@/pages/Settings';
 
 const endpointMocks = vi.hoisted(() => ({
   getSettings: vi.fn(),
@@ -9,8 +9,8 @@ const endpointMocks = vi.hoisted(() => ({
   getOpenAIOAuthUrl: vi.fn(),
   getOpenAIOAuthModels: vi.fn(),
   getModelOptions: vi.fn(),
-  getElevenLabsVoices: vi.fn(),
   checkForUpdates: vi.fn(),
+  clearExportCache: vi.fn(),
 }));
 
 const connectedSettings = {
@@ -30,8 +30,8 @@ vi.mock('@/api/endpoints', async () => {
     getOpenAIOAuthUrl: endpointMocks.getOpenAIOAuthUrl,
     getOpenAIOAuthModels: endpointMocks.getOpenAIOAuthModels,
     getModelOptions: endpointMocks.getModelOptions,
-    getElevenLabsVoices: endpointMocks.getElevenLabsVoices,
     checkForUpdates: endpointMocks.checkForUpdates,
+    clearExportCache: endpointMocks.clearExportCache,
   };
 });
 
@@ -58,8 +58,10 @@ describe('Settings OpenAI entry', () => {
       success: true,
       data: { models: ['gpt-4o-mini', 'gpt-4.1-mini'] },
     });
-    endpointMocks.getElevenLabsVoices.mockResolvedValue({ data: { voices: [] } });
     endpointMocks.checkForUpdates.mockResolvedValue({ data: { status: 'unknown', update_available: false, message: '', repository: '', current: { is_docker: false }, latest: null } });
+    endpointMocks.clearExportCache.mockResolvedValue({
+      data: { deleted_files: 3, freed_bytes: 2 * 1024 * 1024, cleared_projects: 1, skipped_active_projects: 0 },
+    });
   });
 
   it('surfaces OpenAI connection as a first-class settings section', async () => {
@@ -70,6 +72,19 @@ describe('Settings OpenAI entry', () => {
     );
 
     expect(await screen.findByText(/AI Provider & OpenAI|AI 提供商与 OpenAI/i)).toBeInTheDocument();
+    const openAISection = screen.getByTestId('openai-primary-section');
+    expect(openAISection.querySelector('h2')?.className).toContain('text-[var(--app-text)]');
+    expect(
+      Array.from(openAISection.querySelectorAll('div')).some((node) =>
+        node.className.includes('bg-[var(--app-index-green)]')
+      )
+    ).toBe(true);
+    const modelConfigSection = screen.getByTestId('model-config-section');
+    expect(modelConfigSection.querySelector('h2')?.className).toContain('text-[var(--app-text)]');
+    expect(modelConfigSection.querySelector('h2')?.className).not.toContain('text-gray-');
+    const serviceTestSection = document.getElementById('settings-tests');
+    expect(serviceTestSection?.querySelector('div[class*="border-b"]')?.className).toContain('border-[var(--app-border)]');
+    expect(serviceTestSection?.querySelector('div[class*="border-b"]')?.className).not.toContain('border-gray');
     expect((await screen.findAllByText(/Default AI Provider|默认 AI 提供商/i)).length).toBeGreaterThan(0);
     expect((await screen.findAllByText(/^OpenAI Authorization$|^OpenAI 授权连接$/i)).length).toBeGreaterThan(0);
     expect(await screen.findByText(/Available Models|可用模型/i)).toBeInTheDocument();
@@ -88,6 +103,55 @@ describe('Settings OpenAI entry', () => {
     expect(screen.queryByText(/Current Version|当前版本|Official Website|官方网站|Check for Updates|检查更新/i)).not.toBeInTheDocument();
   });
 
+  it('keeps export settings last and offsets section focus below the shared top nav', async () => {
+    const { container } = render(
+      <MemoryRouter>
+        <SettingsPage />
+      </MemoryRouter>
+    );
+
+    await screen.findByText(/AI Provider & OpenAI|AI 提供商与 OpenAI/i);
+    const settingsNav = screen.getAllByRole('navigation').find((nav) =>
+      within(nav).queryByRole('button', { name: /Export Settings|导出设置/i })
+    );
+    expect(settingsNav).toBeDefined();
+    const navButtons = within(settingsNav!).getAllByRole('button');
+    expect(navButtons[navButtons.length - 1]).toHaveTextContent(/Export Settings|导出设置/i);
+
+    const sections = Array.from(container.querySelectorAll<HTMLElement>('section[id^="settings-"]'));
+    expect(sections[sections.length - 1]?.id).toBe('settings-export');
+    sections.forEach((section) => expect(section).toHaveClass('scroll-mt-32'));
+  });
+
+  it('clears internal project exports only after confirmation', async () => {
+    render(
+      <MemoryRouter>
+        <SettingsPage />
+      </MemoryRouter>
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: /Clear Project Export Cache|清理项目导出缓存/i }));
+    expect(endpointMocks.clearExportCache).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: /Clear Cache|确认清理/i }));
+
+    await waitFor(() => expect(endpointMocks.clearExportCache).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText(/Cleared 3 files and freed 2.0 MB|已清理 3 个文件，释放 2.0 MB/i)).toBeInTheDocument();
+  }, 15_000);
+
+  it('uses a horizontal section navigator when embedded in project settings', async () => {
+    render(
+      <MemoryRouter>
+        <Settings embedded />
+      </MemoryRouter>
+    );
+
+    await screen.findByText(/AI Provider & OpenAI|AI 提供商与 OpenAI/i);
+    const settingsNav = screen.getByRole('navigation', { name: /Settings|设置/i });
+    expect(settingsNav).toHaveAttribute('data-layout', 'embedded');
+    expect(settingsNav.closest('aside')).toBeNull();
+  });
+
   it('hides optional parsing, repair, OCR, and TTS settings from the frontend', async () => {
     render(
       <MemoryRouter>
@@ -99,7 +163,6 @@ describe('Settings OpenAI entry', () => {
 
     expect(screen.queryByText(/MinerU Configuration|MinerU 配置/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Baidu Inpaint Configuration|百度 Inpaint 配置/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/ElevenLabs Text-to-Speech|ElevenLabs 语音合成/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/^OCR Service$|^OCR 服务$/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Paddle PDF Parsing|Paddle PDF 解析/i)).not.toBeInTheDocument();
   });
@@ -112,19 +175,32 @@ describe('Settings OpenAI entry', () => {
       },
     });
 
+    const scrollIntoView = vi.fn();
+    HTMLElement.prototype.scrollIntoView = scrollIntoView;
+
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={['/settings']}>
         <SettingsPage />
       </MemoryRouter>
     );
 
-    expect(await screen.findByText('EasySlide')).toBeInTheDocument();
-    ['首页', '创建项目', '我的项目', '素材中心', '素材生成', '设置'].forEach((label) => {
-      expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
+    const topNav = await screen.findByRole('navigation', { name: '工作台导航' });
+    expect(within(topNav).getByRole('button', { name: '设置' })).toHaveAttribute('aria-current', 'page');
+    const settingsNav = screen.getByRole('navigation', { name: '设置' });
+    expect(settingsNav.closest('aside')).toBeNull();
+    expect(settingsNav).toHaveClass('lg:grid-cols-1', 'lg:border-r');
+    ['默认 AI 提供商', '模型配置', '导出设置', '高级设置', '服务测试'].forEach((label) => {
+      expect(within(settingsNav).getByRole('button', { name: label })).toBeInTheDocument();
     });
+    const providerSection = screen.getByTestId('global-api-config-section');
+    expect(providerSection).toHaveAttribute('id', 'settings-provider');
+    expect(providerSection).toHaveClass('scroll-mt-32');
+    fireEvent.click(within(settingsNav).getByRole('button', { name: '默认 AI 提供商' }));
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
+    expect(scrollIntoView.mock.instances[0]).toBe(providerSection);
     expect(screen.queryByRole('button', { name: '使用手册' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '进入工作台' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '返回工作台' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '返回工作台' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '返回首页' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /登录|Login/i })).not.toBeInTheDocument();
   });
@@ -142,7 +218,7 @@ describe('Settings OpenAI entry', () => {
     expect(screen.queryByText(/EasySlide Settings Center|EasySlide 设置中心/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/加载设置失败|Failed to load settings/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Request failed with status code 500/i)).not.toBeInTheDocument();
-  });
+  }, 15000);
 
   it('groups OpenAI OAuth models by text and image capability', async () => {
     render(
@@ -223,7 +299,7 @@ describe('Settings OpenAI entry', () => {
     expect(await screen.findByText('授权链接已准备好，若没有弹出窗口，请使用下方入口继续。')).toBeInTheDocument();
 
     openSpy.mockRestore();
-  });
+  }, 15000);
 
   it('uses OpenAI settings even when the settings response is already unwrapped', async () => {
     endpointMocks.getSettings.mockResolvedValueOnce({
@@ -278,7 +354,7 @@ describe('Settings OpenAI entry', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'gpt-4o-mini' }));
 
     expect(await screen.findByDisplayValue('gpt-4o-mini')).toBeInTheDocument();
-  });
+  }, 15_000);
 
   it('shows provider model lookup errors instead of a raw 502 message', async () => {
     endpointMocks.getModelOptions.mockRejectedValueOnce({

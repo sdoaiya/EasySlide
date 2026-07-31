@@ -1,0 +1,41 @@
+- generic [ref=e4]:
+  - navigation "工作台导航" [ref=e5]:
+    - generic [ref=e6]:
+      - img "EasySlide Logo" [ref=e8]
+      - generic [ref=e9]:
+        - button "首页" [ref=e10] [cursor=pointer]
+        - button "创建项目" [ref=e16] [cursor=pointer]
+        - button "我的项目" [ref=e24] [cursor=pointer]
+        - button "素材中心" [ref=e30] [cursor=pointer]
+        - button "素材生成" [ref=e35] [cursor=pointer]
+        - button "设置" [ref=e42] [cursor=pointer]
+        - button "EN" [ref=e49] [cursor=pointer]
+        - button "主题模式" [ref=e55] [cursor=pointer]
+  - main [ref=e61]:
+    - generic [ref=e62]:
+      - generic [ref=e63]:
+        - generic [ref=e64]: 从想法到成稿，始终轻松、清晰、可控
+        - generic [ref=e69]:
+          - generic [ref=e70]: ✨
+          - generic [ref=e71]: 让 PPT 创作更适宜自然推进
+      - heading "让 AI 协助完成从构思到成稿的 PPT 创作流程。" [level=1] [ref=e72]
+      - paragraph [ref=e73]: 从一句构思生成大纲与页面描述，并持续优化内容结构、版式表达与视觉风格。支持参考文件、资产复用与模板复用，帮助演示文稿生产流程保持连续、规范与可控。
+      - button [ref=e75] [cursor=pointer]
+      - generic [ref=e82]:
+        - generic [ref=e83]: 一句话生成 PPT
+        - generic [ref=e86]: 自然语言修改
+        - generic [ref=e91]: 指定区域编辑
+        - generic [ref=e95]: 一键导出 PPTX/PDF
+      - generic [ref=e98]:
+        - generic [ref=e99]:
+          - heading "从想法轻松起步" [level=2] [ref=e103]
+          - paragraph [ref=e104]: 一句话即可完成初稿构建，快速形成清晰的大纲与页面内容。
+        - generic [ref=e105]:
+          - heading "每一步均可编辑" [level=2] [ref=e111]
+          - paragraph [ref=e112]: 大纲、描述与页面内容均支持持续调整，便于按节奏推进打磨。
+        - generic [ref=e113]:
+          - heading "每一步均可优化" [level=2] [ref=e120]
+          - paragraph [ref=e121]: 内容、布局与风格均可持续优化，并支持从图片中提取视觉方向。
+        - generic [ref=e122]:
+          - heading "资产与模板可复用" [level=2] [ref=e126]
+          - paragraph [ref=e127]: 参考文件、素材资产与风格模板均可复用，减少重复制作成本。

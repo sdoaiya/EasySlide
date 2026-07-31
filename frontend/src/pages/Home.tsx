@@ -1,26 +1,49 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Sparkles, FileText, FileEdit, ImagePlus, Paperclip, Palette, Lightbulb, Search, Settings, FolderOpen, HelpCircle, Sun, Moon, Globe, Monitor, ChevronDown, Upload, RefreshCw, Home as HomeIcon, LayoutDashboard, Loader2, Check } from 'lucide-react';
-import { Button, Card, useToast, MaterialGeneratorModal, MaterialCenterModal, MaterialSelector, ReferenceFileList, ReferenceFileSelector, FilePreviewModal, TextStyleSelector } from '@/components/shared';
+import { Sparkles, FileText, FileEdit, ImagePlus, Paperclip, Palette, Lightbulb, HelpCircle, ChevronDown, Upload, RefreshCw, Loader2, X } from 'lucide-react';
+import { AppTopNav, Button, SegmentedControl, useToast, MaterialSelector, ReferenceFileList, ReferenceFileSelector, FilePreviewModal, TextStyleSelector } from '@/components/shared';
 import { MarkdownTextarea, type MarkdownTextareaRef } from '@/components/shared/MarkdownTextarea';
 import { TemplateSelector, getTemplateFile } from '@/components/shared/TemplateSelector';
 import { listUserTemplates, type UserTemplate, uploadReferenceFile, type ReferenceFile, associateFileToProject, triggerFileParse, associateMaterialsToProject, createPptRenovationProject, extractStyleFromImage } from '@/api/endpoints';
-import { getStaticAssetUrl } from '@/api/client';
 import { NativeThemePicker } from '@/components/native-deck/NativeThemePicker';
 import { useProjectStore } from '@/store/useProjectStore';
 import { devLog } from '@/utils/logger';
-import { useTheme } from '@/hooks/useTheme';
 import { useImagePaste, buildMaterialsMarkdown } from '@/hooks/useImagePaste';
-import type { Material, RenderMode } from '@/types';
+import type { ContentWorkspaceKind, Material, NativeImageSettings, RenderMode } from '@/types';
 import { useT } from '@/hooks/useT';
 import { ASPECT_RATIO_OPTIONS } from '@/config/aspectRatio';
 import { findGordenTemplatePack } from '@/config/gordenTemplatePacks';
 
-type CreationType = 'idea' | 'outline' | 'description' | 'ppt_renovation';
+type CreationType = 'idea' | 'outline' | 'description' | 'blank' | 'ppt_renovation';
 
 // 支持作为参考文件上传的文档扩展名（与后端 file_parser_service 保持一致）
 const ALLOWED_DOC_EXTENSIONS = ['pdf', 'docx', 'pptx', 'doc', 'ppt', 'xlsx', 'xls', 'csv', 'txt', 'md'];
+const DEFAULT_TEMPLATE_VISUAL_SETTINGS: NativeImageSettings = {
+  density: 'standard',
+  style: 'theme',
+  composition: 'auto',
+  palette: 'default',
+  custom_palette: {},
+  chart_theme: 'clean',
+  media_style: 'auto',
+  tone: 'strategy',
+  custom_prompt: '',
+  custom_counts: {},
+};
+
+const templatePaletteOptions = [['default', '跟随模板'], ['enterprise_blue', '企业蓝'], ['teal', '青绿'], ['black_gold', '黑金'], ['orange_gray', '橙灰'], ['custom', '自定义']] as const;
+const templateChartOptions = [['clean', '清爽'], ['consulting', '咨询'], ['contrast', '高对比'], ['executive', '高管']] as const;
+const templateMediaOptions = [['auto', '跟随页面'], ['photo', '写实照片'], ['illustration', '克制插画'], ['product', '产品主体'], ['none', '少用图片']] as const;
+const templateToneOptions = [['strategy', '战略'], ['sales', '销售'], ['government', '政府'], ['technical', '技术'], ['research', '研究']] as const;
+const templateColorKeys = [['accent', '主色'], ['secondary', '辅助'], ['surface', '背景'], ['text', '文字']] as const;
+const templatePaletteColors = {
+  default: { accent: '#087f8c', secondary: '#d49a2a', surface: '#f7f8f6', text: '#18232d' },
+  enterprise_blue: { accent: '#1d4ed8', secondary: '#0f766e', surface: '#f4f7fb', text: '#172033' },
+  teal: { accent: '#087f5b', secondary: '#d49a2a', surface: '#f4f8f5', text: '#172720' },
+  black_gold: { accent: '#b8860b', secondary: '#111827', surface: '#f7f4ec', text: '#18181b' },
+  orange_gray: { accent: '#c05621', secondary: '#475569', surface: '#f7f5f2', text: '#242426' },
+} as const;
 
 // 页面特有翻译 - AI 可以直接看到所有文案，保留原始 key 结构
 const homeI18n = {
@@ -48,6 +71,7 @@ const homeI18n = {
         idea: '一句话生成',
         outline: '大纲生成',
         description: '描述生成',
+        blank: '空白项目',
         ppt_renovation: 'PPT 翻新',
       },
       renderMode: {
@@ -61,6 +85,7 @@ const homeI18n = {
         idea: '输入你的想法，AI 将为你生成完整的 PPT',
         outline: '已有大纲？直接粘贴，AI 将自动切分为结构化大纲',
         description: '已有完整描述？AI 将自动解析并直接生成图片，跳过大纲步骤',
+        blank: '从空白画布开始，手动添加页面和内容',
         ppt_renovation: '上传已有的 PDF/PPTX 文件，AI 将解析内容并重新生成翻新后的PPT',
       },
       placeholders: {
@@ -151,6 +176,7 @@ const homeI18n = {
         idea: 'From Idea',
         outline: 'Outline',
         description: 'Description',
+        blank: 'Blank Project',
         ppt_renovation: 'PPT Renovation',
       },
       renderMode: {
@@ -164,6 +190,7 @@ const homeI18n = {
         idea: 'Enter your idea, AI will generate a complete PPT for you',
         outline: 'Have an outline? Paste it directly, AI will split it into a structured outline',
         description: 'Have detailed descriptions? AI will parse and generate images directly, skipping the outline step',
+        blank: 'Start from an empty canvas and add pages and content manually',
         ppt_renovation: 'Upload an existing PDF/PPTX file, AI will parse its content and regenerate the renovated PPT',
       },
       placeholders: {
@@ -232,26 +259,74 @@ const homeI18n = {
   },
 };
 
-export const Home: React.FC = () => {
+function TemplateVisualSettingsPanel({ value, onChange, disabled }: {
+  value: NativeImageSettings;
+  onChange: (settings: NativeImageSettings) => void;
+  disabled?: boolean;
+}) {
+  const palette = value.palette || 'default';
+  const colors = palette === 'custom'
+    ? { ...templatePaletteColors.default, ...(value.custom_palette || {}) }
+    : templatePaletteColors[palette as keyof typeof templatePaletteColors] || templatePaletteColors.default;
+  const update = (patch: Partial<NativeImageSettings>) => onChange({ ...value, ...patch });
+
+  return (
+    <section className="mt-3 space-y-3 border-t border-[var(--app-border)] pt-3" aria-label="模板视觉调节">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <label className="space-y-1.5 text-xs font-medium text-[var(--app-text-secondary)]">
+          <span>配色</span>
+          <select aria-label="模板配色" disabled={disabled} value={palette} onChange={(event) => update({ palette: event.target.value as NativeImageSettings['palette'] })} className="h-9 w-full rounded-md border border-[var(--app-border)] bg-[var(--app-surface)] px-2.5 text-sm text-[var(--app-text)] focus:border-[var(--app-accent)] focus:outline-none">
+            {templatePaletteOptions.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+          </select>
+        </label>
+        <label className="space-y-1.5 text-xs font-medium text-[var(--app-text-secondary)]">
+          <span>图表</span>
+          <select aria-label="模板图表风格" disabled={disabled} value={value.chart_theme || 'clean'} onChange={(event) => update({ chart_theme: event.target.value as NativeImageSettings['chart_theme'] })} className="h-9 w-full rounded-md border border-[var(--app-border)] bg-[var(--app-surface)] px-2.5 text-sm text-[var(--app-text)] focus:border-[var(--app-accent)] focus:outline-none">
+            {templateChartOptions.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+          </select>
+        </label>
+        <label className="space-y-1.5 text-xs font-medium text-[var(--app-text-secondary)]">
+          <span>图片</span>
+          <select aria-label="模板图片策略" disabled={disabled} value={value.media_style || 'auto'} onChange={(event) => update({ media_style: event.target.value as NativeImageSettings['media_style'] })} className="h-9 w-full rounded-md border border-[var(--app-border)] bg-[var(--app-surface)] px-2.5 text-sm text-[var(--app-text)] focus:border-[var(--app-accent)] focus:outline-none">
+            {templateMediaOptions.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+          </select>
+        </label>
+        <label className="space-y-1.5 text-xs font-medium text-[var(--app-text-secondary)]">
+          <span>语气</span>
+          <select aria-label="模板文案语气" disabled={disabled} value={value.tone || 'strategy'} onChange={(event) => update({ tone: event.target.value as NativeImageSettings['tone'] })} className="h-9 w-full rounded-md border border-[var(--app-border)] bg-[var(--app-surface)] px-2.5 text-sm text-[var(--app-text)] focus:border-[var(--app-accent)] focus:outline-none">
+            {templateToneOptions.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+          </select>
+        </label>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {templateColorKeys.map(([key, label]) => (
+          <label key={key} className="flex items-center gap-1.5 rounded-md border border-[var(--app-border)] bg-[var(--app-surface)] px-2 py-1 text-[11px] text-[var(--app-text-secondary)]">
+            <span className="h-3 w-3 rounded-sm border border-[var(--app-border)]" style={{ background: colors[key] }} />
+            <span>{label}</span>
+            {palette === 'custom' && <input aria-label={`自定义${label}`} type="color" disabled={disabled} value={colors[key]} onChange={(event) => update({ custom_palette: { ...(value.custom_palette || {}), [key]: event.target.value } })} className="h-5 w-5 border-0 bg-transparent p-0" />}
+          </label>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+export const Home: React.FC<{ showNavigation?: boolean }> = ({ showNavigation = true }) => {
   const navigate = useNavigate();
-  const location = useLocation();
-  const showCreateForm = location.pathname === '/create';
   const { i18n } = useTranslation();
   const t = useT(homeI18n); // 组件内翻译 + 自动 fallback 到全局
-  const { theme, isDark, setTheme } = useTheme();
   const { initializeProject, isGlobalLoading } = useProjectStore();
   const { show, ToastContainer } = useToast();
   
   const [activeTab, setActiveTab] = useState<CreationType>('idea');
+  const [initialWorkspace, setInitialWorkspace] = useState<ContentWorkspaceKind>('ppt');
   const [renderMode, setRenderMode] = useState<RenderMode>('image');
   const [nativeTheme, setNativeTheme] = useState('theme01');
+  const [templateVisualSettings, setTemplateVisualSettings] = useState<NativeImageSettings>(DEFAULT_TEMPLATE_VISUAL_SETTINGS);
   const [content, setContent] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState<File | null>(null);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
   const [selectedPresetTemplateId, setSelectedPresetTemplateId] = useState<string | null>(null);
-  const [isMaterialModalOpen, setIsMaterialModalOpen] = useState(false);
-  const [isMaterialCenterOpen, setIsMaterialCenterOpen] = useState(false);
-  const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [userTemplates, setUserTemplates] = useState<UserTemplate[]>([]);
   const [referenceFiles, setReferenceFiles] = useState<ReferenceFile[]>([]);
@@ -270,7 +345,6 @@ export const Home: React.FC = () => {
   const renovationFileInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const styleImageInputRef = useRef<HTMLInputElement>(null);
-  const themeMenuRef = useRef<HTMLDivElement>(null);
 
   // 持久化草稿到 sessionStorage，确保跳转设置页后返回时内容不丢失
   useEffect(() => {
@@ -282,6 +356,12 @@ export const Home: React.FC = () => {
   useEffect(() => {
     sessionStorage.setItem('home-draft-tab', activeTab);
   }, [activeTab]);
+
+  useEffect(() => {
+    if (initialWorkspace !== 'ppt' && (activeTab === 'ppt_renovation' || activeTab === 'blank')) {
+      setActiveTab('idea');
+    }
+  }, [activeTab, initialWorkspace]);
 
 
   // 检查是否有当前项目 & 加载用户模板
@@ -302,11 +382,6 @@ export const Home: React.FC = () => {
     };
     loadTemplates();
   }, []);
-
-  const handleOpenMaterialModal = () => {
-    // 在主页始终生成全局素材，不关联任何项目
-    setIsMaterialModalOpen(true);
-  };
 
   const textareaRef = useRef<MarkdownTextareaRef>(null);
   const [isMaterialSelectorOpen, setIsMaterialSelectorOpen] = useState(false);
@@ -557,6 +632,13 @@ export const Home: React.FC = () => {
       description: t('home.tabDescriptions.description'),
       example: t('home.examples.description'),
     },
+    blank: {
+      icon: <FileText size={20} />,
+      label: t('home.tabs.blank'),
+      placeholder: '',
+      description: t('home.tabDescriptions.blank'),
+      example: null as string | null,
+    },
     ppt_renovation: {
       icon: <RefreshCw size={20} />,
       label: t('home.tabs.ppt_renovation'),
@@ -623,7 +705,7 @@ export const Home: React.FC = () => {
         show({ message: t('home.renovation.uploadFile'), type: 'error' });
         return;
       }
-    } else if (!content.trim()) {
+    } else if (activeTab !== 'blank' && !content.trim()) {
       show({ message: t('home.messages.enterContent'), type: 'error' });
       return;
     }
@@ -643,7 +725,7 @@ export const Home: React.FC = () => {
     setIsSubmitting(true);
     try {
       // PPT 翻新模式：走独立的上传+异步解析流程
-      if (activeTab === 'ppt_renovation' && renovationFile) {
+      if (initialWorkspace === 'ppt' && activeTab === 'ppt_renovation' && renovationFile) {
         const styleDesc = templateStyle.trim() ? templateStyle.trim() : undefined;
         const result = await createPptRenovationProject(renovationFile, {
           keepLayout,
@@ -668,7 +750,7 @@ export const Home: React.FC = () => {
         sessionStorage.removeItem('home-draft-tab');
 
         // Navigate to detail editor (will poll for task completion with skeleton UI)
-        navigate(`/project/${projectId}/detail`);
+        navigate(`/project/${projectId}/ppt/detail`);
         return;
       }
 
@@ -706,7 +788,7 @@ export const Home: React.FC = () => {
         .filter(f => f.parse_status === 'completed')
         .map(f => f.id);
 
-      await initializeProject(activeTab as 'idea' | 'outline' | 'description', content, templateFile || undefined, styleDesc, refFileIds.length > 0 ? refFileIds : undefined, aspectRatio, renderMode, nativeTheme, selectedGordenTemplate?.id);
+      await initializeProject(activeTab as 'idea' | 'outline' | 'description' | 'blank', content, templateFile || undefined, styleDesc, refFileIds.length > 0 ? refFileIds : undefined, aspectRatio, renderMode, nativeTheme, selectedGordenTemplate?.id, renderMode === 'image' ? templateVisualSettings : undefined, initialWorkspace);
       
       // 根据类型跳转到不同页面
       const projectId = localStorage.getItem('currentProjectId');
@@ -754,7 +836,9 @@ export const Home: React.FC = () => {
         devLog('No materials to associate');
       }
       
-      navigate(`/project/${projectId}/outline`);
+      navigate(initialWorkspace === 'ppt'
+        ? `/project/${projectId}/ppt/outline`
+        : `/project/${projectId}/${initialWorkspace}`);
     } catch (error: any) {
       console.error('创建项目失败:', error);
       const msg = error?.response?.data?.error?.message || error?.message || t('home.messages.projectCreateFailed');
@@ -765,307 +849,101 @@ export const Home: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[#f5f9fc] dark:bg-background-primary relative overflow-hidden">
-      {/* 背景装饰元素 - 仅在亮色模式显示 */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none dark:hidden">
-        <div className="absolute -top-40 -right-40 w-80 h-80 bg-cyan-400/10 rounded-full blur-3xl animate-pulse"></div>
-        <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-emerald-400/10 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '1s' }}></div>
-        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-72 h-72 bg-sky-400/5 rounded-full blur-3xl"></div>
-      </div>
+    <div className="create-reference-canvas min-h-screen bg-[var(--app-background)] text-[var(--app-text)] lg:pl-[216px]">
+      {showNavigation && <AppTopNav />}
 
-      {/* 导航栏 */}
-      <nav aria-label="工作台导航" className="relative z-50 h-16 md:h-18 bg-white/40 dark:bg-background-primary backdrop-blur-2xl dark:backdrop-blur-none dark:border-b dark:border-border-primary">
+      <main className="mx-auto w-full max-w-[1152px] px-5 pb-12 pt-6 md:px-10">
+        <header className="mb-5">
+          <h1 id="create-title" className="text-xl font-semibold leading-7 text-[var(--app-text)]">{t('nav.createProject')}</h1>
+          <p className="mt-1 text-sm leading-6 text-[var(--app-text-secondary)]">
+            先选择首次工作区，再从想法、现有内容或参考资料开始创作。
+          </p>
+        </header>
 
-        <div className="max-w-7xl mx-auto px-4 md:px-6 h-full flex items-center justify-between">
-          <div className="flex items-center">
-            <img
-              src={getStaticAssetUrl('/logo-nav.png')}
-              alt="EasySlide Logo"
-              className="h-12 md:h-14 w-auto rounded-lg object-contain"
+        <section
+          id="create"
+          aria-labelledby="create-title"
+          className="border-y border-[var(--app-border)] bg-[var(--app-surface)] px-4 py-5 md:px-5 md:py-6"
+        >
+          <div className="mb-5">
+            <p className="mb-2 text-xs font-semibold text-[var(--app-text-secondary)]">首次工作区</p>
+            <SegmentedControl
+              ariaLabel="首次工作区"
+              value={initialWorkspace}
+              onChange={setInitialWorkspace}
+              disabled={isSubmitting || isGlobalLoading}
+              className="grid w-full grid-cols-3 rounded-[var(--app-radius-control)] p-1 [&>button]:w-full [&>button]:rounded-[var(--app-radius-control)]"
+              options={[
+                { value: 'ppt', label: 'PPT' },
+                { value: 'video', label: '视频' },
+                { value: 'podcast', label: '播客' },
+              ]}
             />
           </div>
-          <div className="flex items-center gap-2 md:gap-3">
-            <Button
-              variant="ghost"
-              size="sm"
-              icon={<HomeIcon size={16} className="md:w-[18px] md:h-[18px]" />}
-              onClick={() => navigate('/')}
-              className="text-xs md:text-sm hover:bg-sky-50 hover:text-cyan-700 hover:shadow-sm hover:scale-105 transition-all duration-200 font-medium"
-            >
-              <span className="hidden md:inline">{t('nav.home')}</span>
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              icon={<LayoutDashboard size={16} className="md:w-[18px] md:h-[18px]" />}
-              onClick={() => navigate('/create')}
-              className="text-xs md:text-sm hover:bg-sky-50 hover:text-cyan-700 hover:shadow-sm hover:scale-105 transition-all duration-200 font-medium"
-            >
-              <span className="hidden md:inline">{t('nav.createProject')}</span>
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              icon={<FileText size={16} className="md:w-[18px] md:h-[18px]" />}
-              onClick={() => navigate('/history')}
-              className="text-xs md:text-sm hover:bg-sky-50 hover:text-cyan-700 hover:shadow-sm hover:scale-105 transition-all duration-200 font-medium"
-            >
-              <span>{t('nav.history')}</span>
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              icon={<FolderOpen size={16} className="md:w-[18px] md:h-[18px]" />}
-              onClick={() => setIsMaterialCenterOpen(true)}
-              className="text-xs md:text-sm hover:bg-sky-50 hover:text-cyan-700 hover:shadow-sm hover:scale-105 transition-all duration-200 font-medium"
-            >
-              <span className="hidden md:inline">{t('nav.materialCenter')}</span>
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              icon={<ImagePlus size={16} className="md:w-[18px] md:h-[18px]" />}
-              onClick={handleOpenMaterialModal}
-              className="text-xs md:text-sm hover:bg-sky-50 hover:text-cyan-700 hover:shadow-sm hover:scale-105 transition-all duration-200 font-medium"
-            >
-              <span className="hidden md:inline">{t('nav.materialGenerate')}</span>
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              icon={<Settings size={16} className="md:w-[18px] md:h-[18px]" />}
-              onClick={() => navigate('/settings')}
-              className="text-xs md:text-sm hover:bg-sky-50 hover:text-cyan-700 hover:shadow-sm hover:scale-105 transition-all duration-200 font-medium"
-            >
-              <span className="hidden md:inline">{t('nav.settings')}</span>
-            </Button>
-            {/* 分隔线 */}
-            <div className="h-5 w-px bg-gray-300 dark:bg-border-primary mx-1" />
-            {/* 语言切换按钮 */}
-            <button
-              onClick={() => i18n.changeLanguage(i18n.language?.startsWith('zh') ? 'en' : 'zh')}
-              className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-slate-600 dark:text-foreground-tertiary hover:text-cyan-700 dark:hover:text-gray-100 hover:bg-sky-50 dark:hover:bg-background-hover rounded-md transition-all"
-              title={t('settings.language.label')}
-            >
-              <Globe size={14} />
-              <span>{i18n.language?.startsWith('zh') ? 'EN' : '中'}</span>
-            </button>
-            {/* 主题切换按钮 */}
-            <div className="relative" ref={themeMenuRef}>
-              <button
-                onClick={() => setIsThemeMenuOpen(!isThemeMenuOpen)}
-                className="flex items-center gap-1 p-1.5 text-slate-600 dark:text-foreground-tertiary hover:text-cyan-700 dark:hover:text-gray-100 hover:bg-sky-50 dark:hover:bg-background-hover rounded-md transition-all"
-                title={t('settings.theme.label')}
-              >
-                {theme === 'system' ? <Monitor size={16} /> : isDark ? <Moon size={16} /> : <Sun size={16} />}
-                <ChevronDown size={12} className={`transition-transform ${isThemeMenuOpen ? 'rotate-180' : ''}`} />
-              </button>
-              {/* 主题下拉菜单 */}
-              {isThemeMenuOpen && (
-                <>
-                  <div className="fixed inset-0 z-40" onClick={() => setIsThemeMenuOpen(false)} />
-                  <div className="absolute right-0 top-full mt-1 z-50 bg-white dark:bg-background-secondary border border-gray-200 dark:border-border-primary rounded-lg shadow-lg dark:shadow-none py-1 min-w-[120px]">
-                    <button
-                      onClick={() => { setTheme('light'); setIsThemeMenuOpen(false); }}
-                      className={`w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-sky-50 dark:hover:bg-background-hover transition-colors ${theme === 'light' ? 'text-cyan-600' : 'text-gray-700 dark:text-foreground-secondary'}`}
-                    >
-                      <Sun size={14} />
-                      <span>{t('settings.theme.light')}</span>
-                    </button>
-                    <button
-                      onClick={() => { setTheme('dark'); setIsThemeMenuOpen(false); }}
-                      className={`w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-sky-50 dark:hover:bg-background-hover transition-colors ${theme === 'dark' ? 'text-cyan-600' : 'text-gray-700 dark:text-foreground-secondary'}`}
-                    >
-                      <Moon size={14} />
-                      <span>{t('settings.theme.dark')}</span>
-                    </button>
-                    <button
-                      onClick={() => { setTheme('system'); setIsThemeMenuOpen(false); }}
-                      className={`w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-sky-50 dark:hover:bg-background-hover transition-colors ${theme === 'system' ? 'text-cyan-600' : 'text-gray-700 dark:text-foreground-secondary'}`}
-                    >
-                      <Monitor size={14} />
-                      <span>{t('settings.theme.system')}</span>
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-            {/* 分隔线 */}
-            <div className="h-5 w-px bg-gray-300 dark:bg-border-primary mx-1" />
-          </div>
-        </div>
-      </nav>
+          <SegmentedControl
+            ariaLabel="创建方式"
+            value={activeTab}
+            onChange={setActiveTab}
+            disabled={isSubmitting || isGlobalLoading}
+            className="mb-5 grid w-full grid-cols-2 rounded-[var(--app-radius-control)] p-1 sm:grid-cols-5 [&>button]:w-full [&>button]:rounded-[var(--app-radius-control)]"
+            options={(Object.keys(tabConfig) as CreationType[])
+              .filter((type) => initialWorkspace === 'ppt' || (type !== 'ppt_renovation' && type !== 'blank'))
+              .map((type) => ({ value: type, label: tabConfig[type].label }))}
+          />
 
-      {/* ??? */}
-      <main className={`relative mx-auto px-3 md:px-6 ${showCreateForm ? 'max-w-7xl py-10 md:py-16' : 'max-w-5xl py-8 md:py-12'}`}>
-        {/* Hero ??? */}
-        {showCreateForm ? (
-          <div className="mb-8 md:mb-10">
-            <div className="inline-flex items-center gap-2 rounded-full border border-sky-200/80 bg-sky-50/95 px-4 py-1.5 text-sm font-medium text-sky-700 shadow-sm dark:border-cyan-400/20 dark:bg-cyan-400/10 dark:text-cyan-200">
-              <Sparkles size={15} />
-              <span>{t('nav.createProject')}</span>
-            </div>
-            <h1 className="mt-5 text-3xl font-semibold tracking-tight text-slate-950 dark:text-white md:text-5xl">
-              开始新的 PPT 项目
-            </h1>
-            <p className="mt-4 max-w-2xl text-sm leading-7 text-slate-600 dark:text-foreground-secondary md:text-base">
-              从一句想法、大纲、详细描述或现有文件开始，继续完成你的演示文稿创作。
-            </p>
-          </div>
-        ) : (
-          <div className="text-center mb-10 md:mb-16 space-y-4 md:space-y-6">
-            <div className="flex flex-col items-center justify-center gap-2">
-              <div className="inline-flex items-center gap-2 px-4 py-2 bg-white/80 dark:bg-background-secondary backdrop-blur-sm rounded-full shadow-sm dark:shadow-none">
-                <span className="text-2xl animate-pulse"><Sparkles size={18} className="text-sky-500 dark:text-cyan-300" /></span>
-                <span className="text-sm font-medium text-sky-700 dark:text-foreground-secondary">{t('home.tagline')}</span>
-              </div>
-              <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-white/70 dark:bg-background-secondary backdrop-blur-sm rounded-full text-xs font-medium text-emerald-600 shadow-sm dark:text-emerald-300 dark:shadow-none">
-                <span>✨</span>
-                <span>让 PPT 创作更适宜自然推进</span>
-              </div>
-            </div>
-
-            <h1 className="mx-auto max-w-3xl text-3xl md:text-4xl lg:text-5xl font-extrabold leading-tight text-slate-950 dark:text-white">
-              {t('home.title')}
-            </h1>
-
-            <p className="text-sm md:text-base text-gray-600 dark:text-foreground-secondary max-w-3xl mx-auto leading-7">
-              {t('home.subtitle')}
-            </p>
-
-            <div className="pt-3">
-              <Button
-                size="lg"
-                icon={<LayoutDashboard size={18} />}
-                onClick={() => navigate('/create')}
-                className="rounded-full bg-gradient-to-r from-sky-500 to-emerald-400 px-7 py-3 text-white shadow-xl shadow-cyan-500/20 hover:scale-105"
-              >
-                {t('nav.createProject')}
-              </Button>
-            </div>
-
-            <div className="flex flex-wrap items-center justify-center gap-2 md:gap-3 pt-2">
-              {[
-                { icon: <Sparkles size={14} className="text-cyan-600 dark:text-cyan-300" />, label: t('home.features.oneClick') },
-                { icon: <FileEdit size={14} className="text-blue-500 dark:text-blue-400" />, label: t('home.features.naturalEdit') },
-                { icon: <Search size={14} className="text-emerald-500 dark:text-emerald-300" />, label: t('home.features.regionEdit') },
-                { icon: <Paperclip size={14} className="text-green-600 dark:text-green-400" />, label: t('home.features.export') },
-              ].map((feature, idx) => (
-                <span
-                  key={idx}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 bg-white/70 dark:bg-background-secondary backdrop-blur-sm rounded-full text-xs md:text-sm text-gray-700 dark:text-foreground-secondary border border-gray-200/50 dark:border-border-primary shadow-sm dark:shadow-none hover:shadow-md dark:hover:border-border-hover transition-all hover:scale-105 cursor-default"
-                >
-                  {feature.icon}
-                  {feature.label}
-                </span>
-              ))}
-            </div>
-
-            <div className="grid gap-4 pt-6 text-left sm:grid-cols-2 lg:grid-cols-4">
-              {[
-                { icon: <Sparkles size={18} className="text-sky-500" />, title: '从想法轻松起步', body: '一句话即可完成初稿构建，快速形成清晰的大纲与页面内容。' },
-                { icon: <FileEdit size={18} className="text-indigo-500" />, title: '每一步均可编辑', body: '大纲、描述与页面内容均支持持续调整，便于按节奏推进打磨。' },
-                { icon: <RefreshCw size={18} className="text-cyan-500" />, title: '每一步均可优化', body: '内容、布局与风格均可持续优化，并支持从图片中提取视觉方向。' },
-                { icon: <FolderOpen size={18} className="text-emerald-500" />, title: '资产与模板可复用', body: '参考文件、素材资产与风格模板均可复用，减少重复制作成本。' },
-              ].map((item) => (
-                <div key={item.title} className="rounded-2xl border border-sky-100 bg-white/80 p-4 shadow-lg shadow-sky-100/40 backdrop-blur-sm dark:border-border-primary dark:bg-background-secondary dark:shadow-none">
-                  <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-xl bg-sky-50 dark:bg-background-tertiary">{item.icon}</div>
-                  <h2 className="text-sm font-semibold text-slate-950 dark:text-white">{item.title}</h2>
-                  <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-foreground-tertiary">{item.body}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* 创建卡片 */}
-        {showCreateForm && (
-        <Card id="create" className="overflow-hidden rounded-[32px] border border-white/80 bg-white/95 p-4 shadow-[0_30px_80px_rgba(15,23,42,0.10)] backdrop-blur-xl dark:border-border-primary dark:bg-background-secondary dark:shadow-none md:p-10">
-          {/* 选项卡 */}
-          <div className="mb-4 grid grid-cols-2 gap-2 rounded-[24px] bg-slate-100/80 p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] dark:bg-background-tertiary dark:shadow-none sm:grid-cols-4 md:mb-5">
-            {(Object.keys(tabConfig) as CreationType[]).map((type) => {
-              const config = tabConfig[type];
-              return (
-                <button
-                  key={type}
-                  onClick={() => setActiveTab(type)}
-                  className={`flex min-w-0 items-center justify-center gap-2 rounded-[18px] px-3 py-2.5 text-sm font-semibold transition-all duration-200 touch-manipulation md:px-4 md:py-3 ${
-                    activeTab === type
-                      ? 'bg-gradient-to-r from-sky-500 to-cyan-400 text-white shadow-lg shadow-cyan-500/25'
-                      : 'text-slate-700 hover:bg-white/80 hover:text-slate-950 dark:text-foreground-secondary dark:hover:bg-background-elevated dark:hover:text-white'
-                  }`}
-                >
-                  <span className="scale-90 md:scale-100">{config.icon}</span>
-                  <span className="truncate">{config.label}</span>
-                </button>
-              );
-            })}
-            </div>
-
-            {activeTab !== 'ppt_renovation' && (
-              <div className="mb-4 space-y-4">
-                <div role="radiogroup" aria-label={t('home.renderMode.label')} className="grid gap-3 sm:grid-cols-2">
-                  {([
-                    { value: 'image', label: t('home.renderMode.image'), description: t('home.renderMode.imageDescription'), icon: ImagePlus },
-                    { value: 'native', label: t('home.renderMode.native'), description: t('home.renderMode.nativeDescription'), icon: FileEdit },
-                  ] as const).map((option) => {
-                    const selected = renderMode === option.value;
-                    const Icon = option.icon;
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        role="radio"
-                        aria-checked={selected}
-                        aria-label={option.label}
-                        disabled={isSubmitting || isGlobalLoading}
-                        onClick={() => setRenderMode(option.value)}
-                        className={`flex min-h-24 items-start gap-3 rounded-md border-2 p-4 text-left transition-colors focus:outline-none focus:ring-2 focus:ring-cyan-500 disabled:cursor-not-allowed disabled:opacity-50 ${selected ? 'border-cyan-500 bg-cyan-50/70 dark:border-cyan-400 dark:bg-cyan-950/20' : 'border-slate-200 bg-white hover:border-cyan-300 dark:border-border-primary dark:bg-background-elevated'}`}
-                      >
-                        <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-md ${selected ? 'bg-cyan-600 text-white' : 'bg-slate-100 text-slate-600 dark:bg-background-tertiary dark:text-foreground-secondary'}`}><Icon size={20} aria-hidden="true" /></span>
-                        <span className="min-w-0 flex-1">
-                          <span className="flex items-center justify-between gap-2 text-sm font-semibold text-slate-900 dark:text-foreground-primary">{option.label}{selected && <Check size={18} aria-hidden="true" className="shrink-0 text-cyan-600 dark:text-cyan-300" />}</span>
-                          <span className="mt-1 block text-xs leading-5 text-slate-600 dark:text-foreground-secondary">{option.description}</span>
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
+            {initialWorkspace === 'ppt' && activeTab !== 'ppt_renovation' && (
+              <div className="mb-4">
+                <SegmentedControl
+                  ariaLabel={t('home.renderMode.label')}
+                  value={renderMode}
+                  onChange={setRenderMode}
+                  disabled={isSubmitting || isGlobalLoading}
+                  className="w-full rounded-[var(--app-radius-control)] p-1 [&>button]:flex-1 [&>button]:rounded-[var(--app-radius-control)]"
+                  options={[
+                    { value: 'image', label: t('home.renderMode.image') },
+                    { value: 'native', label: t('home.renderMode.native') },
+                  ]}
+                />
+                <p className="mt-2 text-xs leading-5 text-[var(--app-text-secondary)]">
+                  {renderMode === 'image' ? t('home.renderMode.imageDescription') : t('home.renderMode.nativeDescription')}
+                </p>
               </div>
             )}
 
-            {/* 描述 */}
-          <div className="mb-4 rounded-full border border-slate-200 bg-white/90 px-4 py-3 text-sm text-slate-600 shadow-sm dark:border-border-primary dark:bg-background-tertiary dark:text-foreground-secondary md:mb-5">
+          <div className="mb-4 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-3.5 py-2.5 text-sm text-[var(--app-text-secondary)]">
             <div className="flex flex-wrap items-center gap-2">
-              <Lightbulb size={16} className="shrink-0 text-cyan-600 dark:text-cyan-300" />
+              <Lightbulb size={16} className="shrink-0 text-[var(--app-accent)]" />
               <span className="font-medium">{tabConfig[activeTab].description}</span>
-              <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-500 dark:bg-background-secondary dark:text-foreground-tertiary">PDF / PPTX</span>
+              <span className="text-xs text-[var(--app-text-tertiary)]">{initialWorkspace === 'ppt' ? 'PDF / PPTX' : initialWorkspace === 'video' ? '场景时间线' : '节目片段'}</span>
               {tabConfig[activeTab].example && (
                 <span className="relative group/tip inline-flex">
-                  <HelpCircle size={15} className="text-slate-400 transition-colors hover:text-cyan-600 dark:text-foreground-tertiary dark:hover:text-cyan-300" />
-                  <span className="absolute left-1/2 z-50 mb-2 hidden w-72 -translate-x-1/2 rounded-lg border border-gray-200 bg-white p-3 text-xs leading-relaxed text-gray-700 shadow-xl bottom-full group-hover/tip:block dark:border-border-primary dark:bg-background-elevated dark:text-foreground-secondary dark:shadow-none md:w-80 whitespace-pre-line">
+                  <HelpCircle size={15} className="text-[var(--app-text-tertiary)] transition-colors hover:text-[var(--app-accent)]" />
+                  <span className="absolute bottom-full left-1/2 z-50 mb-2 hidden w-72 -translate-x-1/2 whitespace-pre-line rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)] p-3 text-xs leading-relaxed text-[var(--app-text-secondary)] shadow-[var(--app-shadow-floating)] group-hover/tip:block md:w-80">
                     {tabConfig[activeTab].example}
-                    <span className="absolute left-1/2 top-full -mt-px h-2 w-2 -translate-x-1/2 rotate-45 border-b border-r border-gray-200 bg-white dark:border-border-primary dark:bg-background-elevated" />
                   </span>
                 </span>
               )}
             </div>
           </div>
 
-          {renderMode === 'native' && (
-            <div className="mb-4">
-              <NativeThemePicker value={nativeTheme} onChange={setNativeTheme} disabled={isSubmitting || isGlobalLoading} />
-            </div>
-          )}
-
           {/* 输入区 - 带工具栏 */}
           <div className="mb-2">
-            {activeTab === 'ppt_renovation' ? (
+            {activeTab === 'blank' ? (
+              <div className="flex min-h-32 flex-col items-center justify-center gap-4 rounded-[var(--app-radius-control)] border border-dashed border-[var(--app-border-strong)] bg-[var(--app-surface-muted)] px-6 text-center">
+                <p className="text-sm text-[var(--app-text-secondary)]">{t('home.tabDescriptions.blank')}</p>
+                <Button
+                  size="sm"
+                  onClick={handleSubmit}
+                  loading={isSubmitting || isGlobalLoading}
+                >
+                  {t('home.actions.createProject')}
+                </Button>
+              </div>
+            ) : activeTab === 'ppt_renovation' ? (
               /* PPT 翻新：文件上传区 */
               <div className="space-y-4">
                 <div
-                  className="cursor-pointer rounded-[24px] border-2 border-dashed border-sky-200 bg-slate-50/80 p-10 text-center transition-colors duration-200 hover:border-cyan-400 dark:border-border-primary dark:bg-background-tertiary dark:hover:border-cyan-300"
-                  onClick={() => renovationFileInputRef.current?.click()}
+                  className="relative rounded-[var(--app-radius-control)] border border-dashed border-[var(--app-border-strong)] bg-[var(--app-surface-muted)] p-3"
                   onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
                   onDrop={(e) => {
                     e.preventDefault();
@@ -1082,27 +960,38 @@ export const Home: React.FC = () => {
                     }
                   }}
                 >
+                  <button
+                    type="button"
+                    onClick={() => renovationFileInputRef.current?.click()}
+                    className="flex min-h-28 w-full items-center justify-center rounded-[var(--app-radius-control)] px-4 text-center transition-colors hover:bg-[var(--app-surface-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)]"
+                    aria-label={renovationFile ? `更换文件 ${renovationFile.name}` : t('home.renovation.uploadHint')}
+                  >
                   {renovationFile ? (
                     <div className="flex items-center justify-center gap-3">
-                      <FileText size={24} className="text-cyan-600 dark:text-cyan-300" />
+                      <FileText size={24} className="text-[var(--app-accent)]" />
                       <div className="text-left">
-                        <p className="text-sm font-medium text-gray-900 dark:text-white">{renovationFile.name}</p>
-                        <p className="text-xs text-gray-500 dark:text-foreground-tertiary">{(renovationFile.size / 1024 / 1024).toFixed(1)} MB</p>
+                        <p className="max-w-md truncate text-sm font-medium text-[var(--app-text)]" title={renovationFile.name}>{renovationFile.name}</p>
+                        <p className="text-xs text-[var(--app-text-tertiary)]">{(renovationFile.size / 1024 / 1024).toFixed(1)} MB</p>
                       </div>
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); setRenovationFile(null); }}
-                        className="ml-2 text-gray-400 hover:text-red-500 transition-colors"
-                      >
-                        ✕
-                      </button>
                     </div>
                   ) : (
                     <div className="space-y-2">
-                      <Upload size={32} className="mx-auto text-gray-400 dark:text-foreground-tertiary" />
-                      <p className="text-sm text-gray-600 dark:text-foreground-secondary">{t('home.renovation.uploadHint')}</p>
-                      <p className="text-xs text-gray-400 dark:text-foreground-tertiary">{t('home.renovation.formatHint')}</p>
+                      <Upload size={28} className="mx-auto text-[var(--app-text-tertiary)]" />
+                      <p className="text-sm text-[var(--app-text-secondary)]">{t('home.renovation.uploadHint')}</p>
+                      <p className="text-xs text-[var(--app-text-tertiary)]">{t('home.renovation.formatHint')}</p>
                     </div>
+                  )}
+                  </button>
+                  {renovationFile && (
+                    <button
+                      type="button"
+                      onClick={() => setRenovationFile(null)}
+                      className="absolute right-3 top-3 flex h-10 w-10 items-center justify-center rounded-[var(--app-radius-control)] text-[var(--app-text-tertiary)] transition-colors hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-error)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)]"
+                      aria-label={`移除文件 ${renovationFile.name}`}
+                      title="移除文件"
+                    >
+                      <X size={18} />
+                    </button>
                   )}
                 </div>
                 <input
@@ -1123,28 +1012,21 @@ export const Home: React.FC = () => {
                   className="hidden"
                 />
 
-                {/* 保留布局 toggle */}
                 <div className="flex items-center justify-between">
-                  <label className="flex items-center gap-2 cursor-pointer group">
-                    <span className="text-sm text-gray-600 dark:text-foreground-tertiary group-hover:text-gray-900 dark:group-hover:text-white transition-colors">
-                      {t('home.renovation.keepLayout')}
-                    </span>
-                    <div className="relative">
-                      <input
-                        type="checkbox"
-                        checked={keepLayout}
-                        onChange={(e) => setKeepLayout(e.target.checked)}
-                        className="sr-only peer"
-                      />
-                      <div className="w-11 h-6 bg-gray-200 dark:bg-background-hover peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-cyan-300 dark:peer-focus:ring-cyan-400/30 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white dark:after:bg-foreground-secondary after:border-gray-300 dark:after:border-border-hover after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyan-500"></div>
-                    </div>
+                  <label className="flex cursor-pointer items-center gap-2 text-sm text-[var(--app-text-secondary)]">
+                    <input
+                      type="checkbox"
+                      checked={keepLayout}
+                      onChange={(e) => setKeepLayout(e.target.checked)}
+                      className="h-4 w-4 rounded border-[var(--app-border-strong)] accent-[var(--app-accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)]"
+                    />
+                    <span>{t('home.renovation.keepLayout')}</span>
                   </label>
                   <Button
                     size="sm"
                     onClick={handleSubmit}
                     loading={isSubmitting || isGlobalLoading}
                     disabled={!renovationFile}
-                    className="shadow-sm dark:shadow-background-primary/30 text-xs md:text-sm px-3 md:px-4"
                   >
                     {t('common.next')}
                   </Button>
@@ -1161,14 +1043,15 @@ export const Home: React.FC = () => {
               onDocumentFiles={handleDocumentFiles}
               onSelectFromLibrary={() => setIsMaterialSelectorOpen(true)}
               rows={activeTab === 'idea' ? 4 : 8}
-              className="rounded-[20px] border border-slate-200 bg-white text-sm shadow-sm transition-colors duration-200 focus-within:!border-cyan-500 focus-within:!ring-0 [&_[contenteditable]:focus-visible]:!outline-none [&_[contenteditable]]:!h-[260px] [&_[contenteditable]]:!min-h-0 [&_[contenteditable]]:resize-none md:[&_[contenteditable]]:!h-[360px] dark:border-border-primary dark:bg-background-tertiary dark:text-white md:text-base"
+              className="rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] text-sm shadow-none transition-colors focus-within:!border-[var(--app-accent)] focus-within:!ring-0 [&_[contenteditable]:focus-visible]:!outline-none [&_[contenteditable]]:!h-[140px] [&_[contenteditable]]:!min-h-0 [&_[contenteditable]]:resize-none"
               toolbarLeft={
                 <div className="flex items-center gap-1">
                   <button
                     type="button"
                     onClick={handlePaperclipClick}
-                    className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:text-foreground-tertiary dark:hover:text-foreground-secondary dark:hover:bg-background-hover rounded transition-colors active:scale-95 touch-manipulation"
+                    className="flex h-10 w-10 items-center justify-center rounded-[var(--app-radius-control)] text-[var(--app-text-tertiary)] transition-colors hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)]"
                     title={t('home.actions.selectFile')}
+                    aria-label={t('home.actions.selectFile')}
                   >
                     <Paperclip size={18} />
                   </button>
@@ -1177,21 +1060,26 @@ export const Home: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => setIsAspectRatioOpen(!isAspectRatioOpen)}
-                      className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:text-foreground-tertiary dark:hover:text-foreground-secondary dark:hover:bg-background-hover rounded transition-colors"
+                      className="flex h-10 items-center gap-1 rounded-[var(--app-radius-control)] px-2 text-xs font-medium text-[var(--app-text-tertiary)] transition-colors hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)]"
                       title={i18n.language?.startsWith('zh') ? '画面比例' : 'Aspect Ratio'}
+                      aria-haspopup="menu"
+                      aria-expanded={isAspectRatioOpen}
                     >
                       <span>{aspectRatio}</span>
                       <ChevronDown size={12} className={`transition-transform ${isAspectRatioOpen ? 'rotate-180' : ''}`} />
                     </button>
                     {isAspectRatioOpen && (
                       <>
-                        <div className="fixed inset-0 z-40" onClick={() => setIsAspectRatioOpen(false)} />
-                        <div className="absolute left-0 bottom-full mb-1 z-50 bg-white dark:bg-background-elevated border border-gray-200 dark:border-border-primary rounded-lg shadow-lg dark:shadow-none py-1 min-w-[80px]">
+                        <button type="button" aria-label="关闭画面比例菜单" className="fixed inset-0 z-40 cursor-default" onClick={() => setIsAspectRatioOpen(false)} />
+                        <div role="menu" className="absolute bottom-full left-0 z-50 mb-1 min-w-[92px] rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)] p-1 shadow-[var(--app-shadow-floating)]">
                           {ASPECT_RATIO_OPTIONS.map((opt) => (
                             <button
                               key={opt.value}
+                              type="button"
+                              role="menuitemradio"
+                              aria-checked={aspectRatio === opt.value}
                               onClick={() => { setAspectRatio(opt.value); setIsAspectRatioOpen(false); }}
-                              className={`w-full text-left px-3 py-1.5 text-xs hover:bg-sky-50 dark:hover:bg-background-hover transition-colors ${aspectRatio === opt.value ? 'text-cyan-600 font-semibold' : 'text-gray-700 dark:text-foreground-secondary'}`}
+                              className={`w-full rounded px-3 py-1.5 text-left text-xs transition-colors hover:bg-[var(--app-surface-hover)] ${aspectRatio === opt.value ? 'font-semibold text-[var(--app-accent)]' : 'text-[var(--app-text-secondary)]'}`}
                             >
                               {opt.label}
                             </button>
@@ -1212,7 +1100,6 @@ export const Home: React.FC = () => {
                     isUploadingImage ||
                     referenceFiles.some(f => f.parse_status === 'pending' || f.parse_status === 'parsing')
                   }
-                  className="shadow-sm dark:shadow-background-primary/30 text-xs md:text-sm px-3 md:px-4"
                 >
                   {referenceFiles.some(f => f.parse_status === 'pending' || f.parse_status === 'parsing')
                     ? t('home.actions.parsing')
@@ -1243,26 +1130,23 @@ export const Home: React.FC = () => {
             showToast={show}
           />
 
-          {renderMode === 'image' ? <div className="mb-6 md:mb-8 pt-4 border-t border-gray-100 dark:border-border-primary">
-            <div className="flex flex-wrap items-center justify-between gap-3 mb-3 md:mb-4">
+          {initialWorkspace === 'ppt' && (renderMode === 'image' ? <div className="mb-6 border-t border-[var(--app-border)] pt-4">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2">
-                <Palette size={18} className="text-cyan-600 dark:text-cyan-300 flex-shrink-0" />
-                <h3 className="text-base md:text-lg font-semibold text-gray-900 dark:text-white">
+                <Palette size={18} className="flex-shrink-0 text-[var(--app-accent)]" />
+                <h3 className="text-[15px] font-semibold leading-[22px] text-[var(--app-text)]">
                   {t('home.template.title')}
                 </h3>
               </div>
-              <button
-                type="button"
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={isExtractingStyle ? <Loader2 size={15} className="animate-spin" /> : <ImagePlus size={15} />}
                 onClick={() => styleImageInputRef.current?.click()}
                 disabled={isExtractingStyle}
-                className="inline-flex items-center gap-1.5 rounded-full border-2 border-dashed border-cyan-300 px-3 py-1.5 text-sm font-medium text-slate-600 shadow-sm transition-all hover:border-cyan-500 hover:bg-cyan-50 disabled:opacity-60 dark:border-cyan-700 dark:text-foreground-secondary dark:hover:border-cyan-400 dark:hover:bg-background-hover"
               >
-                {isExtractingStyle ? (
-                  <><Loader2 size={15} className="animate-spin" />{t('home.template.extracting')}</>
-                ) : (
-                  <><ImagePlus size={15} />{t('home.template.extractTitle')}</>
-                )}
-              </button>
+                {isExtractingStyle ? t('home.template.extracting') : t('home.template.extractTitle')}
+              </Button>
               <input
                 ref={styleImageInputRef}
                 type="file"
@@ -1270,31 +1154,19 @@ export const Home: React.FC = () => {
                 onChange={handleStyleImageSelect}
                 className="hidden"
               />
-              <label className="flex items-center gap-2 cursor-pointer group">
-                <span className="text-sm text-gray-600 dark:text-foreground-tertiary group-hover:text-gray-900 dark:group-hover:text-white transition-colors">
-                  {t('home.template.useTextStyle')}
-                </span>
-                <div className="relative">
-                  <input
-                    type="checkbox"
-                    checked={useTemplateStyle}
-                    onChange={(e) => setUseTemplateStyle(e.target.checked)}
-                    className="sr-only peer"
-                  />
-                  <div className="w-11 h-6 bg-gray-200 dark:bg-background-hover peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-cyan-300 dark:peer-focus:ring-cyan-400/30 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white dark:after:bg-foreground-secondary after:border-gray-300 dark:after:border-border-hover after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyan-500"></div>
-                </div>
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-[var(--app-text-secondary)]">
+                <input
+                  type="checkbox"
+                  checked={useTemplateStyle}
+                  onChange={(e) => setUseTemplateStyle(e.target.checked)}
+                  className="h-4 w-4 rounded border-[var(--app-border-strong)] accent-[var(--app-accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)]"
+                />
+                <span>{t('home.template.useTextStyle')}</span>
               </label>
             </div>
 
-            <TemplateSelector
-              onSelect={handleTemplateSelect}
-              selectedTemplateId={selectedTemplateId}
-              selectedPresetTemplateId={selectedPresetTemplateId}
-              showUpload={true}
-              projectId={currentProjectId}
-            />
             {useTemplateStyle && (
-              <div className="mt-4">
+              <div className="mb-4">
                 <TextStyleSelector
                   value={templateStyle}
                   onChange={setTemplateStyle}
@@ -1302,51 +1174,56 @@ export const Home: React.FC = () => {
                 />
               </div>
             )}
+            <TemplateSelector
+              onSelect={handleTemplateSelect}
+              selectedTemplateId={selectedTemplateId}
+              selectedPresetTemplateId={selectedPresetTemplateId}
+              selectedTemplateDetails={(
+                <TemplateVisualSettingsPanel
+                  value={templateVisualSettings}
+                  onChange={setTemplateVisualSettings}
+                  disabled={isSubmitting || isGlobalLoading}
+                />
+              )}
+              showUpload={true}
+              projectId={currentProjectId}
+            />
           </div> : (
-            <div className="mb-6 md:mb-8 pt-4 border-t border-gray-100 dark:border-border-primary">
+            <div data-testid="native-text-style" className="mb-6 border-t border-[var(--app-border)] pt-4">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
-                  <Palette size={18} className="text-cyan-600 dark:text-cyan-300 flex-shrink-0" />
-                  <h3 className="text-base md:text-lg font-semibold text-gray-900 dark:text-white">文字描述风格</h3>
+                  <Palette size={18} className="flex-shrink-0 text-[var(--app-accent)]" />
+                  <h3 className="text-[15px] font-semibold leading-[22px] text-[var(--app-text)]">文字描述风格</h3>
                 </div>
-                <label className="flex cursor-pointer items-center gap-2">
-                  <span className="text-sm text-gray-600 dark:text-foreground-tertiary">使用文字描述风格</span>
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-[var(--app-text-secondary)]">
                   <input
                     type="checkbox"
                     checked={useNativeTextStyle}
                     onChange={(event) => setUseNativeTextStyle(event.target.checked)}
                     disabled={isSubmitting || isGlobalLoading}
-                    className="sr-only peer"
+                    className="h-4 w-4 rounded border-[var(--app-border-strong)] accent-[var(--app-accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)]"
                   />
-                  <span className="relative h-6 w-11 rounded-full bg-gray-200 transition-colors after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-transform peer-checked:bg-cyan-500 peer-checked:after:translate-x-full peer-focus-visible:ring-4 peer-focus-visible:ring-cyan-300/60 dark:bg-background-hover dark:after:border-border-hover dark:after:bg-foreground-secondary" />
+                  <span>使用文字描述风格</span>
                 </label>
               </div>
               {useNativeTextStyle && <TextStyleSelector value={templateStyle} onChange={setTemplateStyle} onToast={show} />}
+              <div data-testid="native-preset-styles" className="mt-5 border-t border-[var(--app-border)] pt-5">
+                <NativeThemePicker value={nativeTheme} onChange={setNativeTheme} disabled={isSubmitting || isGlobalLoading} />
+              </div>
             </div>
-          )}
+          ))}
 
-        </Card>
-        )}
+        </section>
 
       </main>
       <ToastContainer />
-      {/* 素材生成模态 - 在主页始终生成全局素材 */}
-      <MaterialGeneratorModal
-        projectId={null}
-        isOpen={isMaterialModalOpen}
-        onClose={() => setIsMaterialModalOpen(false)}
-      />
-      {/* 素材中心模态 */}
-      <MaterialCenterModal
-        isOpen={isMaterialCenterOpen}
-        onClose={() => setIsMaterialCenterOpen(false)}
-      />
       {/* 从素材库选择插入到文本框 */}
       <MaterialSelector
         isOpen={isMaterialSelectorOpen}
         onClose={() => setIsMaterialSelectorOpen(false)}
         onSelect={handleMaterialSelect}
         multiple
+        mediaKindFilter={['image']}
       />
       {/* 参考文件选择器 */}
       {/* 在 Home 页面，始终查询全局文件，因为此时还没有项目 */}

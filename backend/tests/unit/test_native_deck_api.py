@@ -209,8 +209,10 @@ def test_generation_restores_theme_from_existing_native_layout_for_old_projects(
             return {'layout': layout, 'props': {}}
 
     with client.application.app_context():
+        from services.ppt_workspace_service import update_ppt_settings
+
         project = _native_project(page_count=2)
-        project.native_theme = None
+        update_ppt_settings(project, {'native_theme': None}, record_revision=False)
         project.pages[0].native_layout = 'theme05_page006'
         task = Task(project=project, task_type='GENERATE_NATIVE_DECK')
         db.session.add(task)

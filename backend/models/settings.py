@@ -1,10 +1,20 @@
 """Settings model"""
 import json
+import logging
 from datetime import datetime, timezone
 from sqlalchemy import text
 from sqlalchemy.orm.attributes import flag_modified
 from . import db
-from secret_storage import EncryptedText, SECRET_FIELD_NAMES, is_encrypted
+from secret_storage import (
+    EncryptedText,
+    SECRET_FIELD_NAMES,
+    SecretStorageError,
+    decrypt_secret,
+    is_encrypted,
+)
+
+
+logger = logging.getLogger(__name__)
 
 
 def _utcnow_naive():
@@ -39,6 +49,7 @@ class Settings(db.Model):
     text_thinking_budget = db.Column(db.Integer, nullable=False, default=1024)  # 文本推理思考负载 (1-8192)
     enable_image_reasoning = db.Column(db.Boolean, nullable=False, default=False)  # 图像生成是否开启推理
     image_thinking_budget = db.Column(db.Integer, nullable=False, default=1024)  # 图像推理思考负载 (1-8192)
+    enable_image_quality_control = db.Column(db.Boolean, nullable=False, default=False)
     
     # 描述生成模式: streaming / parallel (NULL=默认 streaming)
     description_generation_mode = db.Column(db.String(20), nullable=True)
@@ -49,11 +60,6 @@ class Settings(db.Model):
 
     # 百度 API 配置
     baidu_api_key = db.Column(EncryptedText(), nullable=True)  # 百度 API Key
-
-    # ElevenLabs TTS 配置
-    elevenlabs_enabled = db.Column(db.Boolean, nullable=False, default=False)
-    elevenlabs_api_key = db.Column(EncryptedText(), nullable=True)
-    elevenlabs_voice_id = db.Column(db.String(100), nullable=True)
 
     # 每种模型类型的提供商配置（source 可选 gemini/openai/lazyllm厂商名，NULL=使用全局配置）
     text_model_source = db.Column(db.String(50), nullable=True)           # 文本模型提供商 (gemini, openai, qwen, doubao, deepseek, ...)
@@ -68,6 +74,10 @@ class Settings(db.Model):
     image_api_base_url = db.Column(db.String(500), nullable=True)
     image_caption_api_key = db.Column(EncryptedText(), nullable=True)
     image_caption_api_base_url = db.Column(db.String(500), nullable=True)
+
+    # Fish Audio is used by narration-video export only.
+    fish_audio_api_key = db.Column(EncryptedText(), nullable=True)
+    fish_audio_voice_assets = db.Column(db.Text, nullable=True)
 
     # OpenAI image API protocol: auto (default), images (force images.generate), chat (force chat.completions)
     openai_image_api_protocol = db.Column(db.String(10), nullable=True)
@@ -111,16 +121,29 @@ class Settings(db.Model):
                 pass
         return list(self.DEFAULT_IMAGE_PROMPT_FIELDS)
 
+    def get_fish_audio_voice_assets(self):
+        from services.narration_service import normalize_voice_assets
+
+        try:
+            return normalize_voice_assets(self.fish_audio_voice_assets)
+        except ValueError:
+            return []
+
+    def set_fish_audio_voice_assets(self, value):
+        from services.narration_service import normalize_voice_assets
+
+        self.fish_audio_voice_assets = json.dumps(normalize_voice_assets(value), ensure_ascii=False)
+
     def to_dict(self):
         """Convert to dictionary, merging .env defaults for None fields."""
         d = Settings._get_config_defaults()
         api_key = self._val('api_key', d)
         mineru_token = self._val('mineru_token', d)
         baidu_api_key = self._val('baidu_api_key', d)
-        elevenlabs_api_key = self._val('elevenlabs_api_key', d)
         text_api_key = self._val('text_api_key', d)
         image_api_key = self._val('image_api_key', d)
         image_caption_api_key = self._val('image_caption_api_key', d)
+        fish_audio_api_key = self._val('fish_audio_api_key', d)
         return {
             'id': self.id,
             'ai_provider_format': self._val('ai_provider_format', d),
@@ -143,6 +166,7 @@ class Settings(db.Model):
             'text_thinking_budget': self.text_thinking_budget,
             'enable_image_reasoning': self.enable_image_reasoning,
             'image_thinking_budget': self.image_thinking_budget,
+            'enable_image_quality_control': self.enable_image_quality_control,
             'baidu_api_key_length': len(baidu_api_key) if baidu_api_key else 0,
             'text_model_source': self._val('text_model_source', d),
             'image_model_source': self._val('image_model_source', d),
@@ -154,10 +178,10 @@ class Settings(db.Model):
             'image_api_base_url': self._val('image_api_base_url', d),
             'image_caption_api_key_length': len(image_caption_api_key) if image_caption_api_key else 0,
             'image_caption_api_base_url': self._val('image_caption_api_base_url', d),
+            'fish_audio_api_key_length': len(fish_audio_api_key) if fish_audio_api_key else 0,
+            'fish_audio_model': d.get('fish_audio_model', 's2.1-pro-free'),
+            'fish_audio_voice_assets': self.get_fish_audio_voice_assets(),
             'openai_image_api_protocol': self._val('openai_image_api_protocol', d) or 'auto',
-            'elevenlabs_enabled': self.elevenlabs_enabled,
-            'elevenlabs_api_key_length': len(elevenlabs_api_key) if elevenlabs_api_key else 0,
-            'elevenlabs_voice_id': self.elevenlabs_voice_id or '',
             'openai_oauth_connected': self.is_openai_oauth_connected(),
             'openai_oauth_account_id': self.openai_oauth_account_id if self.is_openai_oauth_connected() else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
@@ -300,6 +324,8 @@ class Settings(db.Model):
             'image_model_source': getattr(Config, 'IMAGE_MODEL_SOURCE', None),
             'image_caption_model_source': getattr(Config, 'IMAGE_CAPTION_MODEL_SOURCE', None),
             'lazyllm_api_keys': collect_env_lazyllm_api_keys(),
+            'fish_audio_api_key': Config.FISH_AUDIO_API_KEY or None,
+            'fish_audio_model': Config.FISH_AUDIO_MODEL,
         }
 
     @staticmethod
@@ -312,7 +338,37 @@ class Settings(db.Model):
         Legacy plaintext credentials are migrated to local encrypted storage
         on first read.
         """
-        settings = Settings.query.first()
+        try:
+            settings = Settings.query.first()
+        except SecretStorageError:
+            db.session.rollback()
+            columns = ", ".join(("id", *SECRET_FIELD_NAMES))
+            row = db.session.execute(
+                text(f"SELECT {columns} FROM settings ORDER BY id LIMIT 1")
+            ).mappings().first()
+            invalid_fields = []
+            if row:
+                for field in SECRET_FIELD_NAMES:
+                    value = row.get(field)
+                    if not is_encrypted(value):
+                        continue
+                    try:
+                        decrypt_secret(value)
+                    except SecretStorageError:
+                        invalid_fields.append(field)
+                if invalid_fields:
+                    assignments = ", ".join(f"{field} = NULL" for field in invalid_fields)
+                    db.session.execute(
+                        text(f"UPDATE settings SET {assignments} WHERE id = :id"),
+                        {"id": row["id"]},
+                    )
+                    db.session.commit()
+                    logger.warning(
+                        "Cleared settings credentials that cannot be decrypted: %s",
+                        ", ".join(invalid_fields),
+                    )
+            db.session.expire_all()
+            settings = Settings.query.first()
 
         if settings is None:
             settings = Settings(id=1)

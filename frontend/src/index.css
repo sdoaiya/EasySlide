@@ -3,11 +3,69 @@
 @tailwind utilities;
 
 :root {
-  /* 旧 banana token 继续保留给 Tailwind 类名使用，颜色改为当前青蓝主色 */
-  --banana-yellow: #06B6D4;
-  --banana-yellow-light: #67E8F9;
-  --banana-yellow-dark: #0891B2;
-  --banana-yellow-pale: #ECFEFF;
+  color-scheme: light;
+  --app-background: #F5F5F7;
+  --app-canvas: #EDEEF0;
+  --app-surface: #FFFFFF;
+  --app-surface-muted: #F7F7F9;
+  --app-surface-hover: #ECECF0;
+  --app-surface-secondary: var(--app-surface-muted);
+  --app-text: #1D1D1F;
+  --app-text-secondary: #5F5F66;
+  --app-text-tertiary: #86868B;
+  --app-on-color: #FFFFFF;
+  --app-text-muted: var(--app-text-tertiary);
+  --app-border: rgba(60, 60, 67, 0.18);
+  --app-border-strong: rgba(60, 60, 67, 0.32);
+  --app-border-hover: var(--app-border-strong);
+  --app-border-soft: rgba(52, 73, 105, 0.08);
+  --app-accent: #007AFF;
+  --app-accent-hover: #006FE8;
+  --app-accent-soft: rgba(0, 122, 255, 0.16);
+  --app-primary-action: #1D1D1F;
+  --app-primary-action-hover: #000000;
+  --app-focus: var(--app-accent);
+  --app-link: var(--app-accent);
+  --app-index-red: #C93F46;
+  --app-index-yellow: #B57900;
+  --app-index-green: #248A3D;
+  --app-accent-blue: #256DFF;
+  --app-accent-blue-soft: rgba(37, 109, 255, 0.13);
+  --app-accent-teal: #00A6A6;
+  --app-accent-teal-soft: rgba(0, 166, 166, 0.13);
+  --app-accent-coral: #FF7A45;
+  --app-accent-coral-soft: rgba(255, 122, 69, 0.14);
+  --app-accent-amber: #D88A00;
+  --app-accent-amber-soft: rgba(216, 138, 0, 0.14);
+  --app-accent-violet: #7A5CFF;
+  --app-accent-violet-soft: rgba(122, 92, 255, 0.13);
+  --app-accent-ocean: #0099D8;
+  --app-accent-ocean-soft: rgba(0, 153, 216, 0.13);
+  --app-success: #1C8F4A;
+  --app-warning: #B76B00;
+  --app-error: #D92D3A;
+  --app-danger: var(--app-error);
+  --app-error-soft: rgba(217, 45, 58, 0.16);
+  --app-bg: var(--app-background);
+  --app-text-primary: var(--app-text);
+  --app-accent-strong: var(--app-accent-hover);
+  --app-backdrop: rgba(0, 0, 0, 0.38);
+  --app-radius-control: 6px;
+  --app-radius-card: 8px;
+  --app-radius-modal: 12px;
+  --app-radius-panel: var(--app-radius-modal);
+  --app-shadow-soft: 0 8px 24px rgba(0, 0, 0, 0.12);
+  --app-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.06);
+  --app-shadow-medium: 0 8px 24px rgba(0, 0, 0, 0.12);
+  --app-shadow-control: 0 1px 2px rgba(0, 0, 0, 0.08);
+  --app-shadow-floating: 0 16px 42px rgba(0, 0, 0, 0.18);
+  --app-shadow-elevated: var(--app-shadow-floating);
+
+  /* Legacy utility aliases keep older colorful UI accents alive. */
+  --banana-yellow: #F5B800;
+  --banana-yellow-light: #FFE58A;
+  --banana-yellow-dark: #B7791F;
+  --banana-yellow-pale: rgba(245, 184, 0, 0.16);
 
   /* 中性色 - 黑白灰 */
   --black: #1A1A1A;
@@ -46,10 +104,64 @@
 }
 
 .dark {
-  --banana-yellow: #22D3EE;
-  --banana-yellow-light: #67E8F9;
-  --banana-yellow-dark: #06B6D4;
-  --banana-yellow-pale: #083344;
+  color-scheme: dark;
+  --app-background: #151517;
+  --app-canvas: #202023;
+  --app-surface: #1C1C1E;
+  --app-surface-muted: #242426;
+  --app-surface-hover: #303033;
+  --app-surface-secondary: var(--app-surface-muted);
+  --app-text: #F5F5F7;
+  --app-text-secondary: #C7C7CC;
+  --app-text-tertiary: #98989F;
+  --app-on-color: #FFFFFF;
+  --app-text-muted: var(--app-text-tertiary);
+  --app-border: rgba(84, 84, 88, 0.65);
+  --app-border-strong: rgba(99, 99, 102, 0.9);
+  --app-border-hover: var(--app-border-strong);
+  --app-border-soft: rgba(84, 84, 88, 0.42);
+  --app-accent: #0A84FF;
+  --app-accent-hover: #409CFF;
+  --app-accent-soft: rgba(10, 132, 255, 0.3);
+  --app-primary-action: #F5F5F7;
+  --app-primary-action-hover: #FFFFFF;
+  --app-focus: var(--app-accent);
+  --app-link: var(--app-accent);
+  --app-index-red: #FF6961;
+  --app-index-yellow: #FFD60A;
+  --app-index-green: #30D158;
+  --app-accent-blue: #60A5FA;
+  --app-accent-blue-soft: rgba(96, 165, 250, 0.22);
+  --app-accent-teal: #2DD4BF;
+  --app-accent-teal-soft: rgba(45, 212, 191, 0.2);
+  --app-accent-coral: #FB923C;
+  --app-accent-coral-soft: rgba(251, 146, 60, 0.22);
+  --app-accent-amber: #FBBF24;
+  --app-accent-amber-soft: rgba(251, 191, 36, 0.22);
+  --app-accent-violet: #A78BFA;
+  --app-accent-violet-soft: rgba(167, 139, 250, 0.22);
+  --app-accent-ocean: #38BDF8;
+  --app-accent-ocean-soft: rgba(56, 189, 248, 0.2);
+  --app-success: #30D158;
+  --app-warning: #FF9F0A;
+  --app-error: #FF453A;
+  --app-danger: var(--app-error);
+  --app-error-soft: rgba(255, 69, 58, 0.24);
+  --app-bg: var(--app-background);
+  --app-text-primary: var(--app-text);
+  --app-accent-strong: var(--app-accent-hover);
+  --app-backdrop: rgba(0, 0, 0, 0.58);
+  --app-radius-panel: var(--app-radius-modal);
+  --app-shadow-soft: 0 12px 36px rgba(0, 0, 0, 0.42);
+  --app-shadow-card: 0 3px 14px rgba(0, 0, 0, 0.28);
+  --app-shadow-medium: 0 12px 36px rgba(0, 0, 0, 0.42);
+  --app-shadow-floating: 0 20px 56px rgba(0, 0, 0, 0.48);
+  --app-shadow-elevated: var(--app-shadow-floating);
+
+  --banana-yellow: #FFD60A;
+  --banana-yellow-light: #FFE680;
+  --banana-yellow-dark: #FBBF24;
+  --banana-yellow-pale: rgba(255, 214, 10, 0.18);
 
   /* 中性色 - 深色模式 */
   --black: #F5F5F5;
@@ -83,14 +195,15 @@
 }
 
 body {
-  font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-family: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  letter-spacing: 0;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   /* 移动端优化 */
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
-  background-color: var(--bg-primary);
-  color: var(--text-primary);
+  background: var(--app-background);
+  color: var(--app-text);
   transition: background-color 0.2s ease-in-out, color 0.2s ease-in-out;
 }
 
@@ -100,21 +213,39 @@ body {
 
 /* Dashi-style editor shell: toolbar, three-pane workspace, status bar. */
 :root {
-  --workspace-toolbar-height: 56px;
-  --workspace-statusbar-height: 36px;
-  --workspace-sidebar-width: 188px;
+  --workspace-toolbar-height: 52px;
+  --workspace-statusbar-height: 32px;
+  --workspace-sidebar-width: 216px;
   --workspace-sidebar-collapsed-width: 44px;
-  --workspace-inspector-width: 304px;
+  --workspace-inspector-width: 320px;
 }
 
 .workspace-shell {
   display: grid;
-  grid-template-rows: var(--workspace-toolbar-height) minmax(0, 1fr) var(--workspace-statusbar-height);
-  grid-template-areas: "toolbar toolbar toolbar" "sidebar canvas inspector" "status status status";
+  grid-template-rows: var(--workspace-toolbar-height) minmax(0, 1fr);
+  grid-template-areas: "toolbar toolbar toolbar" "sidebar canvas inspector";
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  background: #f9fafb;
+  background: var(--app-canvas);
+}
+
+nav[aria-label="工作台导航"] {
+  border-color: var(--app-border) !important;
+  background: var(--app-surface-muted) !important;
+}
+
+.workspace-shell > header,
+.workspace-shell > footer {
+  background: var(--app-surface) !important;
+}
+
+.workspace-shell > footer.workspace-status-bar {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: 30;
+  height: var(--workspace-statusbar-height);
 }
 
 .workspace-shell > main {
@@ -155,16 +286,16 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--bg-secondary);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--banana-yellow);
+  background: rgba(120, 120, 128, 0.34);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--banana-yellow-dark);
+  background: rgba(120, 120, 128, 0.55);
 }
 
 /* 描述卡片极轻滚动条 */
@@ -219,3 +350,39 @@ body {
   line-height: 1.6;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .workspace-shell > header,
+  .workspace-shell > footer {
+    background: var(--app-surface) !important;
+    backdrop-filter: none !important;
+  }
+}
+
+@media (forced-colors: active) {
+  :focus-visible {
+    outline: 2px solid Highlight !important;
+    outline-offset: 2px;
+  }
+
+  [aria-selected="true"],
+  [aria-checked="true"],
+  [aria-current] {
+    border-color: Highlight !important;
+  }
+
+  :disabled,
+  [aria-disabled="true"] {
+    color: GrayText !important;
+  }
+}

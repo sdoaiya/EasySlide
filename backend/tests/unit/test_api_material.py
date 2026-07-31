@@ -76,11 +76,45 @@ class TestMaterialUpload:
         assert data['data']['caption'] is None
         mock_caption.assert_not_called()
 
+
+    @patch('controllers.material_controller._generate_image_caption')
+    def test_upload_audio_material_sets_kind_and_skips_caption(self, mock_caption, client):
+        response = client.post(
+            '/api/materials/upload?generate_caption=true',
+            data={'file': (io.BytesIO(b'ID3\x04\x00\x00\x00\x00\x00\x00audio'), 'voice.mp3')},
+            content_type='multipart/form-data'
+        )
+
+        data = assert_success_response(response, 201)
+        material = data['data']
+        assert material['media_kind'] == 'audio'
+        assert material['purpose'] == 'audio'
+        assert material['mime_type'] == 'audio/mpeg'
+        assert material['filename'].endswith('.mp3')
+        assert material['caption'] is None
+        mock_caption.assert_not_called()
+
+    def test_list_materials_filters_by_media_kind(self, client):
+        client.post(
+            '/api/materials/upload',
+            data={'file': (_create_test_image(), 'cover.png')},
+            content_type='multipart/form-data'
+        )
+        client.post(
+            '/api/materials/upload',
+            data={'file': (io.BytesIO(b'ID3\x04\x00\x00\x00\x00\x00\x00audio'), 'voice.mp3')},
+            content_type='multipart/form-data'
+        )
+
+        data = assert_success_response(client.get('/api/materials?project_id=all&media_kind=audio'))
+        assert data['data']['count'] == 1
+        assert data['data']['materials'][0]['media_kind'] == 'audio'
+
     def test_upload_material_invalid_file_type(self, client):
         """Unsupported file type should return 400"""
         response = client.post(
             '/api/materials/upload',
-            data={'file': (io.BytesIO(b'fake data'), 'test.txt')},
+            data={'file': (io.BytesIO(b'\x00fake data'), 'test.exe')},
             content_type='multipart/form-data'
         )
         assert response.status_code == 400

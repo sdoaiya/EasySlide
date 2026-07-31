@@ -30,3 +30,17 @@ class TestImagePromptAspectRatio:
         )
         assert "1:1比例" in prompt
         assert "16:9比例" not in prompt
+
+    def test_default_prompt_avoids_over_rendering_language(self):
+        prompt = get_image_generation_prompt(
+            page_desc="Test page",
+            outline_text="Test outline",
+            current_section="Section 1",
+        )
+
+        assert "单一清晰的视觉焦点" in prompt
+        assert "次要物体不超过三个" in prompt
+        assert "现实尺度" in prompt
+        assert "文字清晰锐利" in prompt
+        assert "4K分辨率" not in prompt
+        assert "最完美的构图" not in prompt

@@ -10,7 +10,7 @@ import { getStaticAssetUrl } from '@/api/client';
 const previewI18n = {
   zh: {
     home: { title: 'EasySlide' },
-    nav: { home: '主页', materialGenerate: '素材生成' },
+    nav: { home: '首页', materialGenerate: '素材生成' },
     slidePreview: {
       pageGenerating: "该页面正在生成中，请稍候...", generationStarted: "已开始生成图片，请稍候...",
       versionSwitched: "已切换到该版本", outlineSaved: "大纲和描述已保存",
@@ -68,9 +68,6 @@ const previewI18n = {
       videoDirectorLaunch: "产品发布",
       videoDirectorBrief: "简洁播报",
       videoNarrationGenerateMissing: "自动为缺失旁白的页面生成讲稿",
-      videoUseElevenLabs: "使用 ElevenLabs 语音合成",
-      videoElevenLabsNoKey: "尚未配置 ElevenLabs API Key，语音合成将无法使用。",
-      videoElevenLabsGoSettings: "前往设置",
       videoEnableKenBurns: "启用画面动效",
       videoKenBurnsTip: "为每页幻灯片添加缓慢的缩放或平移动画，让视频画面更有节奏感",
       videoKenBurnsStyle: "镜头动效风格",
@@ -98,10 +95,13 @@ const previewI18n = {
       generationProgress: "{{status}} {{completed}} / {{total}}",
       generationRunning: "正在生成", generationPaused: "已暂停",
       multiSelect: "多选", cancelMultiSelect: "取消多选", pagesUnit: "页",
-      noPages: "还没有页面", noPagesHint: "请先返回编辑页面添加内容", backToEdit: "返回编辑",
+      noPages: "还没有页面", noPageSelected: "未选择页面", noPagesHint: "请先返回编辑页面添加内容", backToEdit: "返回编辑",
       generating: "正在生成中...", queued: "排队等待生成...", notGenerated: "尚未生成图片", generateThisPage: "开始生成此页", retryThisPage: "重试此页",
       prevPage: "上一页", nextPage: "下一页", historyVersions: "历史版本",
       versions: "版本", version: "版本", current: "当前", editPage: "编辑页面",
+      sceneReady: "元素动画已就绪", sceneBuilding: "正在准备元素动画", sceneDegraded: "元素动画已降级",
+      sceneFailed: "元素动画失败", sceneMissing: "仅整页动效", sceneQuality: "质量",
+      recoverScene: "恢复动画图层", recoveringScene: "正在恢复动画图层", sceneRecoveryQueued: "动画图层恢复任务已启动",
       regionSelect: "区域选图", endRegionSelect: "结束区域选图",
       pageOutline: "页面大纲（可编辑）", pageDescription: "页面描述（可编辑）",
       enterTitle: "输入页面标题", pointsPerLine: "要点（每行一个）",
@@ -199,9 +199,6 @@ const previewI18n = {
       videoDirectorLaunch: "Product launch",
       videoDirectorBrief: "Brief update",
       videoNarrationGenerateMissing: "Auto-generate narration for slides that are missing it",
-      videoUseElevenLabs: "Use ElevenLabs text-to-speech",
-      videoElevenLabsNoKey: "No ElevenLabs API Key configured — voice synthesis will not work.",
-      videoElevenLabsGoSettings: "Go to Settings",
       videoEnableKenBurns: "Enable camera motion",
       videoKenBurnsTip: "Adds slow zoom or pan animation to each slide for a more dynamic video",
       videoKenBurnsStyle: "Camera motion style",
@@ -229,10 +226,13 @@ const previewI18n = {
       generationProgress: "{{status}} {{completed}} / {{total}}",
       generationRunning: "Generating", generationPaused: "Paused",
       multiSelect: "Multi-select", cancelMultiSelect: "Cancel Multi-select", pagesUnit: " pages",
-      noPages: "No pages yet", noPagesHint: "Please go back to editor to add content first", backToEdit: "Back to Editor",
+      noPages: "No pages yet", noPageSelected: "No page selected", noPagesHint: "Please go back to editor to add content first", backToEdit: "Back to Editor",
       generating: "Generating...", queued: "Queued for generation...", notGenerated: "Image not generated yet", generateThisPage: "Start This Page", retryThisPage: "Retry This Page",
       prevPage: "Previous", nextPage: "Next", historyVersions: "History Versions",
       versions: "Versions", version: "Version", current: "Current", editPage: "Edit Page",
+      sceneReady: "Element animation ready", sceneBuilding: "Preparing element animation", sceneDegraded: "Element animation degraded",
+      sceneFailed: "Element animation failed", sceneMissing: "Whole-slide motion only", sceneQuality: "Quality",
+      recoverScene: "Recover animation layers", recoveringScene: "Recovering animation layers", sceneRecoveryQueued: "Animation-layer recovery started",
       regionSelect: "Region Select", endRegionSelect: "End Region Select",
       pageOutline: "Page Outline (Editable)", pageDescription: "Page Description (Editable)",
       enterTitle: "Enter page title", pointsPerLine: "Key Points (one per line)",
@@ -294,8 +294,14 @@ import {
   Info,
   Pause,
   Play,
+  Plus,
+  Trash2,
 } from 'lucide-react';
 import { Button, Loading, Modal, Textarea, useToast, useConfirm, MaterialSelector, ProjectSettingsModal, ExportTasksPanel, TextStyleSelector } from '@/components/shared';
+import { SegmentedControl } from '@/components/shared/SegmentedControl';
+import { WorkspaceShell } from '@/components/workspace/WorkspaceShell';
+import { WorkspaceStatusBar } from '@/components/workspace/WorkspaceStatusBar';
+import { WorkspaceToolbar } from '@/components/workspace/WorkspaceToolbar';
 import { MaterialGeneratorModal } from '@/components/shared/MaterialGeneratorModal';
 import { TemplateSelector, getTemplateFile } from '@/components/shared/TemplateSelector';
 import { listUserTemplates, type UserTemplate } from '@/api/endpoints';
@@ -305,8 +311,10 @@ import { SlideCard } from '@/components/preview/SlideCard';
 import { useProjectStore } from '@/store/useProjectStore';
 import { useExportTasksStore, type ExportTask, type ExportTaskType } from '@/store/useExportTasksStore';
 import { getImageUrl } from '@/api/client';
-import { getPageImageVersions, setCurrentImageVersion, updateProject, uploadTemplate, exportPPTX as apiExportPPTX, exportPDF as apiExportPDF, exportImages as apiExportImages, exportEditablePPTX as apiExportEditablePPTX, exportVideo as apiExportVideo, getSettings, getElevenLabsVoices } from '@/api/endpoints';
-import type { ImageGenerationOptions, ImageVersion, DescriptionContent, ExportExtractorMethod, ExportInpaintMethod, Page, NarrationConfig } from '@/types';
+import { getPageImageVersions, setCurrentImageVersion, recoverPageImageScene, getTaskStatus, updateProject, uploadTemplate, uploadPageTemplate, updatePageTemplate, clearPageTemplate, autoMatchPageTemplates, exportPPTX as apiExportPPTX, exportPDF as apiExportPDF, exportImages as apiExportImages, exportEditablePPTX as apiExportEditablePPTX, exportVideo as apiExportVideo, preflightExportVideo as apiPreflightExportVideo, getSettings, getFishAudioVoices, getProjectNarrations } from '@/api/endpoints';
+import type { ImageGenerationOptions, ImageVersion, DescriptionContent, ExportExtractorMethod, ExportInpaintMethod, Page, NarrationConfig, NarrationSpeaker, FishAudioVoice, NarrationPreferences, PronunciationEntry, ProjectNarrationSummary } from '@/types';
+import { FishNarrationAdvancedPanel, DEFAULT_NARRATION_PREFERENCES } from '@/components/shared/FishNarrationAdvancedPanel';
+import { NarrationWorkbench } from '@/components/narration/NarrationWorkbench';
 import { normalizeErrorMessage } from '@/utils';
 import { NativeDeckWorkspaceLoader } from '@/components/native-deck/NativeDeckWorkspaceLoader';
 import { buildNativeProjectSlides } from '@/native-deck/nativeProjectSlides';
@@ -317,20 +325,20 @@ import type { NativeLayoutContract } from '@/components/native-deck/NativeDeckPr
 
 const VIDEO_VOICE_OPTIONS = [
   { group: '中文', voices: [
-    { id: 'zh-CN-XiaoxiaoNeural', label: '晓晓（女声）', lang: 'zh' },
-    { id: 'zh-CN-YunxiNeural', label: '云希（男声）', lang: 'zh' },
-    { id: 'zh-CN-YunjianNeural', label: '云健（男声）', lang: 'zh' },
-    { id: 'zh-CN-XiaoyiNeural', label: '晓伊（女声）', lang: 'zh' },
+    { id: 'zh-CN-XiaoxiaoNeural', label: '晓晓（中文 · 女声）', lang: 'zh' },
+    { id: 'zh-CN-YunxiNeural', label: '云希（中文 · 男声）', lang: 'zh' },
+    { id: 'zh-CN-YunjianNeural', label: '云健（中文 · 男声）', lang: 'zh' },
+    { id: 'zh-CN-XiaoyiNeural', label: '晓伊（中文 · 女声）', lang: 'zh' },
   ]},
   { group: 'English', voices: [
-    { id: 'en-US-JennyNeural', label: 'Jenny (Female)', lang: 'en' },
-    { id: 'en-US-GuyNeural', label: 'Guy (Male)', lang: 'en' },
-    { id: 'en-US-AriaNeural', label: 'Aria (Female)', lang: 'en' },
-    { id: 'en-US-DavisNeural', label: 'Davis (Male)', lang: 'en' },
+    { id: 'en-US-JennyNeural', label: 'Jenny（英文 · 女声）', lang: 'en' },
+    { id: 'en-US-GuyNeural', label: 'Guy（英文 · 男声）', lang: 'en' },
+    { id: 'en-US-AriaNeural', label: 'Aria（英文 · 女声）', lang: 'en' },
+    { id: 'en-US-DavisNeural', label: 'Davis（英文 · 男声）', lang: 'en' },
   ]},
   { group: '日本語', voices: [
-    { id: 'ja-JP-NanamiNeural', label: 'Nanami（女声）', lang: 'ja' },
-    { id: 'ja-JP-KeitaNeural', label: 'Keita（男声）', lang: 'ja' },
+    { id: 'ja-JP-NanamiNeural', label: 'Nanami（日文 · 女声）', lang: 'ja' },
+    { id: 'ja-JP-KeitaNeural', label: 'Keita（日文 · 男声）', lang: 'ja' },
   ]},
 ];
 
@@ -365,7 +373,7 @@ const VIDEO_DIRECTOR_PRESETS: Array<{ value: VideoDirectorPreset; labelKey: stri
 ];
 
 const IMAGE_GENERATION_SETTINGS_KEY = 'slidePreviewImageGenerationSettings';
-type SlideImageGenerationSettings = Required<Pick<ImageGenerationOptions, 'maxWorkers' | 'useTemplate' | 'density' | 'style'>> & {
+type SlideImageGenerationSettings = Required<Pick<ImageGenerationOptions, 'maxWorkers' | 'useTemplate' | 'density' | 'style' | 'composition' | 'restraint'>> & {
   customPrompt: string;
 };
 
@@ -374,7 +382,79 @@ const DEFAULT_IMAGE_GENERATION_SETTINGS: SlideImageGenerationSettings = {
   useTemplate: true,
   density: 'standard',
   style: 'theme',
+  composition: 'auto',
+  restraint: 'strong',
   customPrompt: '',
+};
+
+const IMAGE_QUALITY_ISSUE_LABELS: Record<string, string> = {
+  aspect_ratio_mismatch: '画面比例与项目设置不一致',
+  transparent_or_empty: '图片透明或没有可见内容',
+  near_blank: '图片接近空白或全黑',
+  near_solid_color: '图片内容变化过少，接近纯色',
+  resolution_mismatch: '图片分辨率与生成设置不一致',
+};
+
+const IMAGE_RESTRAINT_OPTIONS = [
+  { value: 'standard', label: '标准' },
+  { value: 'strong', label: '强力' },
+  { value: 'documentary', label: '纪实' },
+] as const;
+
+const IMAGE_DENSITY_HELP = {
+  sparse: '一个视觉焦点，最大化留白，不增加次要装饰。',
+  standard: '一个视觉焦点，辅助元素不超过两个，适合多数汇报。',
+  rich: '允许多层信息，但仍保持明确层级，避免堆满画面。',
+} as const;
+
+const IMAGE_RESTRAINT_HELP = {
+  standard: '控制饱和度、随机光点和无意义装饰。',
+  strong: '再抑制霓虹、体积光、电影调色、塑料材质和广告式完美。',
+  documentary: '加入自然间距、轻微不对称、真实使用痕迹和非摆拍人物。',
+} as const;
+
+const IMAGE_RENDERING_TERMS = [
+  { label: '电影感', pattern: /cinematic|电影感/i },
+  { label: '霓虹/发光', pattern: /neon|glowing|霓虹|发光/i },
+  { label: '体积光', pattern: /volumetric(?:\s+lighting)?|体积光/i },
+  { label: '超细节', pattern: /ultra[-\s]?detailed|超细节/i },
+  { label: '超写实', pattern: /hyper[-\s]?realistic|photorealistic|超写实/i },
+  { label: '未来/全息', pattern: /futuristic|holographic|未来感|全息/i },
+  { label: '奢华/广告感', pattern: /luxury|award[-\s]?winning|奢华|获奖/i },
+] as const;
+
+type ImageGenerationWarningSettings = Pick<SlideImageGenerationSettings, 'style' | 'composition' | 'restraint' | 'customPrompt'>;
+
+const getImageGenerationWarnings = (settings: ImageGenerationWarningSettings): string[] => {
+  const prompt = settings.customPrompt.trim();
+  if (!prompt) return [];
+
+  const warnings: string[] = [];
+  const renderingTermCount = IMAGE_RENDERING_TERMS.filter(({ pattern }) => pattern.test(prompt)).length;
+  if (renderingTermCount >= 2) {
+    warnings.push(`检测到 ${renderingTermCount} 个高渲染词（如电影感、霓虹、超细节），可能让画面变满并增加 AI 味；建议保留一个主风格词。`);
+  }
+
+  if (settings.style === 'photo' && /flat|illustration|vector|扁平|插画|矢量/i.test(prompt)) {
+    warnings.push('当前选择“真实商业摄影”，但特殊要求包含扁平或插画倾向；结构化风格设置会优先生效。');
+  }
+  if (settings.style === 'flat' && /photo(?:graphy|graphic)?|photorealistic|realistic|摄影|写实/i.test(prompt)) {
+    warnings.push('当前选择“扁平商务插画”，但特殊要求包含摄影或写实倾向；结构化风格设置会优先生效。');
+  }
+  if (settings.restraint === 'documentary' && /cinematic|dramatic|neon|volumetric|luxury|电影感|戏剧性|霓虹|体积光|奢华/i.test(prompt)) {
+    warnings.push('“纪实”模式会压低电影化和广告化效果；当前特殊要求里有相反倾向，建议删掉冲突词。');
+  }
+
+  const subjectOnLeft = /(?:主体|人物|产品|焦点|视觉中心|subject|person|product|focal\s+point)[^。！？.!?\n]{0,16}(?:左侧|左边|左方|left)/i.test(prompt);
+  const subjectOnRight = /(?:主体|人物|产品|焦点|视觉中心|subject|person|product|focal\s+point)[^。！？.!?\n]{0,16}(?:右侧|右边|右方|right)/i.test(prompt);
+  if (settings.composition === 'text-left' && subjectOnLeft) {
+    warnings.push('构图安全区设为“左文右图”，但特殊要求把主体放在左侧，可能挤占文字区域。');
+  }
+  if (settings.composition === 'text-right' && subjectOnRight) {
+    warnings.push('构图安全区设为“右文左图”，但特殊要求把主体放在右侧，可能挤占文字区域。');
+  }
+
+  return warnings;
 };
 
 const getImageGenerationSettingsKey = (projectId?: string | null) =>
@@ -391,6 +471,8 @@ const normalizeImageGenerationSettings = (settings: Partial<ImageGenerationOptio
   useTemplate: settings.useTemplate !== false,
   density: ['sparse', 'standard', 'rich'].includes(String(settings.density)) ? settings.density as SlideImageGenerationSettings['density'] : 'standard',
   style: ['theme', 'business', 'tech', 'photo', 'flat'].includes(String(settings.style)) ? settings.style as SlideImageGenerationSettings['style'] : 'theme',
+  composition: ['auto', 'text-left', 'text-right', 'center', 'full-bleed'].includes(String(settings.composition)) ? settings.composition as SlideImageGenerationSettings['composition'] : 'auto',
+  restraint: ['standard', 'strong', 'documentary'].includes(String(settings.restraint)) ? settings.restraint as SlideImageGenerationSettings['restraint'] : 'strong',
   customPrompt: typeof settings.customPrompt === 'string' ? settings.customPrompt : '',
 });
 
@@ -428,6 +510,16 @@ const DEFAULT_VIDEO_NARRATION_CONFIG: NarrationConfig = {
   min_words: 100,
   max_words: 200,
 };
+
+const DEFAULT_VIDEO_SPEAKERS: NarrationSpeaker[] = [
+  { id: 'host', name: '主持人', voice: 'zh-CN-XiaoxiaoNeural', rate: '+0%' },
+  { id: 'expert', name: '专家', voice: 'zh-CN-YunxiNeural', rate: '+0%' },
+];
+
+const DEFAULT_FISH_AUDIO_SPEAKERS: NarrationSpeaker[] = [
+  { id: 'speaker-1', name: '主持人', voice: '' },
+  { id: 'speaker-2', name: '嘉宾', voice: '' },
+];
 
 type VideoDirectorConfig = {
   preset: VideoDirectorPreset;
@@ -484,12 +576,13 @@ export const SlidePreview: React.FC = () => {
     taskProgress,
     pageGeneratingTasks,
     activeImageTask,
+    imageQualityReport,
     restoreImageGeneration,
     pauseImageGeneration,
     resumeImageGeneration,
     warningMessage,
   } = useProjectStore();
-  
+
   const { addTask, pollTask: pollExportTask, tasks: exportTasks, restoreActiveTasks } = useExportTasksStore();
 
   // 页面挂载时恢复正在进行的导出任务（页面刷新后）
@@ -507,14 +600,22 @@ export const SlidePreview: React.FC = () => {
   const [editOutlineTitle, setEditOutlineTitle] = useState('');
   const [editOutlinePoints, setEditOutlinePoints] = useState('');
   const [editDescription, setEditDescription] = useState('');
+  const [isInspectorOutlineEditing, setIsInspectorOutlineEditing] = useState(false);
+  const [isInspectorDescriptionEditing, setIsInspectorDescriptionEditing] = useState(false);
+  const [inspectorOutlineTitle, setInspectorOutlineTitle] = useState('');
+  const [inspectorOutlinePoints, setInspectorOutlinePoints] = useState('');
+  const [inspectorDescription, setInspectorDescription] = useState('');
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showExportTasksPanel, setShowExportTasksPanel] = useState(false);
   const [showPptxExportDialog, setShowPptxExportDialog] = useState(false);
   const [showVideoExportDialog, setShowVideoExportDialog] = useState(false);
+  const [showNarrationWorkbench, setShowNarrationWorkbench] = useState(false);
+  const [videoNarrationSummary, setVideoNarrationSummary] = useState<ProjectNarrationSummary | null>(null);
   const [showEditablePptxDialog, setShowEditablePptxDialog] = useState(false);
+  const [showImageQualityReport, setShowImageQualityReport] = useState(false);
   const [pptxTransitionsEnabled, setPptxTransitionsEnabled] = useState(false);
   const [pptxTransitionEffects, setPptxTransitionEffects] = useState<PptxTransitionEffect[]>(['fade']);
-  const [videoEnableKenBurns, setVideoEnableKenBurns] = useState(false);
+  const [videoEnableKenBurns, setVideoEnableKenBurns] = useState(true);
   const [videoKenBurnsStyle, setVideoKenBurnsStyle] = useState<'auto' | 'zoom' | 'pan'>('auto');
   const [videoIncludeNoImage, setVideoIncludeNoImage] = useState(false);
   const [videoDirectorConfig, setVideoDirectorConfig] = useState<VideoDirectorConfig>(VIDEO_DIRECTOR_CONFIGS.business);
@@ -523,23 +624,67 @@ export const SlidePreview: React.FC = () => {
     const stored = parseFloat(localStorage.getItem('videoSpeed') || '');
     return Number.isFinite(stored) && stored >= 0.7 && stored <= 1.2 ? stored : 1.0;
   });
-  const [elevenLabsEnabled, setElevenLabsEnabled] = useState(() => localStorage.getItem('elevenLabsEnabled') === 'true');
-  const [elevenLabsVoiceId, setElevenLabsVoiceId] = useState(() => localStorage.getItem('elevenLabsVoiceId') || '');
-  const [elevenLabsApiKeyConfigured, setElevenLabsApiKeyConfigured] = useState(false);
-  const [elevenLabsVoices, setElevenLabsVoices] = useState<{ id: string; name: string; languages?: string[]; accent?: string | null }[]>([]);
-  const [elevenLabsVoicesLoading, setElevenLabsVoicesLoading] = useState(false);
-  const [outputLanguage, setOutputLanguage] = useState<string>('zh');
-  useEffect(() => { localStorage.setItem('elevenLabsEnabled', String(elevenLabsEnabled)); }, [elevenLabsEnabled]);
-  useEffect(() => { if (elevenLabsVoiceId) localStorage.setItem('elevenLabsVoiceId', elevenLabsVoiceId); }, [elevenLabsVoiceId]);
   useEffect(() => { localStorage.setItem('videoSpeed', String(videoSpeed)); }, [videoSpeed]);
-  useEffect(() => {
-    if (!elevenLabsEnabled || elevenLabsVoices.length === 0) return;
-    if (!elevenLabsVoices.some(v => v.id === elevenLabsVoiceId)) {
-      setElevenLabsVoiceId(elevenLabsVoices[0].id);
-    }
-  }, [elevenLabsEnabled, elevenLabsVoiceId, elevenLabsVoices]);
   const [videoNarrationConfig, setVideoNarrationConfig] = useState<NarrationConfig>(DEFAULT_VIDEO_NARRATION_CONFIG);
+  const [videoNarrationMode, setVideoNarrationMode] = useState<'single' | 'dialogue'>('single');
+  const [videoNarrationSpeakers, setVideoNarrationSpeakers] = useState<NarrationSpeaker[]>(DEFAULT_VIDEO_SPEAKERS);
+  const [videoTtsProvider, setVideoTtsProvider] = useState<'edge' | 'fish_audio'>('edge');
+  const [videoFishVoices, setVideoFishVoices] = useState<FishAudioVoice[]>([]);
+  const [videoFishVoice, setVideoFishVoice] = useState('');
+  const [videoFishSpeakers, setVideoFishSpeakers] = useState<NarrationSpeaker[]>(DEFAULT_FISH_AUDIO_SPEAKERS);
+  const [videoFishVoicesLoading, setVideoFishVoicesLoading] = useState(false);
+  const [videoFishVoicesError, setVideoFishVoicesError] = useState('');
+  const [videoAutoEmotion, setVideoAutoEmotion] = useState(true);
+  const [videoPronunciationLexicon, setVideoPronunciationLexicon] = useState<PronunciationEntry[]>([]);
+  const [videoNarrationPreferences, setVideoNarrationPreferences] = useState<NarrationPreferences>(DEFAULT_NARRATION_PREFERENCES);
+  const [videoUsageEstimate, setVideoUsageEstimate] = useState<{ characters: number; estimated_seconds: number; requests: number; roles: number; free_model_notice: string }>();
   const [videoShowAdvancedNarration, setVideoShowAdvancedNarration] = useState(false);
+  const loadVideoFishVoices = useCallback(async () => {
+    setVideoFishVoicesLoading(true);
+    setVideoFishVoicesError('');
+    try {
+      const response = await getFishAudioVoices({ scope: 'all' });
+      const voices = response.data?.voices || [];
+      setVideoFishVoices(voices);
+      setVideoFishVoice(previous => voices.some(voice => voice.id === previous) ? previous : (voices[0]?.id || ''));
+      setVideoFishSpeakers(previous => previous.map((speaker, index) => ({
+        ...speaker,
+        voice: voices.some(voice => voice.id === speaker.voice)
+          ? speaker.voice
+          : (voices.length ? voices[index % voices.length].id : ''),
+      })));
+      if (voices.length === 0) {
+        setVideoFishVoicesError('暂无可用的 Fish 声音，请先在设置中刷新官方社区或克隆声音。');
+      }
+    } catch (error: any) {
+      setVideoFishVoices([]);
+      setVideoFishVoice('');
+      setVideoFishSpeakers(previous => previous.map(speaker => ({ ...speaker, voice: '' })));
+      setVideoFishVoicesError(normalizeErrorMessage(
+        error?.response?.data?.error?.message || error?.message || 'Fish Audio 声线加载失败，请先检查设置中的 API Key。',
+      ));
+    } finally {
+      setVideoFishVoicesLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    if (showVideoExportDialog && videoTtsProvider === 'fish_audio') {
+      void loadVideoFishVoices();
+    }
+  }, [loadVideoFishVoices, showVideoExportDialog, videoTtsProvider]);
+  useEffect(() => {
+    if (!currentProject) return;
+    setVideoPronunciationLexicon(currentProject.pronunciation_lexicon || []);
+    setVideoNarrationPreferences(currentProject.narration_preferences || DEFAULT_NARRATION_PREFERENCES);
+  }, [currentProject?.project_id]);
+  useEffect(() => {
+    if (!showVideoExportDialog) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowVideoExportDialog(false);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [showVideoExportDialog]);
   const applyVideoDirectorPreset = useCallback((preset: VideoDirectorPreset) => {
     const presetValues = {
       business: {
@@ -574,10 +719,24 @@ export const SlidePreview: React.FC = () => {
   // 多选导出相关状态
   const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
   const [selectedPageIds, setSelectedPageIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    if (!showVideoExportDialog || videoTtsProvider !== 'fish_audio' || !projectId) return;
+    void apiPreflightExportVideo(projectId, {
+      pageIds: isMultiSelectMode ? Array.from(selectedPageIds) : undefined,
+      includeNoImagePages: videoIncludeNoImage,
+      ttsProvider: videoTtsProvider,
+      voice: videoFishVoice,
+      speed: videoSpeed,
+      narrationMode: videoNarrationMode,
+      speakers: videoNarrationMode === 'dialogue' ? videoFishSpeakers : undefined,
+    }).then((response) => setVideoUsageEstimate(response.data?.estimate)).catch(() => setVideoUsageEstimate(undefined));
+  }, [isMultiSelectMode, projectId, selectedPageIds, showVideoExportDialog, videoFishSpeakers, videoFishVoice, videoIncludeNoImage, videoNarrationMode, videoSpeed, videoTtsProvider]);
   const [isOutlineExpanded, setIsOutlineExpanded] = useState(false);
   const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [imageVersions, setImageVersions] = useState<ImageVersion[]>([]);
+  const currentImageVersion = imageVersions.find(version => version.is_current);
+  const [isRecoveringScene, setIsRecoveringScene] = useState(false);
   const [showVersionMenu, setShowVersionMenu] = useState(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
   const [selectedPresetTemplateId, setSelectedPresetTemplateId] = useState<string | null>(null);
@@ -596,6 +755,9 @@ export const SlidePreview: React.FC = () => {
   const isEditingRequirements = useRef(false); // 跟踪用户是否正在编辑额外要求
   const [templateStyle, setTemplateStyle] = useState<string>('');
   const [isSavingTemplateStyle, setIsSavingTemplateStyle] = useState(false);
+  const [pageTemplateStyle, setPageTemplateStyle] = useState('');
+  const [isSavingPageTemplate, setIsSavingPageTemplate] = useState(false);
+  const pageTemplateInputRef = useRef<HTMLInputElement | null>(null);
   const isEditingTemplateStyle = useRef(false); // 跟踪用户是否正在编辑风格描述
   const lastProjectId = useRef<string | null>(null); // 跟踪上一次的项目ID
   const [isProjectSettingsOpen, setIsProjectSettingsOpen] = useState(false);
@@ -621,6 +783,10 @@ export const SlidePreview: React.FC = () => {
   const [showImageGenerationSettings, setShowImageGenerationSettings] = useState(false);
   const [imageGenerationSettings, setImageGenerationSettings] = useState(DEFAULT_IMAGE_GENERATION_SETTINGS);
   const [draftImageGenerationSettings, setDraftImageGenerationSettings] = useState(DEFAULT_IMAGE_GENERATION_SETTINGS);
+  const imageGenerationWarnings = useMemo(
+    () => getImageGenerationWarnings(draftImageGenerationSettings),
+    [draftImageGenerationSettings],
+  );
   // 画面比例
   const [aspectRatio, setAspectRatio] = useState<string>(
     currentProject?.image_aspect_ratio || '16:9'
@@ -636,6 +802,10 @@ export const SlidePreview: React.FC = () => {
     }
     return '16/9';
   }, [aspectRatio]);
+
+  useEffect(() => {
+    setPageTemplateStyle(currentProject?.pages?.[selectedIndex]?.template_style_text || '');
+  }, [currentProject?.pages, selectedIndex]);
   const previewCanvasWidth = useMemo(() => {
     const [width, height] = aspectRatioStyle.split('/').map(Number);
     return `min(100%, 64rem, ${(width / height) * 100}cqh)`;
@@ -663,31 +833,42 @@ export const SlidePreview: React.FC = () => {
   const { show, ToastContainer } = useToast();
   const { ConfirmDialog } = useConfirm();
 
-
-  // Memoize pages with generated images to avoid re-computing in multiple places
-  const pagesWithImages = useMemo(() => {
-    return currentProject?.pages.filter(p => p.id && p.generated_image_path) || [];
-  }, [currentProject?.pages]);
   const selectablePages = useMemo(() => {
     return currentProject?.pages.filter(p => p.id) || [];
   }, [currentProject?.pages]);
+  const narrationPageIds = useMemo(
+    () => currentProject?.pages?.map((page) => page.page_id) || [],
+    [currentProject?.pages],
+  );
 
   const hasImages = useMemo(
     () => currentProject?.pages?.some(p => p.generated_image_path) ?? false,
     [currentProject?.pages]
   );
+  const isRenovationProject = currentProject?.creation_type === 'ppt_renovation' || currentProject?.creation_type === 'renovation';
   const pendingBatchImageCount = useMemo(() => {
     const pages = isMultiSelectMode && selectedPageIds.size > 0
       ? currentProject?.pages.filter(page => page.id && selectedPageIds.has(page.id))
       : currentProject?.pages;
-    return pages?.filter(page => page.id && !page.generated_image_path && !pageGeneratingTasks[page.id]).length || 0;
-  }, [currentProject?.pages, isMultiSelectMode, pageGeneratingTasks, selectedPageIds]);
+    return pages?.filter(page =>
+      page.id
+      && (isRenovationProject ? page.status !== 'COMPLETED' : !page.generated_image_path)
+      && !pageGeneratingTasks[page.id]
+    ).length || 0;
+  }, [currentProject?.pages, isMultiSelectMode, isRenovationProject, pageGeneratingTasks, selectedPageIds]);
   const imageGenerationActive = !!activeImageTask
     && ['PENDING', 'PROCESSING', 'RUNNING', 'PAUSED'].includes(activeImageTask.status);
   const imageGenerationPaused = activeImageTask?.status === 'PAUSED';
   const imageGenerationProgressPercent = activeImageTask?.progress?.total
     ? Math.round(((activeImageTask.progress.completed || 0) / activeImageTask.progress.total) * 100)
     : 0;
+  const imageQualityPages = useMemo(
+    () => Array.isArray(imageQualityReport?.pages)
+      ? imageQualityReport.pages.filter((item: any) => item?.qa?.status === 'warning')
+      : [],
+    [imageQualityReport],
+  );
+  const imageQualityWarningCount = Number(imageQualityReport?.quality_summary?.warnings || imageQualityPages.length);
   const activeImageTaskRef = useRef(activeImageTask);
   const pauseImageGenerationRef = useRef(pauseImageGeneration);
 
@@ -766,7 +947,7 @@ export const SlidePreview: React.FC = () => {
     if (currentProject) {
       // 检查是否是新项目
       const isNewProject = lastProjectId.current !== currentProject.id;
-      
+
       if (isNewProject) {
         // 新项目，初始化额外要求和风格描述
         setExtraRequirements(currentProject.extra_requirements || '');
@@ -891,6 +1072,8 @@ export const SlidePreview: React.FC = () => {
       useTemplate: draftImageGenerationSettings.useTemplate !== false,
       density: draftImageGenerationSettings.density,
       style: draftImageGenerationSettings.style,
+      composition: draftImageGenerationSettings.composition,
+      restraint: draftImageGenerationSettings.restraint,
       customPrompt: draftImageGenerationSettings.customPrompt.trim(),
     };
     setImageGenerationSettings(nextSettings);
@@ -906,12 +1089,21 @@ export const SlidePreview: React.FC = () => {
         ? currentProject?.pages.filter(p => p.id && selectedPageIds.has(p.id))
         : currentProject?.pages;
       const pageIds = pagesToGenerate
-        ?.filter(page => page.id && !page.generated_image_path && !pageGeneratingTasks[page.id])
+        ?.filter(page => page.id
+          && (isRenovationProject ? page.status !== 'COMPLETED' : !page.generated_image_path)
+          && !pageGeneratingTasks[page.id])
         .map(page => page.id!) || [];
       if (pageIds.length === 0) return;
 
       const executeGenerate = async () => {
         try {
+          if (projectId && imageGenerationSettings.useTemplate) {
+            const needsTemplateMatch = pagesToGenerate?.some(page => page.id && pageIds.includes(page.id) && !page.template_selection_role);
+            if (needsTemplateMatch) {
+              await autoMatchPageTemplates(projectId);
+              await syncProject(projectId);
+            }
+          }
           await generateImages(pageIds, imageGenerationSettings);
         } catch (error: any) {
           console.error('批量生成错误:', error);
@@ -953,10 +1145,10 @@ export const SlidePreview: React.FC = () => {
     });
   };
 
-  const handleRegeneratePage = useCallback(async () => {
+  const regeneratePageAtIndex = useCallback(async (pageIndex: number, qualityIssues: string[] = []) => {
     if (!currentProject) return;
-    const page = currentProject.pages[selectedIndex];
-    if (!page.id) return;
+    const page = currentProject.pages[pageIndex];
+    if (!page?.id) return;
 
     // 如果该页面正在生成，不重复提交
     if (pageGeneratingTasks[page.id]) {
@@ -967,7 +1159,13 @@ export const SlidePreview: React.FC = () => {
     // 先检查分辨率，如果是1K则显示警告
     await checkResolutionAndExecute(async () => {
       try {
-        await generatePageImage(page.id!, true, imageGenerationSettings);
+        await generatePageImage(
+          page.id!,
+          true,
+          qualityIssues.length
+            ? { ...imageGenerationSettings, qualityIssues }
+            : imageGenerationSettings,
+        );
         show({ message: t('slidePreview.generationStarted'), type: 'success' });
       } catch (error: any) {
         // 提取后端返回的更具体错误信息
@@ -998,28 +1196,69 @@ export const SlidePreview: React.FC = () => {
         });
       }
     });
-  }, [currentProject, selectedIndex, pageGeneratingTasks, generatePageImage, imageGenerationSettings, show, checkResolutionAndExecute]);
+  }, [currentProject, pageGeneratingTasks, generatePageImage, imageGenerationSettings, show, checkResolutionAndExecute]);
+
+  const handleRegeneratePage = useCallback(
+    () => regeneratePageAtIndex(selectedIndex),
+    [regeneratePageAtIndex, selectedIndex],
+  );
 
   const handleSwitchVersion = async (versionId: string) => {
     if (!currentProject || !selectedPage?.id || !projectId) return;
-    
+
     try {
       await setCurrentImageVersion(projectId, selectedPage.id, versionId);
       await syncProject(projectId);
       setShowVersionMenu(false);
       show({ message: t('slidePreview.versionSwitched'), type: 'success' });
     } catch (error: any) {
-      show({ 
+      show({
         message: t('slidePreview.versionSwitchFailed', { error: error.message || t('slidePreview.unknownError') }),
-        type: 'error' 
+        type: 'error'
       });
+    }
+  };
+
+  const handleRecoverCurrentScene = async () => {
+    if (!projectId || !selectedPage?.id || !currentImageVersion) return;
+    setIsRecoveringScene(true);
+    try {
+      const response = await recoverPageImageScene(
+        projectId,
+        selectedPage.id,
+        currentImageVersion.version_id,
+        currentImageVersion.scene_status === 'failed',
+      );
+      setImageVersions(versions => versions.map(version => (
+        version.version_id === currentImageVersion.version_id
+          ? { ...version, scene_status: 'building', scene_error: null }
+          : version
+      )));
+      setShowVersionMenu(false);
+      show({ message: t('preview.sceneRecoveryQueued'), type: 'success' });
+      const taskId = response.data?.task_id;
+      if (taskId) {
+        for (let attempt = 0; attempt < 90; attempt += 1) {
+          await new Promise(resolve => window.setTimeout(resolve, 2000));
+          const task = await getTaskStatus(projectId, taskId);
+          if (['COMPLETED', 'FAILED', 'CANCELLED', 'PAUSED'].includes(task.data?.status || '')) {
+            break;
+          }
+        }
+        const versions = await getPageImageVersions(projectId, selectedPage.id);
+        if (versions.data?.versions) setImageVersions(versions.data.versions);
+      }
+    } catch (error: any) {
+      show({ message: normalizeErrorMessage(error), type: 'error' });
+    } finally {
+      setIsRecoveringScene(false);
     }
   };
 
   // 从描述内容中提取图片URL
   const extractImageUrlsFromDescription = (descriptionContent: DescriptionContent | undefined): string[] => {
     if (!descriptionContent) return [];
-    
+
     // 处理两种格式
     let text: string = '';
     if ('text' in descriptionContent) {
@@ -1027,28 +1266,27 @@ export const SlidePreview: React.FC = () => {
     } else if ('text_content' in descriptionContent && Array.isArray(descriptionContent.text_content)) {
       text = descriptionContent.text_content.join('\n');
     }
-    
+
     if (!text) return [];
-    
-    // 匹配 markdown 图片语法: ![](url) 或 ![alt](url)
-    const pattern = /!\[.*?\]\((.*?)\)/g;
-    const matches: string[] = [];
-    let match: RegExpExecArray | null;
-    
-    while ((match = pattern.exec(text)) !== null) {
-      const url = match[1]?.trim();
-      // 只保留有效的HTTP/HTTPS URL
-      if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
-        matches.push(url);
+
+    const urls = new Set<string>();
+    const patterns = [
+      /!\[.*?\]\((.*?)\)/g,
+      /<img\b[^>]*?\bsrc\s*=\s*["']([^"']+)["'][^>]*>/gi,
+    ];
+    patterns.forEach((pattern) => {
+      let match: RegExpExecArray | null;
+      while ((match = pattern.exec(text)) !== null) {
+        const url = match[1]?.trim();
+        if (url && (/^https?:\/\//.test(url) || url.startsWith('/files/'))) urls.add(url);
       }
-    }
-    
-    return matches;
+    });
+    return [...urls];
   };
 
-  const handleEditPage = () => {
+  const handleEditPage = (pageIndex = selectedIndex) => {
     if (!currentProject) return;
-    const page = currentProject.pages[selectedIndex];
+    const page = currentProject.pages[pageIndex];
     const pageId = page?.id;
 
     setIsOutlineExpanded(false);
@@ -1097,6 +1335,52 @@ export const SlidePreview: React.FC = () => {
     setIsEditModalOpen(true);
   };
 
+  const getDescriptionText = (page: Page | undefined) => {
+    const descriptionContent = page?.description_content;
+    if (!descriptionContent) return '';
+    if ('text' in descriptionContent) return String(descriptionContent.text || '');
+    if ('text_content' in descriptionContent && Array.isArray(descriptionContent.text_content)) {
+      return descriptionContent.text_content.join('\n');
+    }
+    return '';
+  };
+
+  const handleStartInspectorOutlineEdit = () => {
+    const page = currentProject?.pages[selectedIndex];
+    if (!page) return;
+    setInspectorOutlineTitle(page.outline_content?.title || '');
+    setInspectorOutlinePoints(page.outline_content?.points?.join('\n') || '');
+    setIsInspectorOutlineEditing(true);
+  };
+
+  const handleSaveInspectorOutline = () => {
+    const page = currentProject?.pages[selectedIndex];
+    if (!page?.id) return;
+    updatePageLocal(page.id, {
+      outline_content: {
+        title: inspectorOutlineTitle,
+        points: inspectorOutlinePoints.split('\n').filter((point) => point.trim()),
+      },
+    });
+    setIsInspectorOutlineEditing(false);
+    show({ message: '页面大纲已保存', type: 'success' });
+  };
+
+  const handleStartInspectorDescriptionEdit = () => {
+    const page = currentProject?.pages[selectedIndex];
+    if (!page) return;
+    setInspectorDescription(getDescriptionText(page));
+    setIsInspectorDescriptionEditing(true);
+  };
+
+  const handleSaveInspectorDescription = () => {
+    const page = currentProject?.pages[selectedIndex];
+    if (!page?.id) return;
+    updatePageLocal(page.id, { description_content: { text: inspectorDescription } as DescriptionContent });
+    setIsInspectorDescriptionEditing(false);
+    show({ message: '页面描述已保存', type: 'success' });
+  };
+
   // 保存大纲和描述修改
   const handleSaveOutlineAndDescription = useCallback(() => {
     if (!currentProject) return;
@@ -1104,7 +1388,7 @@ export const SlidePreview: React.FC = () => {
     if (!page?.id) return;
 
     const updates: Partial<Page> = {};
-    
+
     // 检查大纲是否有变化
     const originalTitle = page.outline_content?.title || '';
     const originalPoints = page.outline_content?.points?.join('\n') || '';
@@ -1114,7 +1398,7 @@ export const SlidePreview: React.FC = () => {
         points: editOutlinePoints.split('\n').filter((p) => p.trim()),
       };
     }
-    
+
     // 检查描述是否有变化
     const descContent = page.description_content;
     let originalDesc = '';
@@ -1130,7 +1414,7 @@ export const SlidePreview: React.FC = () => {
         text: editDescription,
       } as DescriptionContent;
     }
-    
+
     // 如果有修改，保存更新
     if (Object.keys(updates).length > 0) {
       updatePageLocal(page.id, updates);
@@ -1140,7 +1424,7 @@ export const SlidePreview: React.FC = () => {
 
   const handleSubmitEdit = useCallback(async () => {
     if (!currentProject || !editPrompt.trim()) return;
-    
+
     const page = currentProject.pages[selectedIndex];
     if (!page.id) return;
 
@@ -1154,8 +1438,8 @@ export const SlidePreview: React.FC = () => {
       {
         useTemplate: selectedContextImages.useTemplate,
         descImageUrls: selectedContextImages.descImageUrls,
-        uploadedFiles: selectedContextImages.uploadedFiles.length > 0 
-          ? selectedContextImages.uploadedFiles 
+        uploadedFiles: selectedContextImages.uploadedFiles.length > 0
+          ? selectedContextImages.uploadedFiles
           : undefined,
       }
     );
@@ -1353,7 +1637,7 @@ export const SlidePreview: React.FC = () => {
   };
 
   // 多选相关函数
-  const togglePageSelection = (pageId: string) => {
+  const togglePageSelection = useCallback((pageId: string) => {
     setSelectedPageIds(prev => {
       const next = new Set(prev);
       if (next.has(pageId)) {
@@ -1363,7 +1647,24 @@ export const SlidePreview: React.FC = () => {
       }
       return next;
     });
-  };
+  }, []);
+
+  const handleSlideCardSelect = useCallback((pageIndex: number, pageId?: string) => {
+    if (isMultiSelectMode && pageId) {
+      togglePageSelection(pageId);
+    } else {
+      setSelectedIndex(pageIndex);
+    }
+  }, [isMultiSelectMode, togglePageSelection]);
+
+  const handleSlideCardEdit = useCallback((pageIndex: number) => {
+    setSelectedIndex(pageIndex);
+    handleEditPage(pageIndex);
+  }, [handleEditPage]);
+
+  const handleSlideCardDelete = useCallback((pageId: string) => {
+    void deletePageById(pageId);
+  }, [deletePageById]);
 
   const selectAllPages = () => {
     const allPageIds = selectablePages.map(p => p.id!);
@@ -1444,10 +1745,10 @@ export const SlidePreview: React.FC = () => {
         });
 
         show({ message: t('slidePreview.exportStarted'), type: 'success', duration: 2000 });
-        
+
         const response = await apiExportEditablePPTX(projectId, undefined, pageIds);
         const taskId = response.data?.task_id;
-        
+
         if (taskId) {
           // Update task with real taskId
           addTask({
@@ -1458,24 +1759,50 @@ export const SlidePreview: React.FC = () => {
             status: 'PROCESSING',
             pageIds: pageIds,
           });
-          
+
           // Start polling in background (non-blocking)
           pollExportTask(exportTaskId, projectId, taskId);
         }
       } else if (type === 'video') {
-        const validElevenLabsVoiceId = elevenLabsVoices.some(v => v.id === elevenLabsVoiceId)
-          ? elevenLabsVoiceId
-          : elevenLabsVoices[0]?.id;
-        if (elevenLabsEnabled && !validElevenLabsVoiceId) {
+        const videoPageIds = pageIds ?? currentProject?.pages?.map(page => page.page_id) ?? [];
+        const narrationSummaryResponse = videoNarrationSummary
+          ? { data: videoNarrationSummary }
+          : await getProjectNarrations(projectId);
+        const narrationSummary = narrationSummaryResponse.data;
+        const selectedNarrations = narrationSummary?.pages.filter(page => videoPageIds.includes(page.page_id)) || [];
+        const missingNarrations = selectedNarrations.filter(page => !page.current_version_id);
+        if (selectedNarrations.length !== videoPageIds.length || missingNarrations.length > 0) {
+          setShowVideoExportDialog(false);
+          setShowExportTasksPanel(false);
+          setShowNarrationWorkbench(true);
+          show({ message: '请先确认所有导出页面的视频文案', type: 'warning', duration: 5000 });
+          return;
+        }
+        const narrationVersionMap = Object.fromEntries(
+          selectedNarrations.map(page => [page.page_id, page.current_version_id!]),
+        );
+        const activeVoice = videoTtsProvider === 'fish_audio' ? videoFishVoice : videoVoice;
+        const activeSpeakers = videoTtsProvider === 'fish_audio' ? videoFishSpeakers : videoNarrationSpeakers;
+        const preflight = await apiPreflightExportVideo(projectId, {
+          pageIds: videoPageIds,
+          generateNarration: false,
+          narrationPolicy: 'confirmed_only',
+          narrationVersionMap,
+          includeNoImagePages: videoIncludeNoImage,
+          ttsProvider: videoTtsProvider,
+          voice: activeVoice,
+          narrationMode: videoNarrationMode,
+          speakers: videoNarrationMode === 'dialogue' ? activeSpeakers : undefined,
+          speed: videoSpeed,
+        });
+        if (!preflight.data?.can_export) {
           show({
-            message: isEnglishUi
-              ? 'No available ElevenLabs voice. Please reload the voice list or check the API Key in Settings.'
-              : '没有可用的 ElevenLabs 声音，请重新加载声音列表或检查设置里的 API Key。',
+            message: preflight.data?.errors?.join('；') || '视频导出预检失败',
             type: 'error',
+            duration: 5000,
           });
           return;
         }
-
         // Async export - create processing task and start polling
         addTask({
           id: exportTaskId,
@@ -1483,27 +1810,47 @@ export const SlidePreview: React.FC = () => {
           projectId,
           type: 'video',
           status: 'PROCESSING',
-          pageIds: pageIds,
+          pageIds: videoPageIds,
         });
 
-        show({ message: t('slidePreview.exportStarted'), type: 'success', duration: 2000 });
+        const preflightWarnings = preflight.data?.warnings ?? [];
+        show({
+          message: preflightWarnings.length > 0
+            ? `${t('slidePreview.exportStarted')}；${preflightWarnings.join('；')}`
+            : t('slidePreview.exportStarted'),
+          type: preflightWarnings.length > 0 ? 'warning' : 'success',
+          duration: preflightWarnings.length > 0 ? 6000 : 2000,
+        });
 
-        const activeVoice = elevenLabsEnabled ? validElevenLabsVoiceId : videoVoice;
-        const voiceLang = elevenLabsEnabled ? 'zh' : (VIDEO_VOICE_OPTIONS.flatMap(g => g.voices).find(v => v.id === videoVoice)?.lang || 'zh');
+        const voiceLang = VIDEO_VOICE_OPTIONS.flatMap(g => g.voices).find(v => v.id === activeVoice)?.lang || 'zh';
+        if (videoTtsProvider === 'fish_audio') {
+          await updateProject(projectId, {
+            pronunciation_lexicon: videoPronunciationLexicon,
+            narration_preferences: videoNarrationPreferences,
+          });
+        }
         const response = await apiExportVideo(projectId, {
-          pageIds,
+          pageIds: videoPageIds,
           enableKenBurns: videoEnableKenBurns,
           kenBurnsStyle: videoKenBurnsStyle,
           includeNoImagePages: videoIncludeNoImage,
           voice: activeVoice,
           speed: videoSpeed,
           language: voiceLang,
-          generateNarration: true,
+          generateNarration: false,
+          narrationPolicy: 'confirmed_only',
+          narrationVersionMap,
+          ttsProvider: videoTtsProvider,
+          autoEmotion: videoTtsProvider === 'fish_audio' && videoAutoEmotion,
+          pronunciationLexicon: videoPronunciationLexicon,
+          narrationPreferences: videoNarrationPreferences,
           presentationTopic: videoNarrationConfig.presentation_topic,
           narrationConfig: {
             ...videoNarrationConfig,
             presentation_topic: videoNarrationConfig.presentation_topic,
           },
+          narrationMode: videoNarrationMode,
+          speakers: videoNarrationMode === 'dialogue' ? activeSpeakers : undefined,
           directorConfig: videoDirectorConfig,
         });
         const taskId = response.data?.task_id;
@@ -1515,7 +1862,7 @@ export const SlidePreview: React.FC = () => {
             projectId,
             type: 'video',
             status: 'PROCESSING',
-            pageIds: pageIds,
+            pageIds: videoPageIds,
           });
 
           pollExportTask(exportTaskId, projectId, taskId);
@@ -1557,7 +1904,7 @@ export const SlidePreview: React.FC = () => {
   };
 
   const handleRetryExport = (task: ExportTask) => {
-    if (task.type === 'native-pptx' || task.type === 'native-pdf' || task.type === 'native-html') return;
+    if (task.type === 'native-pptx' || task.type === 'native-pdf' || task.type === 'native-html' || task.type === 'podcast' || task.type === 'workspace') return;
     handleExport(task.type, { pageIds: task.pageIds });
   };
 
@@ -1573,9 +1920,9 @@ export const SlidePreview: React.FC = () => {
       await syncProject(targetProjectId);
       show({ message: t('slidePreview.refreshSuccess'), type: 'success' });
     } catch (error: any) {
-      show({ 
+      show({
         message: error.message || t('slidePreview.refreshFailed'),
-        type: 'error' 
+        type: 'error'
       });
     } finally {
       setIsRefreshing(false);
@@ -1584,7 +1931,7 @@ export const SlidePreview: React.FC = () => {
 
   const handleSaveExtraRequirements = useCallback(async () => {
     if (!currentProject || !projectId) return;
-    
+
     setIsSavingRequirements(true);
     try {
       await updateProject(projectId, { extra_requirements: extraRequirements || '' });
@@ -1594,9 +1941,9 @@ export const SlidePreview: React.FC = () => {
       await syncProject(projectId);
       show({ message: t('slidePreview.extraRequirementsSaved'), type: 'success' });
     } catch (error: any) {
-      show({ 
+      show({
         message: t('slidePreview.saveFailed', { error: error.message || t('slidePreview.unknownError') }),
-        type: 'error' 
+        type: 'error'
       });
     } finally {
       setIsSavingRequirements(false);
@@ -1605,7 +1952,7 @@ export const SlidePreview: React.FC = () => {
 
   const handleSaveTemplateStyle = useCallback(async () => {
     if (!currentProject || !projectId) return;
-    
+
     setIsSavingTemplateStyle(true);
     try {
       await updateProject(projectId, { template_style: templateStyle || '' });
@@ -1615,14 +1962,75 @@ export const SlidePreview: React.FC = () => {
       await syncProject(projectId);
       show({ message: t('slidePreview.styleDescSaved'), type: 'success' });
     } catch (error: any) {
-      show({ 
+      show({
         message: t('slidePreview.saveFailed', { error: error.message || t('slidePreview.unknownError') }),
-        type: 'error' 
+        type: 'error'
       });
     } finally {
       setIsSavingTemplateStyle(false);
     }
   }, [currentProject, projectId, templateStyle, syncProject, show]);
+
+  const handleUploadPageTemplate = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    const page = currentProject?.pages?.[selectedIndex];
+    if (!projectId || !page?.id || !file) return;
+    setIsSavingPageTemplate(true);
+    try {
+      await uploadPageTemplate(projectId, page.id, file);
+      await syncProject(projectId);
+      show({ message: '本页模板已上传', type: 'success' });
+    } catch (error: any) {
+      show({ message: error.message || '本页模板上传失败', type: 'error' });
+    } finally {
+      setIsSavingPageTemplate(false);
+      event.target.value = '';
+    }
+  }, [currentProject?.pages, selectedIndex, projectId, syncProject, show]);
+
+  const handleSavePageTemplateStyle = useCallback(async () => {
+    const page = currentProject?.pages?.[selectedIndex];
+    if (!projectId || !page?.id) return;
+    setIsSavingPageTemplate(true);
+    try {
+      await updatePageTemplate(projectId, page.id, pageTemplateStyle);
+      await syncProject(projectId);
+      show({ message: '本页模板风格已保存', type: 'success' });
+    } catch (error: any) {
+      show({ message: error.message || '保存本页模板失败', type: 'error' });
+    } finally {
+      setIsSavingPageTemplate(false);
+    }
+  }, [currentProject?.pages, selectedIndex, projectId, pageTemplateStyle, syncProject, show]);
+
+  const handleClearPageTemplate = useCallback(async () => {
+    const page = currentProject?.pages?.[selectedIndex];
+    if (!projectId || !page?.id) return;
+    setIsSavingPageTemplate(true);
+    try {
+      await clearPageTemplate(projectId, page.id);
+      await syncProject(projectId);
+      show({ message: '本页模板已清除', type: 'success' });
+    } catch (error: any) {
+      show({ message: error.message || '清除本页模板失败', type: 'error' });
+    } finally {
+      setIsSavingPageTemplate(false);
+    }
+  }, [currentProject?.pages, selectedIndex, projectId, syncProject, show]);
+
+  const handleAutoMatchPageTemplates = useCallback(async () => {
+    if (!projectId) return;
+    setIsSavingPageTemplate(true);
+    try {
+      const response = await autoMatchPageTemplates(projectId);
+      await syncProject(projectId);
+      show({ message: `已智能匹配 ${response.data?.matched ?? 0} 页模板`, type: 'success' });
+    } catch (error: any) {
+      show({ message: error.message || '智能匹配模板失败', type: 'error' });
+    } finally {
+      setIsSavingPageTemplate(false);
+    }
+  }, [projectId, syncProject, show]);
 
   const handleSaveExportSettings = useCallback(async () => {
     if (!currentProject || !projectId) return;
@@ -1700,7 +2108,7 @@ export const SlidePreview: React.FC = () => {
       await syncProject(projectId);
       setIsTemplateModalOpen(false);
       show({ message: t('slidePreview.templateChanged'), type: 'success' });
-      
+
       // 更新选择状态
       if (templateId) {
         // 判断是用户模板还是预设模板（短ID通常是预设模板）
@@ -1713,9 +2121,9 @@ export const SlidePreview: React.FC = () => {
         }
       }
     } catch (error: any) {
-      show({ 
+      show({
         message: t('slidePreview.templateChangeFailed', { error: error.message || t('slidePreview.unknownError') }),
-        type: 'error' 
+        type: 'error'
       });
     } finally {
       setIsUploadingTemplate(false);
@@ -1741,8 +2149,8 @@ export const SlidePreview: React.FC = () => {
         slides={nativeSlides}
         totalPages={currentProject.pages.length}
         generationTaskId={generationTaskId || undefined}
-        onHome={() => navigate('/app')}
-        onBack={() => fromHistory ? navigate('/history') : navigate(`/project/${nativeProjectId}/detail`)}
+        onHome={() => navigate('/home')}
+        onBack={() => fromHistory ? navigate('/history') : navigate(`/project/${nativeProjectId}/ppt/detail`)}
       />
     );
   }
@@ -1765,7 +2173,7 @@ export const SlidePreview: React.FC = () => {
       }
       // 不再显示 "处理中 (X/Y)..." 格式，百分比已在进度条显示
     }
-    
+
     return (
       <Loading
         fullscreen
@@ -1776,6 +2184,8 @@ export const SlidePreview: React.FC = () => {
   }
 
   const selectedPage = currentProject.pages[selectedIndex];
+  const selectedTemplateContextImage = selectedPage?.template_image_path || currentProject.template_image_path;
+  const selectedTemplateContextUpdatedAt = selectedPage?.template_image_path ? selectedPage.updated_at : currentProject.updated_at;
   const imageUrl = selectedPage?.generated_image_path
     ? getImageUrl(selectedPage.generated_image_path, selectedPage.updated_at)
     : '';
@@ -1791,6 +2201,12 @@ export const SlidePreview: React.FC = () => {
   const exportRangeMissingTip = exportMissingImageCount > 0
     ? t('preview.disabledExportTip', { count: exportMissingImageCount })
     : undefined;
+  const videoFishConfigReady = videoNarrationMode === 'single'
+    ? Boolean(videoFishVoice)
+    : videoFishSpeakers.length >= 2
+      && videoFishSpeakers.length <= 4
+      && videoFishSpeakers.every(speaker => speaker.name.trim() && speaker.voice);
+  const videoExportConfigReady = videoTtsProvider === 'edge' || videoFishConfigReady;
   const isEnglishUi = i18n.language?.startsWith('en');
   const getNarrationOptionLabel = (options: Array<{ value: string; zh: string; en: string }>, value: string) => {
     const match = options.find(item => item.value === value);
@@ -1801,18 +2217,261 @@ export const SlidePreview: React.FC = () => {
     `${t('preview.videoNarrationPersona')} · ${getNarrationOptionLabel(NARRATION_PERSONA_OPTIONS, videoNarrationConfig.speaker_persona)}`,
     `${t('preview.videoNarrationAudience')} · ${getNarrationOptionLabel(NARRATION_AUDIENCE_OPTIONS, videoNarrationConfig.target_audience)}`,
     `${t('preview.videoNarrationTone')} · ${getNarrationOptionLabel(NARRATION_TONE_OPTIONS, videoNarrationConfig.speech_tone)}`,
+    videoNarrationMode === 'dialogue'
+      ? (videoTtsProvider === 'fish_audio' ? `${videoFishSpeakers.length} 人对话` : '双人对话')
+      : '单人讲解',
   ].filter(Boolean).join(' / ');
 
+  const selectedDescriptionText = selectedPage?.description_content
+    ? 'text' in selectedPage.description_content
+      ? String(selectedPage.description_content.text || '')
+      : 'text_content' in selectedPage.description_content && Array.isArray(selectedPage.description_content.text_content)
+        ? selectedPage.description_content.text_content.join('\n')
+        : ''
+    : '';
+  const selectedDescriptionImageUrls = extractImageUrlsFromDescription(selectedPage?.description_content);
+  const selectedDescriptionPlainText = selectedDescriptionText
+    .replace(/<div\b[^>]*>\s*<img\b[^>]*>\s*<\/div>/gi, '')
+    .replace(/<img\b[^>]*>/gi, '')
+    .replace(/!\[.*?\]\((.*?)\)/g, '')
+    .trim();
+
+  const imageInspector = (
+    <div className="min-w-0">
+      <div className="sticky top-0 z-10 flex h-11 items-center border-b border-[var(--app-border)] bg-[var(--app-surface)] px-4">
+        <h2 className="text-sm font-semibold">页面属性</h2>
+      </div>
+      <div className="divide-y divide-[var(--app-border)]">
+        <section className="space-y-3 p-4">
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-sm font-semibold">当前页面</h3>
+            <span className="text-xs text-[var(--app-text-tertiary)]">
+              {currentProject.pages.length > 0 ? `${selectedIndex + 1} / ${currentProject.pages.length}` : '0 / 0'}
+            </span>
+          </div>
+          <div className="space-y-1">
+            <p className="truncate text-sm font-medium" title={selectedPage?.outline_content?.title || ''}>
+              {selectedPage?.outline_content?.title || t('preview.noPageSelected')}
+            </p>
+            <p className="text-xs text-[var(--app-text-secondary)]">
+              {isRenovationProject && selectedPage?.status !== 'COMPLETED'
+                ? '原页已导入，等待翻新'
+                : selectedPage?.generated_image_path
+                  ? '图片已生成'
+                  : selectedPage?.status === 'FAILED' ? '当前图片生成失败' : '等待生成图片'}
+            </p>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Button variant="secondary" size="sm" aria-label="页面属性：编辑当前页" onClick={() => handleEditPage()} disabled={!selectedPage}>{t('common.edit')}</Button>
+            <Button variant="ghost" size="sm" aria-label="页面属性：重新生成当前页" onClick={handleRegeneratePage} disabled={selectedPage?.id ? Boolean(pageGeneratingTasks[selectedPage.id]) : false}>{t('preview.regenerate')}</Button>
+          </div>
+        </section>
+
+        <section className="space-y-3 p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="space-y-1">
+              <h3 className="text-sm font-semibold">本页模板</h3>
+              <p className="text-xs leading-5 text-[var(--app-text-tertiary)]">优先用于当前页生成</p>
+            </div>
+            {selectedPage?.template_image_path && (
+              <img
+                src={getImageUrl(selectedPage.template_image_path, selectedPage.updated_at)}
+                alt="本页模板"
+                className="h-10 w-16 rounded-[var(--app-radius-control)] border border-[var(--app-border)] object-cover"
+              />
+            )}
+          </div>
+          <Textarea
+            aria-label="本页模板风格"
+            value={pageTemplateStyle}
+            onChange={(event) => setPageTemplateStyle(event.target.value)}
+            placeholder="例如：延续这页的色彩、版式、组件密度或视觉层级"
+            rows={3}
+            className="min-h-20 resize-none text-xs leading-5"
+          />
+          {selectedPage?.template_selection_role && (
+            <p className="text-xs leading-5 text-[var(--app-text-tertiary)]">
+              智能匹配：{selectedPage.template_selection_role} / {selectedPage.template_selection_layout || 'auto'}
+            </p>
+          )}
+          <input
+            ref={pageTemplateInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={handleUploadPageTemplate}
+          />
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleAutoMatchPageTemplates}
+            disabled={!currentProject.pages.length || isSavingPageTemplate}
+          >
+            智能匹配全部
+          </Button>
+          <div className="grid grid-cols-3 gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={<Upload size={14} />}
+              onClick={() => pageTemplateInputRef.current?.click()}
+              disabled={!selectedPage || isSavingPageTemplate}
+            >
+              上传
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleSavePageTemplateStyle}
+              disabled={!selectedPage || isSavingPageTemplate}
+            >
+              保存
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<X size={14} />}
+              onClick={handleClearPageTemplate}
+              disabled={!selectedPage || isSavingPageTemplate || (!selectedPage.template_image_path && !selectedPage.template_style_text)}
+            >
+              清除
+            </Button>
+          </div>
+        </section>
+
+        <section className="space-y-3 p-4">
+          <div className="space-y-1">
+            <h3 className="text-sm font-semibold">项目硬性要求</h3>
+            <p className="text-xs leading-5 text-[var(--app-text-tertiary)]">应用于所有页面的内容、品牌或合规要求</p>
+          </div>
+          <Textarea
+            aria-label="项目硬性要求"
+            value={extraRequirements}
+            onChange={(event) => {
+              isEditingRequirements.current = true;
+              setExtraRequirements(event.target.value);
+            }}
+            placeholder="例如：品牌名必须写作 EasySlide；所有数据必须来自页面描述"
+            rows={4}
+            className="min-h-24 resize-none text-xs leading-5"
+          />
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleSaveExtraRequirements}
+            disabled={isSavingRequirements}
+            className="w-full"
+          >
+            {isSavingRequirements ? '保存中...' : '保存项目要求'}
+          </Button>
+        </section>
+
+        <section data-testid="preview-page-outline" className="w-full min-w-0 max-w-full space-y-3 overflow-hidden p-4">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold">页面大纲</h3>
+            {!isInspectorOutlineEditing && (
+              <Button variant="ghost" size="sm" onClick={handleStartInspectorOutlineEdit} disabled={!selectedPage}>
+                编辑大纲
+              </Button>
+            )}
+          </div>
+          {isInspectorOutlineEditing ? (
+            <div className="space-y-3">
+              <input
+                aria-label="页面大纲标题"
+                type="text"
+                value={inspectorOutlineTitle}
+                onChange={(event) => setInspectorOutlineTitle(event.target.value)}
+                className="w-full min-w-0 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 text-sm text-[var(--app-text-primary)] outline-none focus:border-[var(--app-accent)]"
+                placeholder="页面标题"
+              />
+              <textarea
+                aria-label="页面大纲要点"
+                value={inspectorOutlinePoints}
+                onChange={(event) => setInspectorOutlinePoints(event.target.value)}
+                rows={6}
+                className="w-full min-w-0 resize-y rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 text-xs leading-5 text-[var(--app-text-primary)] outline-none focus:border-[var(--app-accent)]"
+                placeholder="每行输入一个要点"
+              />
+              <div className="flex justify-end gap-2">
+                <Button variant="ghost" size="sm" onClick={() => setIsInspectorOutlineEditing(false)}>取消</Button>
+                <Button variant="primary" size="sm" onClick={handleSaveInspectorOutline}>保存</Button>
+              </div>
+            </div>
+          ) : selectedPage?.outline_content?.points?.length ? (
+            <ul className="min-w-0 max-w-full space-y-1.5 text-xs leading-5 text-[var(--app-text-secondary)]">
+              {selectedPage.outline_content.points.map((point, index) => <li key={`${index}-${point}`} className="flex min-w-0 max-w-full gap-2"><span aria-hidden="true">•</span><span className="min-w-0 break-words">{point}</span></li>)}
+            </ul>
+          ) : <p className="text-xs text-[var(--app-text-tertiary)]">暂无大纲内容</p>}
+        </section>
+
+        <section data-testid="preview-page-description" className="w-full min-w-0 max-w-full space-y-3 overflow-hidden p-4">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold">页面描述</h3>
+            {!isInspectorDescriptionEditing && (
+              <Button variant="ghost" size="sm" onClick={handleStartInspectorDescriptionEdit} disabled={!selectedPage}>
+                编辑描述
+              </Button>
+            )}
+          </div>
+          {isInspectorDescriptionEditing ? (
+            <div className="space-y-3">
+              <textarea
+                aria-label="页面描述内容"
+                value={inspectorDescription}
+                onChange={(event) => setInspectorDescription(event.target.value)}
+                rows={9}
+                className="w-full min-w-0 resize-y rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 text-xs leading-5 text-[var(--app-text-primary)] outline-none focus:border-[var(--app-accent)]"
+                placeholder="输入页面描述"
+              />
+              <div className="flex justify-end gap-2">
+                <Button variant="ghost" size="sm" onClick={() => setIsInspectorDescriptionEditing(false)}>取消</Button>
+                <Button variant="primary" size="sm" onClick={handleSaveInspectorDescription}>保存</Button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <p className="min-w-0 max-w-full whitespace-pre-wrap break-words text-xs leading-5 text-[var(--app-text-secondary)]">
+                {selectedDescriptionPlainText || '暂无文字描述'}
+              </p>
+              {selectedDescriptionImageUrls.length > 0 && (
+                <div className="grid min-w-0 max-w-full grid-cols-2 gap-2">
+                  {selectedDescriptionImageUrls.map((url) => (
+                    <img
+                      key={url}
+                      src={getImageUrl(url)}
+                      alt="页面素材"
+                      className="aspect-video w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] object-cover"
+                    />
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<ImagePlus size={15} />}
+            onClick={() => setIsMaterialSelectorOpen(true)}
+            className="w-full justify-start"
+          >
+            素材管理{selectedDescriptionImageUrls.length > 0 ? ' (' + selectedDescriptionImageUrls.length + ')' : ''}
+          </Button>
+        </section>
+      </div>
+    </div>
+  );
+
   return (
-    <div className="h-screen bg-gray-50 dark:bg-background-primary flex flex-col overflow-hidden">
+    <div className="flex h-screen flex-col overflow-hidden bg-[var(--app-canvas)] text-[var(--app-text)]">
       {/* 顶栏 */}
-      <header className="min-h-14 bg-white dark:bg-background-secondary shadow-sm dark:shadow-background-primary/30 border-b border-gray-200 dark:border-border-primary flex items-center justify-between px-3 md:px-6 py-1.5 flex-shrink-0">
+      <WorkspaceToolbar className="justify-between px-3 md:px-4">
         <div className="flex items-center gap-2 md:gap-4 min-w-0 flex-1">
           <Button
             variant="ghost"
             size="sm"
             icon={<Home size={16} className="md:w-[18px] md:h-[18px]" />}
-            onClick={() => navigate('/app')}
+            onClick={() => navigate('/home')}
             className="hidden sm:inline-flex flex-shrink-0"
             >
               <span className="hidden md:inline">{t('nav.home')}</span>
@@ -1825,7 +2484,7 @@ export const SlidePreview: React.FC = () => {
                 if (fromHistory) {
                   navigate('/history');
                 } else {
-                  navigate(`/project/${projectId}/detail`);
+                  navigate(`/project/${projectId}/ppt/detail`);
                 }
               }}
               className="flex-shrink-0"
@@ -1835,11 +2494,11 @@ export const SlidePreview: React.FC = () => {
             <div className="hidden md:flex flex-col leading-tight min-w-0">
               <div className="flex items-center gap-2 min-w-0">
                 <span className="text-sm md:text-lg font-semibold truncate">{t('preview.title')}</span>
-                <span className="rounded-full border border-blue-100 bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-600">
+                <span className="rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-2 py-0.5 text-[11px] font-semibold text-[var(--app-text-secondary)]">
                   {t('preview.workflowStage')}
                 </span>
               </div>
-              <span className="text-[11px] text-gray-500 dark:text-foreground-tertiary truncate">{t('preview.workflowHint')}</span>
+              <span className="text-[11px] text-[var(--app-text-tertiary)] truncate">{t('preview.workflowHint')}</span>
             </div>
         </div>
         <div className="flex items-center gap-1 md:gap-3 flex-shrink-0">
@@ -1874,7 +2533,7 @@ export const SlidePreview: React.FC = () => {
               variant="secondary"
               size="sm"
               icon={<ArrowLeft size={16} className="md:w-[18px] md:h-[18px]" />}
-              onClick={() => navigate(`/project/${projectId}/detail`)}
+              onClick={() => navigate(`/project/${projectId}/ppt/detail`)}
               className="hidden sm:inline-flex"
             >
               <span className="hidden md:inline">{t('common.previous')}</span>
@@ -1889,7 +2548,16 @@ export const SlidePreview: React.FC = () => {
             >
               <span className="hidden lg:inline">{t('preview.refresh')}</span>
             </Button>
-          
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<FileText size={16} className="md:h-[18px] md:w-[18px]" />}
+              onClick={() => setShowNarrationWorkbench(true)}
+              className="hidden md:inline-flex"
+            >
+              <span className="hidden xl:inline">视频文案</span>
+            </Button>
+
           {/* 导出任务按钮 — 始终显示，面板内部决定是否有内容 */}
           <div className="relative">
               <Button
@@ -1904,7 +2572,7 @@ export const SlidePreview: React.FC = () => {
                 className="relative"
               >
                 {exportTasks.filter(t => t.projectId === projectId && (t.status === 'PROCESSING' || t.status === 'RUNNING' || t.status === 'PENDING' || t.status === 'PAUSED')).length > 0 ? (
-                  <Loader2 size={16} className="animate-spin text-sky-500" />
+                  <Loader2 size={16} className="animate-spin text-[var(--app-accent)]" />
                 ) : (
                   <FileText size={16} />
                 )}
@@ -1920,12 +2588,12 @@ export const SlidePreview: React.FC = () => {
                     projectId={projectId}
                     pages={currentProject?.pages || []}
                     onRetry={handleRetryExport}
-                    className="w-96 max-h-[28rem] shadow-lg"
+                    className="w-96 max-h-[28rem] shadow-[var(--app-shadow-floating)]"
                   />
                 </div>
               )}
             </div>
-          
+
           <div className="relative">
             <Button
               variant="primary"
@@ -1940,20 +2608,20 @@ export const SlidePreview: React.FC = () => {
               className="text-xs md:text-sm"
             >
               <span className="hidden sm:inline">
-                {isMultiSelectMode && selectedPageIds.size > 0 
-                  ? `${t('preview.export')} (${selectedPageIds.size})` 
+                {isMultiSelectMode && selectedPageIds.size > 0
+                  ? `${t('preview.export')} (${selectedPageIds.size})`
                   : t('preview.export')}
               </span>
               <span className="sm:hidden">
-                {isMultiSelectMode && selectedPageIds.size > 0 
-                  ? `(${selectedPageIds.size})` 
+                {isMultiSelectMode && selectedPageIds.size > 0
+                  ? `(${selectedPageIds.size})`
                   : t('preview.export')}
               </span>
             </Button>
             {showExportMenu && (
-              <div className="absolute right-0 mt-2 w-56 bg-white dark:bg-background-secondary rounded-lg shadow-lg border border-gray-200 dark:border-border-primary py-2 z-10">
+              <div className="absolute right-0 z-10 mt-2 w-56 rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)] py-2 shadow-[var(--app-shadow-soft)]">
                 {isMultiSelectMode && selectedPageIds.size > 0 && (
-                  <div className="px-4 py-2 text-xs text-gray-500 dark:text-foreground-tertiary border-b border-gray-100 dark:border-border-primary">
+                  <div className="border-b border-[var(--app-border)] px-4 py-2 text-xs text-[var(--app-text-tertiary)]">
                     {t('preview.exportSelectedPages', { count: selectedPageIds.size })}
                   </div>
                 )}
@@ -1964,7 +2632,7 @@ export const SlidePreview: React.FC = () => {
                   }}
                   disabled={!exportRangeHasAllImages}
                   title={exportRangeMissingTip}
-                  className="w-full px-4 py-2 text-left hover:bg-gray-50 dark:hover:bg-background-hover transition-colors text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="w-full px-4 py-2 text-left text-sm transition-colors hover:bg-[var(--app-surface-hover)] disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {t('preview.exportPptx')}
                 </button>
@@ -1975,7 +2643,7 @@ export const SlidePreview: React.FC = () => {
                   }}
                   disabled={!exportRangeHasAllImages}
                   title={exportRangeMissingTip}
-                  className="w-full px-4 py-2 text-left hover:bg-gray-50 dark:hover:bg-background-hover transition-colors text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="w-full px-4 py-2 text-left text-sm transition-colors hover:bg-[var(--app-surface-hover)] disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {t('preview.exportEditablePptx')}
                 </button>
@@ -1983,7 +2651,7 @@ export const SlidePreview: React.FC = () => {
                   onClick={() => handleExport('pdf')}
                   disabled={!exportRangeHasAllImages}
                   title={exportRangeMissingTip}
-                  className="w-full px-4 py-2 text-left hover:bg-gray-50 dark:hover:bg-background-hover transition-colors text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="w-full px-4 py-2 text-left text-sm transition-colors hover:bg-[var(--app-surface-hover)] disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {t('preview.exportPdf')}
                 </button>
@@ -1991,42 +2659,21 @@ export const SlidePreview: React.FC = () => {
                   onClick={() => handleExport('images')}
                   disabled={!exportRangeHasAllImages}
                   title={exportRangeMissingTip}
-                  className="w-full px-4 py-2 text-left hover:bg-gray-50 dark:hover:bg-background-hover transition-colors text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="w-full px-4 py-2 text-left text-sm transition-colors hover:bg-[var(--app-surface-hover)] disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {t('preview.exportImages')}
                 </button>
                 <button
-                  onClick={async () => {
+                  onClick={() => {
                     setShowExportMenu(false);
-                    try {
-                      const res = await getSettings();
-                      const hasKey = (res.data?.elevenlabs_api_key_length ?? 0) > 0;
-                      setElevenLabsApiKeyConfigured(hasKey);
-                      const lang = (res.data?.output_language as string | undefined) || 'zh';
-                      setOutputLanguage(lang);
-                      if (!hasKey) setElevenLabsEnabled(false);
-                      if (hasKey && elevenLabsEnabled && elevenLabsVoices.length === 0) {
-                        setElevenLabsVoicesLoading(true);
-                        try {
-                          const voicesRes = await getElevenLabsVoices();
-                          setElevenLabsVoices(voicesRes.data?.voices ?? []);
-                        } catch (error: any) {
-                          console.error('Failed to load ElevenLabs voices:', error);
-                          setElevenLabsEnabled(false);
-                          show({
-                            message: error?.response?.data?.error?.message || error?.response?.data?.message || error?.message || '获取 ElevenLabs 声音列表失败',
-                            type: 'error',
-                          });
-                        }
-                        setElevenLabsVoicesLoading(false);
-                      }
-                  } catch (error) {
-                    console.error('Failed to load settings before video export:', error);
-                  }
-                  setVideoIncludeNoImage(false);
-                  setShowVideoExportDialog(true);
-                }}
-                  className="w-full px-4 py-2 text-left hover:bg-gray-50 dark:hover:bg-background-hover transition-colors text-sm"
+                    setVideoIncludeNoImage(false);
+                    if (!projectId) return;
+                    void getProjectNarrations(projectId).then(response => {
+                      if (response.data) setVideoNarrationSummary(response.data);
+                    }).catch(() => undefined);
+                    setShowVideoExportDialog(true);
+                  }}
+                  className="w-full px-4 py-2 text-left text-sm transition-colors hover:bg-[var(--app-surface-hover)]"
                 >
                   {t('preview.exportVideo')}
                 </button>
@@ -2034,26 +2681,26 @@ export const SlidePreview: React.FC = () => {
             )}
           </div>
         </div>
-      </header>
+      </WorkspaceToolbar>
 
       {/* PPTX 导出设置弹窗 */}
       {showPptxExportDialog && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowPptxExportDialog(false)}>
-          <div className="bg-white dark:bg-background-secondary rounded-2xl shadow-xl p-6 w-full max-w-xl mx-4" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[color:var(--app-surface)]/80" onClick={() => setShowPptxExportDialog(false)}>
+          <div className="mx-4 w-full max-w-xl rounded-[var(--app-radius-panel)] border border-[var(--app-border)] bg-[var(--app-surface)] p-6 shadow-[var(--app-shadow-soft)]" onClick={e => e.stopPropagation()}>
             <h3 className="text-lg font-semibold">{t('preview.pptxExportTitle')}</h3>
-            <p className="text-sm text-gray-500 dark:text-foreground-tertiary mt-1 mb-5">{t('preview.pptxExportSubtitle')}</p>
+            <p className="mb-5 mt-1 text-sm text-[var(--app-text-tertiary)]">{t('preview.pptxExportSubtitle')}</p>
 
             <div className="space-y-4">
-              <label className="flex items-start gap-3 cursor-pointer p-3 rounded-lg hover:bg-gray-50 dark:hover:bg-background-hover">
+              <label className="flex cursor-pointer items-start gap-3 rounded-[var(--app-radius-card)] p-3 hover:bg-[var(--app-surface-hover)]">
                 <input
                   type="checkbox"
                   checked={pptxTransitionsEnabled}
                   onChange={e => setPptxTransitionsEnabled(e.target.checked)}
-                  className="w-4 h-4 mt-0.5 rounded border-gray-300 text-sky-500 focus:ring-sky-500"
+                  className="mt-0.5 h-4 w-4 rounded border-[var(--app-border)] text-[var(--app-accent)] focus-visible:ring-[color:var(--app-accent-soft)]"
                 />
                 <div className="flex-1">
                   <div className="text-sm font-medium">{t('preview.pptxTransitionToggle')}</div>
-                  <div className="text-xs text-gray-500 dark:text-foreground-tertiary mt-1">{t('preview.pptxTransitionDesc')}</div>
+                  <div className="mt-1 text-xs text-[var(--app-text-tertiary)]">{t('preview.pptxTransitionDesc')}</div>
                 </div>
               </label>
 
@@ -2066,8 +2713,8 @@ export const SlidePreview: React.FC = () => {
                         key={option.value}
                         className={`flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm cursor-pointer transition-colors ${
                           checked
-                            ? 'border-sky-400 bg-sky-50 text-sky-700 dark:border-sky-500 dark:bg-sky-600/10 dark:text-sky-300'
-                            : 'border-gray-200 dark:border-border-primary hover:bg-gray-50 dark:hover:bg-background-hover'
+                            ? 'border-[var(--app-accent)] bg-[var(--app-accent-soft)] text-[var(--app-accent)]'
+                            : 'border-[var(--app-border)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]'
                         }`}
                       >
                         <input
@@ -2081,7 +2728,7 @@ export const SlidePreview: React.FC = () => {
                               return prev.filter(effect => effect !== option.value);
                             });
                           }}
-                          className="w-4 h-4 rounded border-gray-300 text-sky-500 focus:ring-sky-500"
+                          className="h-4 w-4 rounded border-[var(--app-border)] text-[var(--app-accent)] focus-visible:ring-[color:var(--app-accent-soft)]"
                         />
                         <span>{t(`preview.${option.labelKey}`)}</span>
                       </label>
@@ -2091,7 +2738,7 @@ export const SlidePreview: React.FC = () => {
               )}
 
               {pptxTransitionsEnabled && pptxTransitionEffects.length === 0 && (
-                <div className="text-xs text-rose-600 dark:text-rose-400 px-1">
+                <div className="px-1 text-xs text-[var(--app-error)]">
                   {t('preview.pptxTransitionRequired')}
                 </div>
               )}
@@ -2100,7 +2747,7 @@ export const SlidePreview: React.FC = () => {
             <div className="flex justify-end gap-3 mt-6">
               <button
                 onClick={() => setShowPptxExportDialog(false)}
-                className="px-4 py-2 text-sm text-gray-600 dark:text-foreground-tertiary hover:bg-gray-100 dark:hover:bg-background-hover rounded-lg transition-colors"
+                className="rounded-[var(--app-radius-control)] px-4 py-2 text-sm text-[var(--app-text-secondary)] transition-colors hover:bg-[var(--app-surface-hover)]"
               >
                 {t('preview.pptxCancel')}
               </button>
@@ -2113,7 +2760,7 @@ export const SlidePreview: React.FC = () => {
                   });
                 }}
                 disabled={pptxTransitionsEnabled && pptxTransitionEffects.length === 0}
-                className="px-4 py-2 text-sm bg-sky-600 text-white rounded-lg hover:bg-sky-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                className="rounded-[var(--app-radius-control)] bg-[var(--app-primary-action)] px-4 py-2 text-sm text-[var(--app-surface)] transition-colors hover:bg-[var(--app-primary-action-hover)] disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {t('preview.pptxStartExport')}
               </button>
@@ -2124,11 +2771,35 @@ export const SlidePreview: React.FC = () => {
 
       {/* 视频导出设置弹窗 */}
       {showVideoExportDialog && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowVideoExportDialog(false)}>
-          <div className="bg-white dark:bg-background-secondary rounded-2xl shadow-xl p-6 w-[680px] max-w-[96vw] max-h-[88vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold">{t('preview.videoExportTitle')}</h3>
-            <p className="text-sm text-gray-500 dark:text-foreground-tertiary mt-1 mb-5">{t('preview.videoExportSubtitle')}</p>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[color:var(--app-surface)]/80" onClick={() => setShowVideoExportDialog(false)}>
+          <div role="dialog" aria-modal="true" aria-labelledby="video-export-title" className="max-h-[88vh] w-[680px] max-w-[96vw] overflow-y-auto rounded-[var(--app-radius-panel)] border border-[var(--app-border)] bg-[var(--app-surface)] p-6 shadow-[var(--app-shadow-soft)]" onClick={e => e.stopPropagation()}>
+            <h3 id="video-export-title" className="text-lg font-semibold">{t('preview.videoExportTitle')}</h3>
+            <p className="mb-5 mt-1 text-sm text-[var(--app-text-tertiary)]">{t('preview.videoExportSubtitle')}</p>
             <div className="space-y-5">
+              <div className="flex items-center justify-between gap-3 rounded-[8px] border border-[var(--app-border)] bg-[var(--app-surface-secondary)] px-3 py-2">
+                <div className="min-w-0 text-sm">
+                  <p className="font-medium text-[var(--app-text)]">视频文案</p>
+                  <p className="truncate text-xs text-[var(--app-text-tertiary)]">
+                    已确认 {videoNarrationSummary?.confirmed_pages ?? '—'} 页 · 缺失 {videoNarrationSummary?.missing_pages ?? '—'} 页 · 候选 {videoNarrationSummary?.candidate_pages ?? '—'} 页
+                  </p>
+                </div>
+                <Button type="button" variant="secondary" size="sm" onClick={() => { setShowVideoExportDialog(false); setShowNarrationWorkbench(true); }}>
+                  编辑视频文案
+                </Button>
+              </div>
+              <div className="space-y-2">
+                <div className="text-sm font-medium">语音引擎</div>
+                <SegmentedControl
+                  ariaLabel="语音引擎"
+                  options={[
+                    { value: 'edge', label: 'Edge 免费语音' },
+                    { value: 'fish_audio', label: 'Fish Audio s2.1-pro-free' },
+                  ]}
+                  value={videoTtsProvider}
+                  onChange={setVideoTtsProvider}
+                  className="grid w-full grid-cols-2"
+                />
+              </div>
               <div className="space-y-2">
                 <div className="text-sm font-medium">{t('preview.videoDirectorPreset')}</div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -2140,8 +2811,8 @@ export const SlidePreview: React.FC = () => {
                       onClick={() => applyVideoDirectorPreset(preset)}
                       className={`min-h-10 px-3 py-2 text-sm border rounded-lg transition-colors ${
                         videoDirectorConfig.preset === preset
-                          ? 'border-sky-500 bg-sky-50 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300'
-                          : 'border-gray-200 text-gray-600 hover:border-sky-300 dark:border-border-primary dark:text-foreground-secondary'
+                          ? 'border-[var(--app-accent)] bg-[var(--app-accent-soft)] text-[var(--app-accent)]'
+                          : 'border-[var(--app-border)] text-[var(--app-text-secondary)] hover:border-[var(--app-accent)]'
                       }`}
                     >
                       {t(`preview.${labelKey}`)}
@@ -2149,23 +2820,112 @@ export const SlidePreview: React.FC = () => {
                   ))}
                 </div>
               </div>
-              <div className="rounded-xl border border-gray-200 dark:border-border-primary p-4 space-y-4">
+              <div className="space-y-4 rounded-[var(--app-radius-card)] border border-[var(--app-border)] p-4">
                 <div className="flex items-center justify-between gap-4">
                   <div>
                     <div className="text-sm font-medium">{t('preview.videoNarrationPresetTitle')}</div>
-                    <div className="text-xs text-gray-500 dark:text-foreground-tertiary mt-1">{t('preview.videoNarrationAdvancedHint')}</div>
+                    <div className="mt-1 text-xs text-[var(--app-text-tertiary)]">{t('preview.videoNarrationAdvancedHint')}</div>
                   </div>
                   <button
                     type="button"
                     onClick={() => setVideoShowAdvancedNarration(prev => !prev)}
-                    className="text-sm text-sky-600 hover:text-sky-700"
+                    className="text-sm text-[var(--app-accent)] hover:text-[var(--app-accent-strong)]"
                   >
                     {videoShowAdvancedNarration ? t('preview.videoNarrationCollapse') : t('preview.videoNarrationAdvanced')}
                   </button>
                 </div>
-                <div className="h-24 overflow-y-auto break-words rounded-lg border border-gray-200 dark:border-border-primary px-3 py-2 pr-2 text-sm leading-6 text-gray-700 dark:text-foreground-secondary">
+                <div className="h-24 overflow-y-auto break-words rounded-[var(--app-radius-control)] border border-[var(--app-border)] px-3 py-2 pr-2 text-sm leading-6 text-[var(--app-text-secondary)]">
                   <span className="font-medium mr-2">{t('preview.videoNarrationSummaryLabel')}</span>
                   <span>{narrationSummary}</span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <label className="block text-sm font-medium">
+                    <span className="block mb-1.5">旁白模式</span>
+                    <select
+                      aria-label="旁白模式"
+                      value={videoNarrationMode}
+                      onChange={e => setVideoNarrationMode(e.target.value as 'single' | 'dialogue')}
+                      className="w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--app-accent-soft)]"
+                    >
+                      <option value="single">单人讲解</option>
+                      <option value="dialogue">{videoTtsProvider === 'fish_audio' ? '多人对话（2-4 人）' : '双人对话（主持人 + 专家）'}</option>
+                    </select>
+                  </label>
+                  {videoNarrationMode === 'dialogue' && (
+                    videoTtsProvider === 'fish_audio' ? (
+                      <div className="space-y-3 md:col-span-2">
+                        {videoFishSpeakers.map((speaker, index) => (
+                          <div key={speaker.id} className="grid grid-cols-1 items-end gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_40px]">
+                            <label className="block text-sm font-medium">
+                              <span className="block mb-1.5">角色 {index + 1}</span>
+                              <input
+                                aria-label={`角色 ${index + 1} 名称`}
+                                value={speaker.name}
+                                onChange={event => setVideoFishSpeakers(previous => previous.map(item => item.id === speaker.id ? { ...item, name: event.target.value } : item))}
+                                className="w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--app-accent-soft)]"
+                              />
+                            </label>
+                            <label className="block text-sm font-medium">
+                              <span className="block mb-1.5">私有声线</span>
+                              <select
+                                aria-label={`角色 ${index + 1} 私有声线`}
+                                value={speaker.voice}
+                                onChange={event => setVideoFishSpeakers(previous => previous.map(item => item.id === speaker.id ? { ...item, voice: event.target.value } : item))}
+                                disabled={videoFishVoicesLoading || videoFishVoices.length === 0}
+                                className="w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--app-accent-soft)] disabled:opacity-50"
+                              >
+                                {videoFishVoices.map(voice => <option key={voice.id} value={voice.id}>{voice.title}</option>)}
+                              </select>
+                            </label>
+                            <button
+                              type="button"
+                              aria-label={`删除角色 ${index + 1}`}
+                              title="删除角色"
+                              disabled={videoFishSpeakers.length <= 2}
+                              onClick={() => setVideoFishSpeakers(previous => previous.filter(item => item.id !== speaker.id))}
+                              className="flex h-10 w-10 items-center justify-center rounded-[var(--app-radius-control)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] disabled:cursor-not-allowed disabled:opacity-30"
+                            >
+                              <Trash2 size={16} aria-hidden="true" />
+                            </button>
+                          </div>
+                        ))}
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          icon={<Plus size={15} aria-hidden="true" />}
+                          disabled={videoFishSpeakers.length >= 4 || videoFishVoices.length === 0}
+                          onClick={() => setVideoFishSpeakers(previous => [
+                            ...previous,
+                            {
+                              id: `speaker-${Date.now()}`,
+                              name: `角色 ${previous.length + 1}`,
+                              voice: videoFishVoices[previous.length % videoFishVoices.length]?.id || '',
+                            },
+                          ])}
+                        >
+                          添加角色
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-3">
+                        {videoNarrationSpeakers.map(speaker => (
+                          <label key={speaker.id} className="block text-sm font-medium">
+                            <span className="block mb-1.5">{speaker.name}音色</span>
+                            <select
+                              aria-label={`${speaker.name}音色`}
+                              value={speaker.voice}
+                              onChange={e => setVideoNarrationSpeakers(previous => previous.map(item => item.id === speaker.id ? { ...item, voice: e.target.value } : item))}
+                              className="w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--app-accent-soft)]"
+                            >
+                              {VIDEO_VOICE_OPTIONS.flatMap(group => group.voices).map(option => (
+                                <option key={option.id} value={option.id}>{option.label}</option>
+                              ))}
+                            </select>
+                          </label>
+                        ))}
+                      </div>
+                    )
+                  )}
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
@@ -2173,7 +2933,7 @@ export const SlidePreview: React.FC = () => {
                     <select
                       value={videoNarrationConfig.speaker_persona}
                       onChange={e => setVideoNarrationConfig(prev => ({ ...prev, speaker_persona: e.target.value }))}
-                      className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-border-primary rounded-lg bg-white dark:bg-background-primary focus:outline-none focus:ring-2 focus:ring-sky-400"
+                      className="w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--app-accent-soft)]"
                     >
                       {NARRATION_PERSONA_OPTIONS.map(option => (
                         <option key={option.value} value={option.value}>
@@ -2187,7 +2947,7 @@ export const SlidePreview: React.FC = () => {
                     <select
                       value={videoNarrationConfig.target_audience}
                       onChange={e => setVideoNarrationConfig(prev => ({ ...prev, target_audience: e.target.value }))}
-                      className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-border-primary rounded-lg bg-white dark:bg-background-primary focus:outline-none focus:ring-2 focus:ring-sky-400"
+                      className="w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--app-accent-soft)]"
                     >
                       {NARRATION_AUDIENCE_OPTIONS.map(option => (
                         <option key={option.value} value={option.value}>
@@ -2201,7 +2961,7 @@ export const SlidePreview: React.FC = () => {
                     <select
                       value={videoNarrationConfig.speech_tone}
                       onChange={e => setVideoNarrationConfig(prev => ({ ...prev, speech_tone: e.target.value }))}
-                      className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-border-primary rounded-lg bg-white dark:bg-background-primary focus:outline-none focus:ring-2 focus:ring-sky-400"
+                      className="w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--app-accent-soft)]"
                     >
                       {NARRATION_TONE_OPTIONS.map(option => (
                         <option key={option.value} value={option.value}>
@@ -2210,53 +2970,19 @@ export const SlidePreview: React.FC = () => {
                       ))}
                     </select>
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-1.5">{t('preview.videoVoiceLabel')}</label>
-                    {elevenLabsEnabled ? (
-                      (() => {
-                        const targetLang = (outputLanguage || 'zh').toLowerCase();
-                        const matched = elevenLabsVoices.filter(v => (v.languages || []).some(l => l.toLowerCase() === targetLang));
-                        const noMatch = !elevenLabsVoicesLoading && elevenLabsVoices.length > 0 && matched.length === 0;
-                        const list = matched.length > 0 ? matched : elevenLabsVoices;
-                        return (
-                          <>
-                            <select
-                              value={elevenLabsVoiceId}
-                              onChange={e => setElevenLabsVoiceId(e.target.value)}
-                              disabled={elevenLabsVoicesLoading}
-                              className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-border-primary rounded-lg bg-white dark:bg-background-primary focus:outline-none focus:ring-2 focus:ring-sky-400 disabled:opacity-60"
-                            >
-                              {elevenLabsVoicesLoading ? (
-                                <option>{isEnglishUi ? 'Loading voices…' : '加载声音列表中…'}</option>
-                              ) : elevenLabsVoices.length === 0 ? (
-                                <option>{isEnglishUi ? 'No voices available' : '暂无可用声音'}</option>
-                              ) : list.map(v => {
-                                const langs = (v.languages || []).join(', ');
-                                const meta = [langs, v.accent].filter(Boolean).join(' · ');
-                                return (
-                                  <option key={v.id} value={v.id}>
-                                    {meta ? `${v.name} (${meta})` : v.name}
-                                  </option>
-                                );
-                              })}
-                            </select>
-                            {noMatch && (
-                              <div className="mt-2 rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/30 px-3 py-2 text-xs text-rose-700 dark:text-rose-400">
-                                {isEnglishUi
-                                  ? `No ElevenLabs voice in your account supports the target language "${targetLang}". Showing all voices as fallback — generated audio may not sound natural.`
-                                  : `当前账号下没有支持目标语言"${targetLang}"的 ElevenLabs 声音，已显示全部声音作为兜底——生成的语音可能不自然。`}
-                              </div>
-                            )}
-                          </>
-                        );
-                      })()
-                    ) : (
+                  {videoNarrationMode === 'single' && (
+                    <div>
+                      <label className="block text-sm font-medium mb-1.5">{t('preview.videoVoiceLabel')}</label>
                       <select
-                        value={videoVoice}
-                        onChange={e => setVideoVoice(e.target.value)}
-                        className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-border-primary rounded-lg bg-white dark:bg-background-primary focus:outline-none focus:ring-2 focus:ring-sky-400"
+                        aria-label={videoTtsProvider === 'fish_audio' ? 'Fish Audio 私有声线' : t('preview.videoVoiceLabel')}
+                        value={videoTtsProvider === 'fish_audio' ? videoFishVoice : videoVoice}
+                        onChange={e => videoTtsProvider === 'fish_audio' ? setVideoFishVoice(e.target.value) : setVideoVoice(e.target.value)}
+                        disabled={videoTtsProvider === 'fish_audio' && (videoFishVoicesLoading || videoFishVoices.length === 0)}
+                        className="w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--app-accent-soft)] disabled:opacity-50"
                       >
-                        {VIDEO_VOICE_OPTIONS.map(group => (
+                        {videoTtsProvider === 'fish_audio' ? videoFishVoices.map(voice => (
+                          <option key={voice.id} value={voice.id}>{voice.title}</option>
+                        )) : VIDEO_VOICE_OPTIONS.map(group => (
                           <optgroup key={group.group} label={group.group}>
                             {group.voices.map(v => (
                               <option key={v.id} value={v.id}>{v.label}</option>
@@ -2264,12 +2990,15 @@ export const SlidePreview: React.FC = () => {
                           </optgroup>
                         ))}
                       </select>
-                    )}
-                  </div>
+                      {videoTtsProvider === 'fish_audio' && videoFishVoicesLoading && (
+                        <p className="mt-1 text-xs text-[var(--app-text-tertiary)]" aria-live="polite">正在加载私有声线...</p>
+                      )}
+                    </div>
+                  )}
                   <div>
                     <label className="block text-sm font-medium mb-1.5 flex items-center justify-between">
                       <span>{t('preview.videoSpeedLabel')}</span>
-                      <span className="text-xs font-mono text-gray-500 dark:text-text-secondary">{videoSpeed.toFixed(2)}×</span>
+                      <span className="font-mono text-xs text-[var(--app-text-tertiary)]">{videoSpeed.toFixed(2)}×</span>
                     </label>
                     <input
                       type="range"
@@ -2278,11 +3007,49 @@ export const SlidePreview: React.FC = () => {
                       step={0.05}
                       value={videoSpeed}
                       onChange={e => setVideoSpeed(parseFloat(e.target.value))}
-                      className="w-full accent-sky-500"
+                      className="w-full accent-[var(--app-accent)]"
                     />
-                    <p className="mt-1 text-xs text-gray-500 dark:text-text-secondary">{t('preview.videoSpeedHint')}</p>
+                    <p className="mt-1 text-xs text-[var(--app-text-tertiary)]">{t('preview.videoSpeedHint')}</p>
                   </div>
                 </div>
+                {videoTtsProvider === 'fish_audio' && (
+                  <div className="space-y-3">
+                    {videoFishVoicesError && (
+                      <div className="rounded-[var(--app-radius-control)] border border-[var(--app-danger)]/30 bg-[var(--app-danger)]/5 px-3 py-2 text-sm text-[var(--app-danger)]" role="alert">
+                        {videoFishVoicesError}
+                      </div>
+                    )}
+                    <label className="flex cursor-pointer items-center gap-3">
+                      <input
+                        type="checkbox"
+                        checked={videoAutoEmotion}
+                        onChange={event => setVideoAutoEmotion(event.target.checked)}
+                        className="h-4 w-4 rounded border-[var(--app-border)] text-[var(--app-accent)] focus-visible:ring-[color:var(--app-accent-soft)]"
+                      />
+                      <span className="text-sm">自动匹配场景语气</span>
+                    </label>
+                    <FishNarrationAdvancedPanel
+                      projectId={projectId || ''}
+                      voices={videoFishVoices}
+                      voice={videoNarrationMode === 'single' ? videoFishVoice : videoFishSpeakers[0]?.voice || ''}
+                      speed={videoSpeed}
+                      autoEmotion={videoAutoEmotion}
+                      pronunciationLexicon={videoPronunciationLexicon}
+                      narrationPreferences={videoNarrationPreferences}
+                      estimate={videoUsageEstimate}
+                      pageOptions={currentProject.pages.map((page, index) => ({
+                        id: page.page_id,
+                        label: `第 ${index + 1} 页 · ${page.outline_content?.title || '未命名页面'}`,
+                      }))}
+                      onVoiceChange={(voice) => videoNarrationMode === 'single'
+                        ? setVideoFishVoice(voice)
+                        : setVideoFishSpeakers((current) => current.map((speaker, index) => index === 0 ? { ...speaker, voice } : speaker))}
+                      onSpeedChange={setVideoSpeed}
+                      onPronunciationLexiconChange={setVideoPronunciationLexicon}
+                      onNarrationPreferencesChange={setVideoNarrationPreferences}
+                    />
+                  </div>
+                )}
                 {videoShowAdvancedNarration && (
                   <div className="space-y-4">
                     <div>
@@ -2292,7 +3059,7 @@ export const SlidePreview: React.FC = () => {
                         value={videoNarrationConfig.presentation_topic}
                         onChange={e => setVideoNarrationConfig(prev => ({ ...prev, presentation_topic: e.target.value }))}
                         placeholder={t('preview.videoNarrationTopicPlaceholder')}
-                        className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-border-primary rounded-lg bg-white dark:bg-background-primary focus:outline-none focus:ring-2 focus:ring-sky-400"
+                        className="w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--app-accent-soft)]"
                       />
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -2304,7 +3071,7 @@ export const SlidePreview: React.FC = () => {
                           max={300}
                           value={videoNarrationConfig.min_words}
                           onChange={e => setVideoNarrationConfig(prev => ({ ...prev, min_words: Number(e.target.value) || 30 }))}
-                          className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-border-primary rounded-lg bg-white dark:bg-background-primary focus:outline-none focus:ring-2 focus:ring-sky-400"
+                          className="w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--app-accent-soft)]"
                         />
                       </div>
                       <div>
@@ -2315,52 +3082,10 @@ export const SlidePreview: React.FC = () => {
                           max={300}
                           value={videoNarrationConfig.max_words}
                           onChange={e => setVideoNarrationConfig(prev => ({ ...prev, max_words: Number(e.target.value) || 30 }))}
-                          className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-border-primary rounded-lg bg-white dark:bg-background-primary focus:outline-none focus:ring-2 focus:ring-sky-400"
+                          className="w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--app-accent-soft)]"
                         />
                       </div>
                     </div>
-                    <label className="flex items-center gap-3 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={elevenLabsEnabled}
-                        onChange={async e => {
-                          setElevenLabsEnabled(e.target.checked);
-                          if (e.target.checked && elevenLabsVoices.length === 0) {
-                            setElevenLabsVoicesLoading(true);
-                            try {
-                              const res = await getElevenLabsVoices();
-                              const voices = res.data?.voices ?? [];
-                              setElevenLabsVoices(voices);
-                              if (voices.length > 0 && !elevenLabsVoiceId) {
-                                setElevenLabsVoiceId(voices[0].id);
-                              }
-                            } catch (err: any) {
-                              console.error('[ElevenLabs] 获取声音列表失败', err);
-                              setElevenLabsEnabled(false);
-                              show({
-                                message: err?.response?.data?.error?.message || err?.response?.data?.message || err?.message || '获取 ElevenLabs 声音列表失败',
-                                type: 'error',
-                              });
-                            }
-                            setElevenLabsVoicesLoading(false);
-                          }
-                        }}
-                        className="w-4 h-4 rounded border-gray-300 text-sky-500 focus:ring-sky-500"
-                      />
-                      <span className="text-sm">{t('preview.videoUseElevenLabs')}</span>
-                    </label>
-                    {elevenLabsEnabled && !elevenLabsApiKeyConfigured && (
-                      <div className="flex items-center gap-2 rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/30 px-3 py-2 text-sm text-rose-700 dark:text-rose-400">
-                        <span>{t('preview.videoElevenLabsNoKey')}</span>
-                        <button
-                          type="button"
-                          onClick={() => { setShowVideoExportDialog(false); navigate('/settings', { state: { from: location.pathname } }); }}
-                          className="underline underline-offset-2 hover:text-rose-900 dark:hover:text-rose-300 shrink-0"
-                        >
-                          {t('preview.videoElevenLabsGoSettings')}
-                        </button>
-                      </div>
-                    )}
                   </div>
                 )}
               </div>
@@ -2370,26 +3095,26 @@ export const SlidePreview: React.FC = () => {
                     type="checkbox"
                     checked={videoEnableKenBurns}
                     onChange={e => setVideoEnableKenBurns(e.target.checked)}
-                    className="w-4 h-4 rounded border-gray-300 text-sky-500 focus:ring-sky-500"
+                    className="h-4 w-4 rounded border-[var(--app-border)] text-[var(--app-accent)] focus-visible:ring-[color:var(--app-accent-soft)]"
                   />
                   <span className="text-sm">{t('preview.videoEnableKenBurns')}</span>
                   <span className="relative group">
-                    <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-gray-200 dark:bg-gray-600 text-[10px] text-gray-500 dark:text-gray-300 cursor-help">?</span>
-                    <span className="absolute left-1/2 -translate-x-1/2 bottom-full mb-1.5 px-2.5 py-1.5 text-xs text-white bg-gray-800 dark:bg-gray-700 rounded-md whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-50">
+                    <span className="inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full bg-[var(--app-surface-hover)] text-[10px] text-[var(--app-text-tertiary)]">?</span>
+                    <span className="absolute left-1/2 -translate-x-1/2 bottom-full mb-1.5 px-2.5 py-1.5 text-xs text-[var(--app-surface)] bg-[var(--app-text)] rounded-[var(--app-radius-control)] whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-50">
                       {t('preview.videoKenBurnsTip')}
                     </span>
                   </span>
                 </label>
                 {videoEnableKenBurns && (
                   <div className="pl-7">
-                    <label className="block text-xs font-medium text-gray-600 dark:text-foreground-tertiary mb-1.5">
+                    <label className="mb-1.5 block text-xs font-medium text-[var(--app-text-tertiary)]">
                       {t('preview.videoKenBurnsStyle')}
                     </label>
                     <select
                       aria-label={t('preview.videoKenBurnsStyle')}
                       value={videoKenBurnsStyle}
                       onChange={e => setVideoKenBurnsStyle(e.target.value as 'auto' | 'zoom' | 'pan')}
-                      className="w-full max-w-xs px-3 py-2 text-sm border border-gray-200 dark:border-border-primary rounded-lg bg-white dark:bg-background-primary focus:outline-none focus:ring-2 focus:ring-sky-400"
+                      className="w-full max-w-xs rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--app-accent-soft)]"
                     >
                       <option value="auto">{t('preview.videoKenBurnsStyleAuto')}</option>
                       <option value="zoom">{t('preview.videoKenBurnsStyleZoom')}</option>
@@ -2402,12 +3127,12 @@ export const SlidePreview: React.FC = () => {
                     type="checkbox"
                     checked={videoIncludeNoImage}
                     onChange={e => setVideoIncludeNoImage(e.target.checked)}
-                    className="w-4 h-4 rounded border-gray-300 text-sky-500 focus:ring-sky-500"
+                    className="h-4 w-4 rounded border-[var(--app-border)] text-[var(--app-accent)] focus-visible:ring-[color:var(--app-accent-soft)]"
                   />
                   <span className="text-sm">{t('preview.videoIncludeNoImage')}</span>
                 </label>
                 {!exportRangeHasAllImages && (
-                  <div className="rounded-[8px] border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                  <div className="rounded-[8px] border border-[var(--app-error)]/25 bg-[var(--app-error)]/10 px-3 py-2 text-sm text-[var(--app-error)]">
                     {t('preview.videoMissingImagesWarning', { count: exportMissingImageCount })}
                   </div>
                 )}
@@ -2416,15 +3141,19 @@ export const SlidePreview: React.FC = () => {
             <div className="flex justify-end gap-3 mt-6">
               <button
                 onClick={() => setShowVideoExportDialog(false)}
-                className="px-4 py-2 text-sm text-gray-600 dark:text-foreground-tertiary hover:bg-gray-100 dark:hover:bg-background-hover rounded-lg transition-colors"
+                className="rounded-[var(--app-radius-control)] px-4 py-2 text-sm text-[var(--app-text-secondary)] transition-colors hover:bg-[var(--app-surface-hover)]"
               >
                 {t('preview.videoCancel')}
               </button>
               <button
                 onClick={() => { setShowVideoExportDialog(false); handleExport('video'); }}
-                disabled={!exportRangeHasAllImages && !videoIncludeNoImage}
-                title={!exportRangeHasAllImages && !videoIncludeNoImage ? exportRangeMissingTip : undefined}
-                className="px-4 py-2 text-sm bg-sky-600 text-white rounded-lg hover:bg-sky-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                disabled={(!exportRangeHasAllImages && !videoIncludeNoImage) || !videoExportConfigReady}
+                title={!exportRangeHasAllImages && !videoIncludeNoImage
+                  ? exportRangeMissingTip
+                  : !videoExportConfigReady
+                    ? '请完成 Fish Audio 声线配置'
+                    : undefined}
+                className="rounded-[var(--app-radius-control)] bg-[var(--app-primary-action)] px-4 py-2 text-sm text-[var(--app-surface)] transition-colors hover:bg-[var(--app-primary-action-hover)] disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {t('preview.videoStartExport')}
               </button>
@@ -2434,10 +3163,10 @@ export const SlidePreview: React.FC = () => {
       )}
 
       {showEditablePptxDialog && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowEditablePptxDialog(false)}>
-          <div className="bg-white dark:bg-background-secondary rounded-2xl p-6 w-full max-w-md mx-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--app-backdrop)] p-4" onClick={() => setShowEditablePptxDialog(false)}>
+          <div className="w-full max-w-md rounded-[var(--app-radius-panel)] border border-[var(--app-border)] bg-[var(--app-surface)] p-6 shadow-[var(--app-shadow-floating)]" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-semibold">{t('preview.editablePptxDialogTitle')}</h3>
-            <p className="text-sm text-gray-500 dark:text-foreground-tertiary mt-1 mb-5">{t('preview.editablePptxDialogSubtitle')}</p>
+            <p className="mb-5 mt-1 text-sm text-[var(--app-text-secondary)]">{t('preview.editablePptxDialogSubtitle')}</p>
             {(() => {
               const totalPages = currentProject?.pages?.length ?? 0;
               const isPartial = isMultiSelectMode && selectedPageIds.size > 0;
@@ -2451,12 +3180,12 @@ export const SlidePreview: React.FC = () => {
                 ? t('preview.editablePptxRangePages', { pages: selectedNumbers.join(', '), count: selectedNumbers.length })
                 : t('preview.editablePptxRangeAll', { count: totalPages });
               return (
-                <div className="mt-3 px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-background-tertiary flex items-start gap-2">
+                <div className="mt-3 flex items-start gap-2 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-3 py-2.5">
                   <div className="flex-1 min-w-0">
-                    <div className="text-xs font-medium text-gray-500 dark:text-foreground-tertiary">{t('preview.editablePptxRangeLabel')}</div>
+                    <div className="text-xs font-medium text-[var(--app-text-secondary)]">{t('preview.editablePptxRangeLabel')}</div>
                     <div className="text-sm mt-0.5 break-words">{rangeText}</div>
                   </div>
-                  <span className="flex-shrink-0 text-gray-400 dark:text-foreground-tertiary cursor-help" title={t('preview.editablePptxRangeTip')}>
+                  <span className="flex-shrink-0 cursor-help text-[var(--app-text-tertiary)]" title={t('preview.editablePptxRangeTip')}>
                     <Info size={16} />
                   </span>
                 </div>
@@ -2465,7 +3194,7 @@ export const SlidePreview: React.FC = () => {
             <div className="flex justify-end gap-3 mt-6">
               <button
                 onClick={() => setShowEditablePptxDialog(false)}
-                className="px-4 py-2 text-sm text-gray-600 dark:text-foreground-tertiary hover:bg-gray-100 dark:hover:bg-background-hover rounded-lg transition-colors"
+                className="rounded-[var(--app-radius-control)] px-4 py-2 text-sm text-[var(--app-text-secondary)] transition-colors hover:bg-[var(--app-surface-hover)]"
               >
                 {t('preview.editablePptxCancel')}
               </button>
@@ -2474,7 +3203,7 @@ export const SlidePreview: React.FC = () => {
                   setShowEditablePptxDialog(false);
                   handleExport('editable-pptx');
                 }}
-                className="px-4 py-2 text-sm bg-sky-600 text-white rounded-lg hover:bg-sky-700 transition-colors"
+                className="rounded-[var(--app-radius-control)] bg-[var(--app-primary-action)] px-4 py-2 text-sm text-[var(--app-surface)] transition-colors hover:bg-[var(--app-primary-action-hover)]"
               >
                 {t('preview.editablePptxStartExport')}
               </button>
@@ -2487,101 +3216,277 @@ export const SlidePreview: React.FC = () => {
         isOpen={showImageGenerationSettings}
         onClose={() => setShowImageGenerationSettings(false)}
         title="图片生成设置"
-        size="sm"
+        size="md"
       >
-        <div className="space-y-4 p-5">
-          <label className="block text-sm font-medium text-gray-700 dark:text-foreground-secondary">
-            <span>生成并发</span>
+        <div className="space-y-5">
+          <p className="text-sm leading-6 text-[var(--app-text-secondary)]">
+            选择想要的画面结果即可，系统会自动补全构图、元素数量、光影和现实感约束。
+          </p>
+
+          <label className="block space-y-2 text-sm font-medium text-[var(--app-text)]">
+            <span>视觉密度</span>
             <select
-              aria-label="生成并发"
-              value={draftImageGenerationSettings.maxWorkers}
-              onChange={(event) => setDraftImageGenerationSettings(prev => ({
-                ...prev,
-                maxWorkers: clampImageWorkers(event.target.value),
-              }))}
-              className="mt-2 h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-800 outline-none focus:border-sky-500 dark:border-border-primary dark:bg-background-elevated dark:text-foreground-primary"
-            >
-              {[1, 2, 3, 4].map(value => (
-                <option key={value} value={value}>{value}</option>
-              ))}
-            </select>
-          </label>
-          <label className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 dark:border-border-primary dark:text-foreground-secondary">
-            <span>使用模板约束</span>
-            <input
-              aria-label="使用模板约束"
-              type="checkbox"
-              checked={draftImageGenerationSettings.useTemplate}
-              onChange={(event) => setDraftImageGenerationSettings(prev => ({
-                ...prev,
-                useTemplate: event.target.checked,
-              }))}
-              className="h-4 w-4 accent-sky-600"
-            />
-          </label>
-          <label className="block text-sm font-medium text-gray-700 dark:text-foreground-secondary">
-            <span>图片生成密度</span>
-            <select
-              aria-label="图片生成密度"
+              aria-label="视觉密度"
               value={draftImageGenerationSettings.density}
               onChange={(event) => setDraftImageGenerationSettings(prev => ({
                 ...prev,
                 density: event.target.value as SlideImageGenerationSettings['density'],
               }))}
-              className="mt-2 h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-800 outline-none focus:border-sky-500 dark:border-border-primary dark:bg-background-elevated dark:text-foreground-primary"
+              className="h-10 w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-3 text-sm text-[var(--app-text)] outline-none transition-colors focus:border-[var(--app-accent)]"
             >
-              <option value="sparse">轻量</option>
-              <option value="standard">标准</option>
+              <option value="sparse">极简</option>
+              <option value="standard">克制（推荐）</option>
               <option value="rich">丰富</option>
             </select>
+            <span className="block text-xs font-normal leading-5 text-[var(--app-text-tertiary)]">
+              {IMAGE_DENSITY_HELP[draftImageGenerationSettings.density]}
+            </span>
           </label>
-          <label className="block text-sm font-medium text-gray-700 dark:text-foreground-secondary">
-            <span>图片风格</span>
+
+          <label className="block space-y-2 text-sm font-medium text-[var(--app-text)]">
+            <span>视觉风格</span>
             <select
-              aria-label="图片风格"
+              aria-label="视觉风格"
               value={draftImageGenerationSettings.style}
               onChange={(event) => setDraftImageGenerationSettings(prev => ({
                 ...prev,
                 style: event.target.value as SlideImageGenerationSettings['style'],
               }))}
-              className="mt-2 h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-800 outline-none focus:border-sky-500 dark:border-border-primary dark:bg-background-elevated dark:text-foreground-primary"
+              className="h-10 w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-3 text-sm text-[var(--app-text)] outline-none transition-colors focus:border-[var(--app-accent)]"
             >
               <option value="theme">跟随模板</option>
               <option value="business">商务简洁</option>
-              <option value="tech">科技感</option>
-              <option value="photo">真实图片感</option>
-              <option value="flat">扁平插画</option>
+              <option value="tech">科技编辑风</option>
+              <option value="photo">真实商业摄影</option>
+              <option value="flat">扁平商务插画</option>
             </select>
           </label>
-          <label className="block text-sm font-medium text-gray-700 dark:text-foreground-secondary">
-            <span>图片风格补充要求</span>
-            <textarea
-              aria-label="图片风格补充要求"
-              value={draftImageGenerationSettings.customPrompt}
+
+          <label className="block space-y-2 text-sm font-medium text-[var(--app-text)]">
+            <span>PPT 构图安全区</span>
+            <select
+              aria-label="PPT 构图安全区"
+              value={draftImageGenerationSettings.composition}
               onChange={(event) => setDraftImageGenerationSettings(prev => ({
                 ...prev,
-                customPrompt: event.target.value,
+                composition: event.target.value as SlideImageGenerationSettings['composition'],
               }))}
-              rows={3}
-              className="mt-2 w-full resize-none rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 outline-none focus:border-sky-500 dark:border-border-primary dark:bg-background-elevated dark:text-foreground-primary"
-              placeholder="例如：蓝绿色科技感，少量发光线条，避免卡通化"
-            />
+              className="h-10 w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-3 text-sm text-[var(--app-text)] outline-none transition-colors focus:border-[var(--app-accent)]"
+            >
+              <option value="auto">自动适配页面内容（推荐）</option>
+              <option value="text-left">左文右图</option>
+              <option value="text-right">右文左图</option>
+              <option value="center">居中主视觉</option>
+              <option value="full-bleed">全画面</option>
+            </select>
+            <span className="block text-xs font-normal leading-5 text-[var(--app-text-tertiary)]">
+              控制文字与核心视觉的空间关系，重要元素不会挤进文字区域。
+            </span>
           </label>
-          <p className="text-xs leading-relaxed text-gray-500 dark:text-foreground-tertiary">
-            默认并发上限为 4；批量生成只补未生成页面，不覆盖已上传或已生成的图片。
+
+          <div className="space-y-2">
+            <span className="block text-sm font-medium text-[var(--app-text)]">AI 味抑制</span>
+            <SegmentedControl
+              ariaLabel="AI 味抑制"
+              options={IMAGE_RESTRAINT_OPTIONS}
+              value={draftImageGenerationSettings.restraint}
+              onChange={(restraint) => setDraftImageGenerationSettings(prev => ({ ...prev, restraint }))}
+              className="grid w-full grid-cols-3"
+            />
+            <p className="text-xs leading-5 text-[var(--app-text-tertiary)]">
+              {IMAGE_RESTRAINT_HELP[draftImageGenerationSettings.restraint]}
+            </p>
+          </div>
+
+          <details className="border-t border-[var(--app-border)] pt-4">
+            <summary className="cursor-pointer text-sm font-medium text-[var(--app-text-secondary)]">高级设置</summary>
+            <div className="mt-4 space-y-4">
+              <label className="flex items-center justify-between gap-3 text-sm text-[var(--app-text-secondary)]">
+                <span>使用模板约束</span>
+                <input
+                  aria-label="使用模板约束"
+                  type="checkbox"
+                  checked={draftImageGenerationSettings.useTemplate}
+                  onChange={(event) => setDraftImageGenerationSettings(prev => ({ ...prev, useTemplate: event.target.checked }))}
+                  className="h-4 w-4 accent-[var(--app-accent)]"
+                />
+              </label>
+              <label className="block space-y-2 text-sm font-medium text-[var(--app-text)]">
+                <span>生成并发</span>
+                <select
+                  aria-label="生成并发"
+                  value={draftImageGenerationSettings.maxWorkers}
+                  onChange={(event) => setDraftImageGenerationSettings(prev => ({ ...prev, maxWorkers: clampImageWorkers(event.target.value) }))}
+                  className="h-10 w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-3 text-sm text-[var(--app-text)] outline-none transition-colors focus:border-[var(--app-accent)]"
+                >
+                  {[1, 2, 3, 4].map(value => <option key={value} value={value}>{value}</option>)}
+                </select>
+              </label>
+              <label className="block space-y-2 text-sm font-medium text-[var(--app-text)]">
+                <span>特殊视觉要求（可选）</span>
+                <textarea
+                  aria-label="特殊视觉要求"
+                  value={draftImageGenerationSettings.customPrompt}
+                  onChange={(event) => setDraftImageGenerationSettings(prev => ({ ...prev, customPrompt: event.target.value }))}
+                  rows={3}
+                  maxLength={500}
+                  className="w-full resize-none rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-3 py-2 text-sm text-[var(--app-text)] outline-none transition-colors focus:border-[var(--app-accent)]"
+                  placeholder="仅填写必须出现、禁止出现或品牌约束，例如：必须使用品牌蓝，不能出现人物"
+                />
+                <span className="block text-xs font-normal leading-5 text-[var(--app-text-tertiary)]">
+                  仅当上方选项无法表达时填写；冲突时以上方结构化设置为准。
+                </span>
+              </label>
+            </div>
+          </details>
+
+          {imageGenerationWarnings.length > 0 && (
+            <div
+              role="status"
+              aria-live="polite"
+              className="rounded-[var(--app-radius-control)] border border-[var(--app-warning)] bg-[var(--app-surface-muted)] px-3 py-2.5 text-sm text-[var(--app-warning)]"
+            >
+              <div className="font-medium">生成质量提醒</div>
+              <ul className="mt-1 list-disc space-y-1 pl-5 text-xs leading-5">
+                {imageGenerationWarnings.map((warning) => <li key={warning}>{warning}</li>)}
+              </ul>
+            </div>
+          )}
+
+          <p className="text-xs leading-5 text-[var(--app-text-tertiary)]">
+            批量生成只补未生成页面，不覆盖已上传或已生成的图片。
           </p>
-          <div className="flex justify-end gap-2 pt-2">
+          <div className="sticky bottom-0 -mx-1 flex justify-end gap-2 bg-[var(--app-surface)] px-1 pt-3">
             <Button variant="ghost" onClick={() => setShowImageGenerationSettings(false)}>取消</Button>
             <Button variant="primary" onClick={saveImageGenerationSettings}>保存图片生成设置</Button>
           </div>
         </div>
       </Modal>
 
+      <Modal
+        isOpen={showImageQualityReport}
+        onClose={() => setShowImageQualityReport(false)}
+        title="图片质量提醒"
+        size="lg"
+      >
+        <div className="space-y-4">
+          <div className="flex gap-3 rounded-[var(--app-radius-control)] bg-[var(--app-accent-soft)] px-4 py-3 text-sm text-[var(--app-text-secondary)]">
+            <Info size={18} className="mt-0.5 shrink-0 text-[var(--app-accent)]" />
+            <div>
+              <p className="font-medium text-[var(--app-text)]">发现 {imageQualityWarningCount} 页需要检查</p>
+              <p className="mt-1 text-xs leading-5">质量检测只标记可能影响展示的图片，不会删除或覆盖已生成内容。你可以定位页面核对，也可以直接重新生成。</p>
+            </div>
+          </div>
+
+          {imageQualityPages.length > 0 ? (
+            <div className="divide-y divide-[var(--app-border)] rounded-[var(--app-radius-card)] border border-[var(--app-border)]">
+              {imageQualityPages.map((item: any) => {
+                const pageIndex = currentProject.pages.findIndex(page => (page.id || page.page_id) === item.page_id);
+                const page = pageIndex >= 0 ? currentProject.pages[pageIndex] : null;
+                const issues = Array.isArray(item.qa?.issues) ? item.qa.issues : [];
+                return (
+                  <div key={item.page_id} className="space-y-3 p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-[var(--app-text)]">
+                          {pageIndex >= 0 ? `第 ${pageIndex + 1} 页` : '未知页面'}
+                          {page?.outline_content?.title ? ` · ${page.outline_content.title}` : ''}
+                        </p>
+                        <p className="mt-1 text-xs text-[var(--app-text-tertiary)]">
+                          实际尺寸：{item.qa?.width || '-'} × {item.qa?.height || '-'} px
+                        </p>
+                      </div>
+                      {pageIndex >= 0 && (
+                        <div className="flex gap-2">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setSelectedIndex(pageIndex);
+                              setShowImageQualityReport(false);
+                            }}
+                          >
+                            定位此页
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            disabled={Boolean(item.page_id && pageGeneratingTasks[item.page_id])}
+                            onClick={() => {
+                              setSelectedIndex(pageIndex);
+                              setShowImageQualityReport(false);
+                              void regeneratePageAtIndex(pageIndex, issues);
+                            }}
+                          >
+                            重新生成
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                    <ul className="space-y-1 text-xs leading-5 text-[var(--app-text-secondary)]">
+                      {issues.map((issue: string) => (
+                        <li key={issue} className="flex gap-2">
+                          <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--app-accent)]" aria-hidden="true" />
+                          <span>{IMAGE_QUALITY_ISSUE_LABELS[issue] || issue}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-sm text-[var(--app-text-secondary)]">质量结果缺少逐页明细，请重新生成图片后再查看。</p>
+          )}
+        </div>
+      </Modal>
+
       {/* 主内容区 */}
-      <div className="flex-1 flex flex-col md:flex-row overflow-hidden min-w-0 min-h-0">
-        {/* 左侧：缩略图列表 */}
-        <aside className="w-full md:w-80 bg-white dark:bg-background-secondary border-b md:border-b-0 md:border-r border-gray-200 dark:border-border-primary flex flex-col flex-shrink-0 min-h-0">
-          <div className="p-3 md:p-4 border-b border-gray-200 dark:border-border-primary flex-shrink-0 space-y-2 md:space-y-3 md:sticky md:top-0 md:z-10">
+      <WorkspaceShell
+        className="flex-1"
+        sidebarWidth="240px"
+        inspectorWidth="344px"
+        hideToolbar
+        toolbar={null}
+        inspector={imageInspector}
+        statusBar={(
+          <WorkspaceStatusBar className="gap-3">
+            {imageGenerationActive && activeImageTask?.progress ? (
+              <>
+                <span className="min-w-0 flex-1 truncate">
+                  {t('preview.generationProgress', {
+                    status: imageGenerationPaused ? t('preview.generationPaused') : t('preview.generationRunning'),
+                    completed: activeImageTask.progress.completed || 0,
+                    total: activeImageTask.progress.total || 0,
+                  })}
+                </span>
+                <div className="h-1.5 w-28 overflow-hidden rounded-full bg-[var(--app-surface-hover)]" aria-hidden="true">
+                  <div className="h-full rounded-full bg-[var(--app-accent)] transition-[width] duration-300" style={{ width: `${imageGenerationProgressPercent}%` }} />
+                </div>
+                <span className="w-9 text-right font-medium text-[var(--app-accent)]">{imageGenerationProgressPercent}%</span>
+              </>
+            ) : (
+              <span>{currentProject.pages.length > 0 ? `第 ${selectedIndex + 1} 页` : '0 页'}</span>
+            )}
+            <div className="ml-auto flex items-center gap-3">
+              {imageQualityWarningCount > 0 && (
+                <button
+                  type="button"
+                  aria-label={`查看图片质量提醒，共 ${imageQualityWarningCount} 页`}
+                  onClick={() => setShowImageQualityReport(true)}
+                  className="inline-flex h-7 items-center gap-1.5 rounded-[var(--app-radius-control)] bg-[var(--app-accent-soft)] px-2.5 text-xs font-medium text-[var(--app-accent)] transition-colors hover:bg-[var(--app-surface-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--app-accent-soft)]"
+                >
+                  <Info size={14} />
+                  质量提醒 {imageQualityWarningCount}
+                </button>
+              )}
+              <span className="whitespace-nowrap">图片模式</span>
+            </div>
+          </WorkspaceStatusBar>
+        )}
+        sidebar={(
+        <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-[var(--app-surface-muted)]">
+          <div className="p-3 md:p-4 border-b border-[var(--app-border)] flex-shrink-0 space-y-2 md:space-y-3 md:sticky md:top-0 md:z-10">
             <Button
               variant="primary"
               icon={imageGenerationActive
@@ -2614,17 +3519,17 @@ export const SlidePreview: React.FC = () => {
               图片生成设置
             </Button>
           </div>
-          
-          {/* 缩略图列表：桌面端垂直，移动端横向滚动 */}
-          <div className="flex-1 overflow-y-auto md:overflow-y-auto overflow-x-auto md:overflow-x-visible p-3 md:p-4 min-h-0">
-            {/* 多选模式切换 - 紧凑布局 */}
-            <div className="flex items-center gap-2 text-xs mb-3 md:sticky md:top-0 md:z-10 md:pb-3">
+          {/* 多选模式切换 - 固定在缩略图滚动区外 */}
+          <div
+            data-testid="slide-multiselect-toolbar"
+            className="flex shrink-0 items-center gap-2 border-b border-[var(--app-border)] bg-[var(--app-surface-muted)] px-3 py-3 text-xs md:px-4"
+          >
               <button
                 onClick={toggleMultiSelectMode}
                 className={`px-2 py-1 rounded transition-colors flex items-center gap-1 ${
-                  isMultiSelectMode 
-                    ? 'bg-sky-100 dark:bg-sky-600/20 text-sky-700 dark:text-sky-300 hover:bg-sky-200 dark:hover:bg-sky-600/30' 
-                    : 'text-gray-500 dark:text-foreground-tertiary hover:bg-gray-100 dark:hover:bg-background-hover'
+                  isMultiSelectMode
+                    ? 'bg-[var(--app-accent-soft)] text-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]'
+                    : 'text-[var(--app-text-tertiary)] hover:bg-[var(--app-surface-hover)]'
                 }`}
               >
                 {isMultiSelectMode ? <CheckSquare size={14} /> : <Square size={14} />}
@@ -2634,18 +3539,24 @@ export const SlidePreview: React.FC = () => {
                 <>
                   <button
                     onClick={selectedPageIds.size === selectablePages.length ? deselectAllPages : selectAllPages}
-                    className="text-gray-500 dark:text-foreground-tertiary hover:text-sky-600 dark:hover:text-sky-300 transition-colors"
+                    className="text-[var(--app-text-tertiary)] transition-colors hover:text-[var(--app-accent)]"
                   >
                     {selectedPageIds.size === selectablePages.length ? t('common.deselectAll') : t('common.selectAll')}
                   </button>
                   {selectedPageIds.size > 0 && (
-                    <span className="text-sky-600 font-medium">
+                    <span className="font-medium text-[var(--app-accent)]">
                       ({selectedPageIds.size}{t('preview.pagesUnit')})
                     </span>
                   )}
                 </>
               )}
-            </div>
+          </div>
+
+          {/* 缩略图列表：桌面端垂直，移动端横向滚动 */}
+          <div
+            data-testid="slide-thumbnail-scroll"
+            className="flex-1 overflow-y-auto md:overflow-y-auto overflow-x-auto md:overflow-x-visible p-3 md:p-4 min-h-0"
+          >
             <div className="flex md:flex-col gap-2 md:gap-4 min-w-max md:min-w-0">
               {currentProject.pages.map((page, index) => (
                 <div key={page.id} className="md:w-full flex-shrink-0 relative">
@@ -2661,9 +3572,9 @@ export const SlidePreview: React.FC = () => {
                       }}
                       className={`w-20 h-14 rounded border-2 transition-all ${
                         selectedIndex === index
-                          ? 'border-sky-500 shadow-md'
-                          : 'border-gray-200 dark:border-border-primary'
-                      } ${isMultiSelectMode && page.id && selectedPageIds.has(page.id) ? 'ring-2 ring-sky-400' : ''}`}
+                          ? 'border-[var(--app-accent)] shadow-[var(--app-shadow-card)]'
+                          : 'border-[var(--app-border)]'
+                      } ${isMultiSelectMode && page.id && selectedPageIds.has(page.id) ? 'ring-2 ring-[var(--app-accent-soft)]' : ''}`}
                     >
                       {page.generated_image_path ? (
                         <img
@@ -2672,7 +3583,7 @@ export const SlidePreview: React.FC = () => {
                           className="w-full h-full object-cover rounded"
                         />
                       ) : (
-                        <div className="w-full h-full bg-gray-100 dark:bg-background-secondary rounded flex items-center justify-center text-xs text-gray-400">
+                        <div className="w-full h-full bg-[var(--app-surface-muted)] rounded flex items-center justify-center text-xs text-[var(--app-text-muted)]">
                           {index + 1}
                         </div>
                       )}
@@ -2687,8 +3598,8 @@ export const SlidePreview: React.FC = () => {
                         }}
                         className={`absolute -top-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center transition-all ${
                           selectedPageIds.has(page.id)
-                            ? 'bg-sky-600 text-white'
-                            : 'bg-white dark:bg-background-secondary border-2 border-gray-300 dark:border-border-primary'
+                            ? 'bg-[var(--app-focus)] text-[var(--app-surface)]'
+                            : 'border-2 border-[var(--app-border)] bg-[var(--app-surface)]'
                         }`}
                       >
                         {selectedPageIds.has(page.id) && <Check size={12} />}
@@ -2707,8 +3618,8 @@ export const SlidePreview: React.FC = () => {
                         }}
                         className={`absolute top-2 left-2 z-10 w-6 h-6 rounded flex items-center justify-center transition-all ${
                           selectedPageIds.has(page.id)
-                            ? 'bg-sky-600 text-white shadow-md'
-                            : 'bg-white/90 border-2 border-gray-300 dark:border-border-primary hover:border-sky-400'
+                            ? 'bg-[var(--app-focus)] text-[var(--app-surface)] shadow-[var(--app-shadow-card)]'
+                            : 'border-2 border-[var(--app-border)] bg-[var(--app-surface)] hover:border-[var(--app-accent)]'
                         }`}
                       >
                         {selectedPageIds.has(page.id) && <Check size={14} />}
@@ -2718,18 +3629,10 @@ export const SlidePreview: React.FC = () => {
                       page={page}
                       index={index}
                       isSelected={selectedIndex === index}
-                      onClick={() => {
-                        if (isMultiSelectMode && page.id) {
-                          togglePageSelection(page.id);
-                        } else {
-                          setSelectedIndex(index);
-                        }
-                      }}
-                      onEdit={() => {
-                        setSelectedIndex(index);
-                        handleEditPage();
-                      }}
-                      onDelete={() => page.id && deletePageById(page.id)}
+                      isMultiSelectMode={isMultiSelectMode}
+                      onSelect={handleSlideCardSelect}
+                      onEdit={handleSlideCardEdit}
+                      onDelete={handleSlideCardDelete}
                       isGenerating={page.id ? !!pageGeneratingTasks[page.id] : false}
                       aspectRatio={aspectRatio}
                     />
@@ -2738,23 +3641,25 @@ export const SlidePreview: React.FC = () => {
               ))}
             </div>
           </div>
-        </aside>
+        </div>
+        )}
+      >
 
         {/* 右侧：大图预览 */}
-        <main className="flex-1 flex flex-col bg-gradient-to-br from-sky-50 dark:from-background-primary via-white dark:via-background-primary to-gray-50 dark:to-background-primary min-w-0 overflow-hidden">
+        <div className="flex h-full min-w-0 flex-col overflow-hidden bg-[var(--app-canvas)]">
           {currentProject.pages.length === 0 ? (
             <div className="flex-1 flex items-center justify-center overflow-y-auto">
               <div className="text-center">
                 <div className="text-4xl md:text-6xl mb-4">📊</div>
-                <h3 className="text-lg md:text-xl font-semibold text-gray-700 dark:text-foreground-secondary mb-2">
+                <h3 className="text-lg md:text-xl font-semibold text-[var(--app-text-secondary)] mb-2">
                   {t('preview.noPages')}
                 </h3>
-                <p className="text-sm md:text-base text-gray-500 dark:text-foreground-tertiary mb-6">
+                <p className="text-sm md:text-base text-[var(--app-text-tertiary)] mb-6">
                   {t('preview.noPagesHint')}
                 </p>
                 <Button
                   variant="primary"
-                  onClick={() => navigate(`/project/${projectId}/outline`)}
+                  onClick={() => navigate(`/project/${projectId}/ppt/outline`)}
                   className="text-sm md:text-base"
                 >
                   {t('preview.backToEdit')}
@@ -2770,7 +3675,7 @@ export const SlidePreview: React.FC = () => {
               >
                 <div
                   data-testid="slide-preview-canvas"
-                  className="relative bg-white dark:bg-background-secondary rounded-lg shadow-xl overflow-hidden touch-manipulation"
+                  className="relative bg-[var(--app-surface)] rounded-[var(--app-radius-card)] shadow-[var(--app-shadow-elevated)] overflow-hidden touch-manipulation"
                   style={{ aspectRatio: aspectRatioStyle, width: previewCanvasWidth }}
                 >
                     {selectedPage?.generated_image_path ? (
@@ -2781,10 +3686,10 @@ export const SlidePreview: React.FC = () => {
                         draggable={false}
                       />
                     ) : (
-                      <div className="w-full h-full flex items-center justify-center bg-gray-100 dark:bg-background-secondary">
+                      <div className="w-full h-full flex items-center justify-center bg-[var(--app-surface-muted)]">
                         <div className="text-center">
                           <img src={getStaticAssetUrl('/logo-nav.png')} alt="EasySlide Logo" className="h-16 w-auto mx-auto mb-4 opacity-70" />
-                          <p className="text-gray-500 dark:text-foreground-tertiary mb-4">
+                          <p className="text-[var(--app-text-tertiary)] mb-4">
                             {selectedPage?.status === 'QUEUED'
                               ? t('preview.queued')
                               : (selectedPage?.id && pageGeneratingTasks[selectedPage.id]) ||
@@ -2812,35 +3717,10 @@ export const SlidePreview: React.FC = () => {
                 </div>
               </div>
 
-              {imageGenerationActive && activeImageTask?.progress && (
-                <div className="px-3 md:px-6 pb-2">
-                  <div className="max-w-5xl mx-auto rounded-lg border border-sky-100 dark:border-sky-500/20 bg-white/90 dark:bg-background-secondary px-3 py-2 shadow-sm">
-                    <div className="flex items-center justify-between gap-3 text-xs text-slate-600 dark:text-foreground-tertiary">
-                      <span>
-                        {t('preview.generationProgress', {
-                          status: imageGenerationPaused ? t('preview.generationPaused') : t('preview.generationRunning'),
-                          completed: activeImageTask.progress.completed || 0,
-                          total: activeImageTask.progress.total || 0,
-                        })}
-                      </span>
-                      <span className="font-medium text-sky-600 dark:text-sky-300">
-                        {imageGenerationProgressPercent}%
-                      </span>
-                    </div>
-                    <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-sky-100 dark:bg-sky-500/10">
-                      <div
-                        className="h-full rounded-full bg-sky-500 transition-[width] duration-300"
-                        style={{ width: `${imageGenerationProgressPercent}%` }}
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
-
               {/* 控制栏 */}
               <div
                 data-testid="slide-preview-controls"
-                className="bg-white dark:bg-background-secondary border-t border-gray-200 dark:border-border-primary px-3 md:px-6 py-2 flex-shrink-0"
+                className="shrink-0 border-t border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 md:px-4"
               >
                 <div className="flex flex-col sm:flex-row items-center justify-between gap-2 max-w-5xl mx-auto">
                   {/* 导航 */}
@@ -2856,7 +3736,7 @@ export const SlidePreview: React.FC = () => {
                       <span className="hidden sm:inline">{t('preview.prevPage')}</span>
                       <span className="sm:hidden">{t('preview.prevPage')}</span>
                     </Button>
-                    <span className="px-2 md:px-4 text-xs md:text-sm text-gray-600 dark:text-foreground-tertiary whitespace-nowrap">
+                    <span className="px-2 md:px-4 text-xs md:text-sm text-[var(--app-text-tertiary)] whitespace-nowrap">
                       {selectedIndex + 1} / {currentProject.pages.length}
                     </span>
                     <Button
@@ -2906,7 +3786,7 @@ export const SlidePreview: React.FC = () => {
                       className="md:hidden text-xs"
                       title={t('preview.refresh')}
                     />
-                    {imageVersions.length > 1 && (
+                    {imageVersions.length > 0 && (
                       <div className="relative">
                         <Button
                           variant="ghost"
@@ -2914,30 +3794,59 @@ export const SlidePreview: React.FC = () => {
                           onClick={() => setShowVersionMenu(!showVersionMenu)}
                           className="text-xs md:text-sm"
                         >
-                          <span className="hidden md:inline">{t('preview.historyVersions')} ({imageVersions.length})</span>
+                          <span className="hidden md:inline">
+                            {currentImageVersion?.scene_status === 'ready'
+                              ? t('preview.sceneReady')
+                              : currentImageVersion?.scene_status === 'building'
+                                ? t('preview.sceneBuilding')
+                                : currentImageVersion?.scene_status === 'degraded'
+                                  ? t('preview.sceneDegraded')
+                                  : currentImageVersion?.scene_status === 'failed'
+                                    ? t('preview.sceneFailed')
+                                    : `${t('preview.historyVersions')} (${imageVersions.length})`}
+                          </span>
                           <span className="md:hidden">{t('preview.versions')}</span>
                         </Button>
                         {showVersionMenu && (
-                          <div className="absolute right-0 bottom-full mb-2 w-56 md:w-64 bg-white dark:bg-background-secondary rounded-lg shadow-lg border border-gray-200 dark:border-border-primary py-2 z-20 max-h-96 overflow-y-auto">
+                          <div className="absolute right-0 bottom-full mb-2 w-56 md:w-64 bg-[var(--app-surface)] rounded-[var(--app-radius-card)] shadow-[var(--app-shadow-floating)] border border-[var(--app-border)] py-2 z-20 max-h-96 overflow-y-auto">
                             {imageVersions.map((version) => (
                               <button
                                 key={version.version_id}
                                 onClick={() => handleSwitchVersion(version.version_id)}
-                                className={`w-full px-3 md:px-4 py-2 text-left hover:bg-gray-50 dark:hover:bg-background-hover transition-colors flex items-center justify-between text-xs md:text-sm ${
-                                  version.is_current ? 'bg-sky-50 dark:bg-background-secondary' : ''
+                                className={`w-full px-3 md:px-4 py-2 text-left hover:bg-[var(--app-surface-hover)] transition-colors flex items-center justify-between text-xs md:text-sm ${
+                                  version.is_current ? 'bg-[var(--app-accent-soft)]' : ''
                                 }`}
                               >
-                                <div className="flex items-center gap-2">
-                                  <span>
-                                    {t('preview.version')} {version.version_number}
-                                  </span>
-                                  {version.is_current && (
-                                    <span className="text-xs text-sky-600 font-medium">
-                                      ({t('preview.current')})
-                                    </span>
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <span>{t('preview.version')} {version.version_number}</span>
+                                    {version.is_current && (
+                                      <span className="text-xs font-medium text-[var(--app-accent)]">
+                                        ({t('preview.current')})
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="mt-1 text-[11px] text-[var(--app-text-muted)]">
+                                    {version.scene_status === 'ready'
+                                      ? t('preview.sceneReady')
+                                      : version.scene_status === 'building'
+                                        ? t('preview.sceneBuilding')
+                                        : version.scene_status === 'degraded'
+                                          ? t('preview.sceneDegraded')
+                                          : version.scene_status === 'failed'
+                                            ? t('preview.sceneFailed')
+                                            : t('preview.sceneMissing')}
+                                    {typeof version.scene_quality_score === 'number'
+                                      ? ` · ${t('preview.sceneQuality')} ${Math.round(version.scene_quality_score * 100)}%`
+                                      : ''}
+                                  </div>
+                                  {version.scene_error && (
+                                    <div className="mt-1 max-w-40 truncate text-[11px] text-[var(--app-error)]" title={version.scene_error}>
+                                      {version.scene_error}
+                                    </div>
                                   )}
                                 </div>
-                                <span className="text-xs text-gray-400 hidden md:inline">
+                                <span className="text-xs text-[var(--app-text-muted)] hidden md:inline">
                                   {version.created_at
                                     ? new Date(version.created_at).toLocaleString('zh-CN', {
                                         month: 'short',
@@ -2949,6 +3858,21 @@ export const SlidePreview: React.FC = () => {
                                 </span>
                               </button>
                             ))}
+                            {currentImageVersion?.scene_status !== 'ready' && (
+                              <div className="border-t border-[var(--app-border)] px-3 pt-2 md:px-4">
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  className="w-full"
+                                  onClick={handleRecoverCurrentScene}
+                                  disabled={isRecoveringScene}
+                                >
+                                  {isRecoveringScene
+                                    ? t('preview.recoveringScene')
+                                    : t('preview.recoverScene')}
+                                </Button>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -2956,7 +3880,7 @@ export const SlidePreview: React.FC = () => {
                     <Button
                       variant="secondary"
                       size="sm"
-                      onClick={handleEditPage}
+                      onClick={() => handleEditPage()}
                       disabled={!selectedPage}
                       className="text-xs md:text-sm flex-1 sm:flex-initial"
                     >
@@ -2978,20 +3902,21 @@ export const SlidePreview: React.FC = () => {
               </div>
             </>
           )}
-        </main>
-      </div>
+        </div>
+
+      </WorkspaceShell>
 
       {/* 编辑对话框 */}
       <Modal
         isOpen={isEditModalOpen}
         onClose={() => setIsEditModalOpen(false)}
         title={t('preview.editPage')}
-        size="lg"
+        size="wide"
       >
         <div className="space-y-4">
           {/* 图片（支持矩形区域选择） */}
           <div
-            className="bg-gray-100 dark:bg-background-secondary rounded-lg overflow-hidden relative"
+            className="relative mx-auto max-h-[46vh] w-full overflow-hidden rounded-[var(--app-radius-control)] bg-[var(--app-surface-muted)]"
             style={{ aspectRatio: aspectRatioStyle }}
             onMouseDown={handleSelectionMouseDown}
             onMouseMove={handleSelectionMouseMove}
@@ -3012,7 +3937,7 @@ export const SlidePreview: React.FC = () => {
                     setSelectionRect(null);
                     setIsSelectingRegion(false);
                   }}
-                  className="absolute top-2 left-2 z-10 px-2 py-1 rounded bg-white/80 text-[10px] text-gray-700 dark:text-foreground-secondary hover:bg-sky-50 dark:hover:bg-background-hover shadow-sm dark:shadow-background-primary/30 flex items-center gap-1"
+                  className="absolute left-2 top-2 z-10 flex items-center gap-1 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)]/90 px-2 py-1 text-[10px] text-[var(--app-text-secondary)] shadow-[var(--app-shadow-card)] transition-colors hover:bg-[var(--app-surface-hover)]"
                 >
                   <Sparkles size={12} />
                   <span>{isRegionSelectionMode ? t('preview.endRegionSelect') : t('preview.regionSelect')}</span>
@@ -3022,13 +3947,13 @@ export const SlidePreview: React.FC = () => {
                   ref={imageRef}
                   src={imageUrl}
                   alt="Current slide"
-                  className="w-full h-full object-contain select-none"
+                  className="h-full w-full select-none object-contain"
                   draggable={false}
                   crossOrigin="anonymous"
                 />
                 {selectionRect && (
                   <div
-                    className="absolute border-2 border-sky-500 bg-sky-400/10 pointer-events-none"
+                    className="pointer-events-none absolute border-2 border-[var(--app-accent)] bg-[var(--app-accent-soft)]/60"
                     style={{
                       left: selectionRect.left,
                       top: selectionRect.top,
@@ -3042,37 +3967,37 @@ export const SlidePreview: React.FC = () => {
           </div>
 
           {/* 大纲内容 - 可编辑 */}
-          <div className="bg-gray-50 dark:bg-background-primary rounded-lg border border-gray-200 dark:border-border-primary">
+          <div className="rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface-muted)]">
             <button
               onClick={() => setIsOutlineExpanded(!isOutlineExpanded)}
-              className="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-100 dark:hover:bg-background-hover transition-colors"
+              className="flex w-full items-center justify-between px-4 py-3 transition-colors hover:bg-[var(--app-surface-hover)]"
             >
-              <h4 className="text-sm font-semibold text-gray-700 dark:text-foreground-secondary">{t('preview.pageOutline')}</h4>
+              <h4 className="text-sm font-semibold text-[var(--app-text-secondary)]">{t('preview.pageOutline')}</h4>
               {isOutlineExpanded ? (
-                <ChevronUp size={18} className="text-gray-500 dark:text-foreground-tertiary" />
+                <ChevronUp size={18} className="text-[var(--app-text-tertiary)]" />
               ) : (
-                <ChevronDown size={18} className="text-gray-500 dark:text-foreground-tertiary" />
+                <ChevronDown size={18} className="text-[var(--app-text-tertiary)]" />
               )}
             </button>
             {isOutlineExpanded && (
               <div className="px-4 pb-4 space-y-3">
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 dark:text-foreground-tertiary mb-1">{t('outline.titleLabel')}</label>
+                  <label className="block text-xs font-medium text-[var(--app-text-tertiary)] mb-1">{t('outline.titleLabel')}</label>
                   <input
                     type="text"
                     value={editOutlineTitle}
                     onChange={(e) => setEditOutlineTitle(e.target.value)}
-                    className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-border-primary bg-white dark:bg-background-secondary text-gray-900 dark:text-foreground-primary rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-500"
+                    className="w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 text-sm text-[var(--app-text-primary)] outline-none transition-colors focus:border-[var(--app-accent)]"
                     placeholder={t('preview.enterTitle')}
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 dark:text-foreground-tertiary mb-1">{t('preview.pointsPerLine')}</label>
+                  <label className="block text-xs font-medium text-[var(--app-text-tertiary)] mb-1">{t('preview.pointsPerLine')}</label>
                   <textarea
                     value={editOutlinePoints}
                     onChange={(e) => setEditOutlinePoints(e.target.value)}
                     rows={4}
-                    className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-border-primary bg-white dark:bg-background-secondary text-gray-900 dark:text-foreground-primary rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-500 resize-none"
+                    className="w-full resize-none rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 text-sm text-[var(--app-text-primary)] outline-none transition-colors focus:border-[var(--app-accent)]"
                     placeholder={t('preview.enterPointsPerLine')}
                   />
                 </div>
@@ -3081,16 +4006,16 @@ export const SlidePreview: React.FC = () => {
           </div>
 
           {/* 描述内容 - 可编辑 */}
-          <div className="bg-blue-50 dark:bg-blue-900/30 rounded-lg border border-blue-200 dark:border-blue-700">
+          <div className="rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface-muted)]">
             <button
               onClick={() => setIsDescriptionExpanded(!isDescriptionExpanded)}
-              className="w-full px-4 py-3 flex items-center justify-between hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors"
+              className="flex w-full items-center justify-between px-4 py-3 transition-colors hover:bg-[var(--app-surface-hover)]"
             >
-              <h4 className="text-sm font-semibold text-gray-700 dark:text-foreground-secondary">{t('preview.pageDescription')}</h4>
+              <h4 className="text-sm font-semibold text-[var(--app-text-secondary)]">{t('preview.pageDescription')}</h4>
               {isDescriptionExpanded ? (
-                <ChevronUp size={18} className="text-gray-500 dark:text-foreground-tertiary" />
+                <ChevronUp size={18} className="text-[var(--app-text-tertiary)]" />
               ) : (
-                <ChevronDown size={18} className="text-gray-500 dark:text-foreground-tertiary" />
+                <ChevronDown size={18} className="text-[var(--app-text-tertiary)]" />
               )}
             </button>
             {isDescriptionExpanded && (
@@ -3099,7 +4024,7 @@ export const SlidePreview: React.FC = () => {
                   value={editDescription}
                   onChange={(e) => setEditDescription(e.target.value)}
                   rows={8}
-                  className="w-full px-3 py-2 text-sm border border-blue-300 dark:border-blue-700 bg-white dark:bg-background-secondary text-gray-900 dark:text-foreground-primary rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-500 resize-none"
+                  className="w-full resize-none rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 text-sm text-[var(--app-text-primary)] outline-none transition-colors focus:border-[var(--app-accent)]"
                   placeholder={t('preview.enterDescription')}
                 />
               </div>
@@ -3107,11 +4032,11 @@ export const SlidePreview: React.FC = () => {
           </div>
 
           {/* 上下文图片选择 */}
-          <div className="bg-gray-50 dark:bg-background-primary rounded-lg border border-gray-200 dark:border-border-primary p-4 space-y-4">
-            <h4 className="text-sm font-semibold text-gray-700 dark:text-foreground-secondary mb-3">{t('preview.selectContextImages')}</h4>
-            
+          <div className="space-y-4 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-4">
+            <h4 className="mb-3 text-sm font-semibold text-[var(--app-text-secondary)]">{t('preview.selectContextImages')}</h4>
+
             {/* Template图片选择 */}
-            {currentProject?.template_image_path && (
+            {selectedTemplateContextImage && (
               <div className="flex items-center gap-3">
                 <input
                   type="checkbox"
@@ -3123,16 +4048,16 @@ export const SlidePreview: React.FC = () => {
                       useTemplate: e.target.checked,
                     }))
                   }
-                  className="w-4 h-4 text-sky-600 rounded focus:ring-sky-500"
+                  className="h-4 w-4 rounded accent-[var(--app-accent)]"
                 />
                 <label htmlFor="use-template" className="flex items-center gap-2 cursor-pointer">
-                  <ImageIcon size={16} className="text-gray-500 dark:text-foreground-tertiary" />
-                  <span className="text-sm text-gray-700 dark:text-foreground-secondary">{t('preview.useTemplateImage')}</span>
-                  {currentProject.template_image_path && (
+                  <ImageIcon size={16} className="text-[var(--app-text-tertiary)]" />
+                  <span className="text-sm text-[var(--app-text-secondary)]">{t('preview.useTemplateImage')}</span>
+                  {selectedTemplateContextImage && (
                     <img
-                      src={getImageUrl(currentProject.template_image_path, currentProject.updated_at)}
+                      src={getImageUrl(selectedTemplateContextImage, selectedTemplateContextUpdatedAt)}
                       alt="Template"
-                      className="w-16 h-10 object-cover rounded border border-gray-300 dark:border-border-primary"
+                      className="w-16 h-10 object-cover rounded border border-[var(--app-border)]"
                     />
                   )}
                 </label>
@@ -3144,18 +4069,18 @@ export const SlidePreview: React.FC = () => {
               const descImageUrls = extractImageUrlsFromDescription(selectedPage.description_content);
               return descImageUrls.length > 0 ? (
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-700 dark:text-foreground-secondary">{t('preview.imagesInDescription')}:</label>
+                  <label className="text-sm font-medium text-[var(--app-text-secondary)]">{t('preview.imagesInDescription')}:</label>
                   <div className="grid grid-cols-3 gap-2">
                     {descImageUrls.map((url, idx) => (
                       <div key={idx} className="relative group">
                         <img
-                          src={url}
+                          src={getImageUrl(url)}
                           alt={`Desc image ${idx + 1}`}
-                          className="w-full h-20 object-cover rounded border-2 border-gray-300 dark:border-border-primary cursor-pointer transition-all"
+                          className="h-20 w-full cursor-pointer rounded-[var(--app-radius-control)] border-2 border-[var(--app-border)] object-cover transition-all"
                           style={{
                             borderColor: selectedContextImages.descImageUrls.includes(url)
-                              ? 'rgb(14 165 233)'
-                              : 'var(--border-primary)',
+                              ? 'var(--app-accent)'
+                              : 'var(--app-border)',
                           }}
                           onClick={() => {
                             setSelectedContextImages((prev) => {
@@ -3170,9 +4095,9 @@ export const SlidePreview: React.FC = () => {
                           }}
                         />
                         {selectedContextImages.descImageUrls.includes(url) && (
-                          <div className="absolute inset-0 bg-sky-600/20 border-2 border-sky-500 rounded flex items-center justify-center">
-                            <div className="w-6 h-6 bg-sky-600 rounded-full flex items-center justify-center">
-                              <span className="text-white text-xs font-bold">✓</span>
+                          <div className="absolute inset-0 flex items-center justify-center rounded-[var(--app-radius-control)] border-2 border-[var(--app-accent)] bg-[var(--app-accent-soft)]/70">
+                            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--app-accent)]">
+                              <span className="text-[var(--app-on-color)] text-xs font-bold">✓</span>
                             </div>
                           </div>
                         )}
@@ -3186,7 +4111,7 @@ export const SlidePreview: React.FC = () => {
             {/* 上传图片 */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <label className="text-sm font-medium text-gray-700 dark:text-foreground-secondary">{t('preview.uploadImages')}:</label>
+                <label className="text-sm font-medium text-[var(--app-text-secondary)]">{t('preview.uploadImages')}:</label>
                 {projectId && (
                   <Button
                     variant="ghost"
@@ -3204,19 +4129,19 @@ export const SlidePreview: React.FC = () => {
                     <img
                       src={uploadedFileUrls.current[idx] || ''}
                       alt={`Uploaded ${idx + 1}`}
-                      className="w-20 h-20 object-cover rounded border border-gray-300 dark:border-border-primary"
+                      className="w-20 h-20 object-cover rounded border border-[var(--app-border)]"
                     />
                     <button
                       onClick={() => removeUploadedFile(idx)}
-                      className="no-min-touch-target absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                    className="no-min-touch-target absolute -top-2 -right-2 w-5 h-5 bg-[var(--app-error)] text-[var(--app-on-color)] rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
                     >
                       <X size={12} />
                     </button>
                   </div>
                 ))}
-                <label className="w-20 h-20 border-2 border-dashed border-gray-300 dark:border-border-primary rounded flex flex-col items-center justify-center cursor-pointer hover:border-sky-500 transition-colors">
-                  <Upload size={20} className="text-gray-400 mb-1" />
-                  <span className="text-xs text-gray-500 dark:text-foreground-tertiary">{t('preview.upload')}</span>
+                <label className="flex h-20 w-20 cursor-pointer flex-col items-center justify-center rounded-[var(--app-radius-control)] border-2 border-dashed border-[var(--app-border)] transition-colors hover:border-[var(--app-accent)]">
+                  <Upload size={20} className="text-[var(--app-text-muted)] mb-1" />
+                  <span className="text-xs text-[var(--app-text-tertiary)]">{t('preview.upload')}</span>
                   <input
                     type="file"
                     accept="image/*"
@@ -3237,9 +4162,9 @@ export const SlidePreview: React.FC = () => {
             onChange={(e) => setEditPrompt(e.target.value)}
             rows={4}
           />
-          <div className="flex justify-between gap-3">
-            <Button 
-              variant="secondary" 
+          <div data-testid="edit-page-footer" className="sticky bottom-0 z-10 -mx-1 flex justify-between gap-3 border-t border-[var(--app-border)] bg-[var(--app-surface)] px-1 pb-1 pt-3">
+            <Button
+              variant="secondary"
               onClick={() => {
                 handleSaveOutlineAndDescription();
                 setIsEditModalOpen(false);
@@ -3264,7 +4189,7 @@ export const SlidePreview: React.FC = () => {
       </Modal>
       <ToastContainer />
       {ConfirmDialog}
-      
+
       {/* 模板选择 Modal */}
       <Modal
         isOpen={isTemplateModalOpen}
@@ -3273,12 +4198,12 @@ export const SlidePreview: React.FC = () => {
         size="lg"
       >
         <div className="space-y-4">
-          <p className="text-sm text-gray-600 dark:text-foreground-tertiary mb-4">
+          <p className="text-sm text-[var(--app-text-tertiary)] mb-4">
             {t('preview.templateModalDesc')}
           </p>
           {/* 图片模板 / 文字风格 切换 */}
           <label className="flex items-center gap-2 cursor-pointer group">
-            <span className="text-sm text-gray-600 dark:text-foreground-tertiary group-hover:text-gray-900 dark:group-hover:text-white transition-colors">
+            <span className="text-sm text-[var(--app-text-tertiary)] group-hover:text-[var(--app-text-primary)] transition-colors">
               {t('preview.useTextStyle')}
             </span>
             <div className="relative">
@@ -3288,7 +4213,7 @@ export const SlidePreview: React.FC = () => {
                 onChange={(e) => setUseTextStyleMode(e.target.checked)}
                 className="sr-only peer"
               />
-              <div className="w-11 h-6 bg-gray-200 dark:bg-background-hover peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-sky-300 dark:peer-focus:ring-sky-500/30 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white dark:after:bg-foreground-secondary after:border-gray-300 dark:after:border-border-hover after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-sky-600"></div>
+              <div className="peer h-6 w-11 rounded-full bg-[var(--app-surface-hover)] after:absolute after:start-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-[var(--app-border)] after:bg-[var(--app-surface)] after:transition-all after:content-[''] peer-checked:bg-[var(--app-accent)] peer-checked:after:translate-x-full peer-checked:after:border-white peer-focus:outline-none rtl:peer-checked:after:-translate-x-full"></div>
             </div>
           </label>
           {useTextStyleMode ? (
@@ -3307,7 +4232,7 @@ export const SlidePreview: React.FC = () => {
                 projectId={projectId || null}
               />
               {isUploadingTemplate && (
-                <div className="text-center py-2 text-sm text-gray-500 dark:text-foreground-tertiary">
+                <div className="text-center py-2 text-sm text-[var(--app-text-tertiary)]">
                   {t('preview.uploadingTemplate')}
                 </div>
               )}
@@ -3363,6 +4288,8 @@ export const SlidePreview: React.FC = () => {
             onClose={() => setIsMaterialSelectorOpen(false)}
             onSelect={handleSelectMaterials}
             multiple={true}
+            initialSelectedUrls={selectedDescriptionImageUrls}
+            mediaKindFilter={['image']}
           />
           {/* 项目设置模态框 */}
           <ProjectSettingsModal
@@ -3411,13 +4338,13 @@ export const SlidePreview: React.FC = () => {
         size="sm"
       >
         <div className="space-y-4">
-          <div className="flex items-start gap-3 p-3 bg-rose-50 border border-rose-200 rounded-lg">
+          <div className="flex items-start gap-3 p-3 bg-[var(--app-error)]/10 border border-[var(--app-error)]/25 rounded-[var(--app-radius-card)]">
             <div className="text-2xl">⚠️</div>
             <div className="flex-1">
-              <p className="text-sm text-rose-800">
+              <p className="text-sm text-[var(--app-error)]">
                 {t('preview.resolution1KWarningText')}
               </p>
-              <p className="text-sm text-rose-700 mt-2">
+              <p className="text-sm text-[var(--app-error)] mt-2">
                 {t('preview.resolution1KWarningHint')}
               </p>
             </div>
@@ -3428,9 +4355,9 @@ export const SlidePreview: React.FC = () => {
               type="checkbox"
               checked={skip1KWarningChecked}
               onChange={(e) => setSkip1KWarningChecked(e.target.checked)}
-              className="w-4 h-4 text-sky-600 rounded focus:ring-sky-500"
+              className="h-4 w-4 rounded accent-[var(--app-accent)]"
             />
-            <span className="text-sm text-gray-600 dark:text-foreground-tertiary">{t('preview.dontShowAgain')}</span>
+            <span className="text-sm text-[var(--app-text-tertiary)]">{t('preview.dontShowAgain')}</span>
           </label>
 
           <div className="flex justify-end gap-3 pt-2">
@@ -3443,6 +4370,15 @@ export const SlidePreview: React.FC = () => {
           </div>
         </div>
       </Modal>
+
+      {projectId && <NarrationWorkbench
+        open={showNarrationWorkbench}
+        projectId={projectId}
+        initialPageId={currentProject?.pages?.[selectedIndex]?.page_id}
+        pageIds={narrationPageIds}
+        onClose={() => setShowNarrationWorkbench(false)}
+        onSummaryChange={setVideoNarrationSummary}
+      />}
 
     </div>
   );

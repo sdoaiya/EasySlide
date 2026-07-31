@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 
-FIELDS = ("mineru_token", "baidu_api_key", "elevenlabs_api_key")
+FIELDS = ("mineru_token", "baidu_api_key")
 PREFIX = "dpapi:v1:"
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))

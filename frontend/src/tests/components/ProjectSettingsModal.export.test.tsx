@@ -22,7 +22,12 @@ describe('ProjectSettingsModal export copy', () => {
       />
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '导出设置' }));
+    fireEvent.click(screen.getByRole('tab', { name: '导出设置' }));
+
+    const selectedOption = screen.getAllByRole('radio')[0].closest('label');
+    expect(selectedOption?.className).toContain('rounded-[var(--app-radius-control)]');
+    expect(selectedOption?.className).toContain('border-[var(--app-primary-action)]');
+    expect(selectedOption?.className).not.toContain('rounded-lg');
 
     expect(screen.getByRole('radio', { name: '内置 Paddle 解析（推荐）' })).toHaveAttribute(
       'title',

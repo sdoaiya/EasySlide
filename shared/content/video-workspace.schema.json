@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://easyslide.local/schemas/content/video-workspace.schema.json",
+  "title": "EasySlide Video Workspace Document",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "title", "aspect_ratio", "scenes"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "title": { "type": "string", "minLength": 1, "maxLength": 255 },
+    "aspect_ratio": { "enum": ["16:9", "9:16", "1:1"] },
+    "scenes": { "type": "array", "items": { "$ref": "#/$defs/scene" } }
+  },
+  "$defs": {
+    "stableId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+    "segment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["segment_id", "speaker_id", "text"],
+      "properties": {
+        "segment_id": { "$ref": "#/$defs/stableId" },
+        "speaker_id": { "$ref": "#/$defs/stableId" },
+        "text": { "type": "string", "minLength": 1 }
+      }
+    },
+    "scene": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scene_id", "title", "visual", "narration", "subtitles", "duration_ms", "transition", "animation", "audio_cues"],
+      "properties": {
+        "scene_id": { "$ref": "#/$defs/stableId" },
+        "title": { "type": "string" },
+        "visual": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "source_ref"],
+          "properties": {
+            "kind": { "enum": ["generated", "page", "native_scene", "image", "material", "video", "blank"] },
+            "source_ref": { "type": ["string", "null"] },
+            "source_revision": { "type": ["integer", "null"], "minimum": 0 }
+          }
+        },
+        "narration": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "text", "segments"],
+          "properties": {
+            "mode": { "enum": ["single", "dialogue"] },
+            "text": { "type": "string" },
+            "segments": { "type": "array", "items": { "$ref": "#/$defs/segment" } }
+          }
+        },
+        "subtitles": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "text"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "text": { "type": "string" }
+          }
+        },
+        "duration_ms": { "type": "integer", "minimum": 100 },
+        "transition": { "enum": ["cut", "fade", "dissolve", "slide"] },
+        "animation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["intensity", "cues"],
+          "properties": {
+            "intensity": { "enum": ["none", "subtle", "balanced", "expressive"] },
+            "cues": { "type": "array", "items": { "type": "object" } }
+          }
+        },
+        "audio_cues": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["cue_id", "kind", "asset_ref", "offset_ms", "gain_db"],
+            "properties": {
+              "cue_id": { "$ref": "#/$defs/stableId" },
+              "kind": { "enum": ["bgm", "sfx"] },
+              "asset_ref": { "type": "string", "minLength": 1 },
+              "offset_ms": { "type": "integer", "minimum": 0 },
+              "gain_db": { "type": "number", "minimum": -60, "maximum": 12 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

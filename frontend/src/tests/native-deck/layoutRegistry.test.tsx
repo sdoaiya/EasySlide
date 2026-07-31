@@ -36,6 +36,7 @@ const samples: Record<string, Record<string, unknown>> = {
   core01_section: { kicker: '第二章', title: '章节标题', subtitle: '章节说明', sectionNumber: '02' },
   core01_timeline: { title: '时间轴标题', milestones: ['里程碑甲', '里程碑乙', '里程碑丙'] },
   core01_bars: { title: '数据条标题', summary: '数据摘要', metrics: ['指标甲 80%', '指标乙 60%', '指标丙 40%'] },
+  core01_chart: { title: '智能图表标题', summary: '智能图表摘要', spec: '{"data":{"values":[{"quarter":"Q1","revenue":120}]},"chart_spec":{"chartType":"Bar Chart","encodings":{"x":{"field":"quarter"},"y":{"field":"revenue"}}}}' },
   core01_table: { title: '报告标题', leftLabel: '分类', rightLabel: '结论', rows: ['记录甲', '记录乙', '记录丙'] },
   core01_architecture: { kicker: '系统架构', title: '架构标题', summary: '架构摘要', layers: ['接入层', '服务层', '数据层'] },
   core01_profile: { kicker: '核心成员', name: '人物姓名', role: '人物角色', summary: '人物摘要', highlights: ['经历甲', '经历乙'], image: '/files/profile.png' },
@@ -69,7 +70,8 @@ describe('native deck layout registry', () => {
 
     expect(slide).toHaveClass('native-slide')
     expect(slide).toHaveStyle({ width: '1920px', height: '1080px' })
-    for (const value of Object.values(samples[layout])) {
+    for (const [key, value] of Object.entries(samples[layout])) {
+      if (key === 'spec') continue
       if (typeof value === 'string' && !value.startsWith('/files/')) {
         expect(screen.getByText(value)).toBeInTheDocument()
       }

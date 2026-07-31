@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://easyslide.local/schemas/video/audio-mix-manifest.schema.json",
+  "title": "EasySlide Audio Mix Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "narration", "music", "sfx"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "narration": { "$ref": "#/$defs/narration" },
+    "music": { "$ref": "#/$defs/music" },
+    "sfx": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/sfx" }
+    }
+  },
+  "$defs": {
+    "assetId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "narration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "normalize"],
+      "properties": {
+        "source": { "const": "tts-manifest" },
+        "normalize": { "type": "boolean" }
+      }
+    },
+    "music": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "asset_id",
+        "enabled",
+        "loop",
+        "fade_in_ms",
+        "fade_out_ms",
+        "duck_under_narration",
+        "gain_db"
+      ],
+      "properties": {
+        "asset_id": {
+          "anyOf": [
+            { "$ref": "#/$defs/assetId" },
+            { "type": "null" }
+          ]
+        },
+        "enabled": { "type": "boolean" },
+        "loop": { "type": "boolean" },
+        "fade_in_ms": { "type": "integer", "minimum": 0, "maximum": 600000 },
+        "fade_out_ms": { "type": "integer", "minimum": 0, "maximum": 600000 },
+        "duck_under_narration": { "type": "boolean" },
+        "gain_db": { "type": "number", "minimum": -60, "maximum": 12 }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "enabled": { "const": true } },
+            "required": ["enabled"]
+          },
+          "then": {
+            "required": ["asset_id"],
+            "properties": { "asset_id": { "type": "string", "$ref": "#/$defs/assetId" } }
+          }
+        }
+      ]
+    },
+    "sfx": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cue_id", "asset_id", "offset_ms", "gain_db"],
+      "properties": {
+        "cue_id": { "$ref": "#/$defs/assetId" },
+        "asset_id": { "$ref": "#/$defs/assetId" },
+        "page_id": { "$ref": "#/$defs/assetId" },
+        "segment_id": { "$ref": "#/$defs/assetId" },
+        "motion_event_id": { "$ref": "#/$defs/assetId" },
+        "offset_ms": { "type": "integer", "minimum": 0, "maximum": 86400000 },
+        "gain_db": { "type": "number", "minimum": -60, "maximum": 12 }
+      },
+      "anyOf": [
+        { "required": ["page_id"] },
+        { "required": ["segment_id"] },
+        { "required": ["motion_event_id"] }
+      ]
+    }
+  }
+}

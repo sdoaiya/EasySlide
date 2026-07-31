@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const { toPng } = vi.hoisted(() => ({ toPng: vi.fn(async () => 'data:image/png;base64,AA==') }))
 vi.mock('html-to-image', () => ({ toPng }))
 
-import { captureNativeDeckFrameSequences, waitForNativeAnimations, waitForNativeMedia, waitForNativeStableLayout } from '@/native-deck/exportNativeDeckFrames'
+import { captureNativeDeckFrameSequences, captureNativeSceneManifests, waitForNativeAnimations, waitForNativeMedia, waitForNativeStableLayout } from '@/native-deck/exportNativeDeckFrames'
 
 describe('captureNativeDeckFrameSequences', () => {
   beforeEach(() => {
@@ -29,6 +29,38 @@ describe('captureNativeDeckFrameSequences', () => {
     expect(sequences[0]).toHaveLength(4)
     expect(toPng).toHaveBeenCalledTimes(4)
     expect(candidates.map((element) => element.style.visibility)).toEqual(['', 'visible', '', '', ''])
+  })
+
+  it('captures validated scene manifests from the same export DOM', () => {
+    document.body.innerHTML = '<div id="deck"><section class="slide"><div class="native-slide" data-page-id="page-1"><div class="native-slide-content"><h1>标题</h1></div></div></section></div>'
+    const root = document.querySelector<HTMLElement>('.native-slide')!
+    vi.spyOn(root, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, width: 1920, height: 1080, right: 1920, bottom: 1080 } as DOMRect)
+    const title = document.querySelector<HTMLElement>('h1')!
+    vi.spyOn(title, 'getBoundingClientRect').mockReturnValue({ left: 100, top: 80, width: 600, height: 100, right: 700, bottom: 180 } as DOMRect)
+
+    const manifests = captureNativeSceneManifests([{ pageId: 'page-1', layout: 'core01_cover', props: { title: '标题' } }])
+
+    expect(manifests[0].page_id).toBe('page-1')
+    expect(manifests[0].elements[0]).toMatchObject({ id: 'title', kind: 'title', bbox: [100, 80, 600, 100] })
+  })
+
+  it('preserves page order and rejects a stale or reordered export DOM', () => {
+    document.body.innerHTML = `
+      <div id="deck">
+        <section class="slide"><div class="native-slide" data-page-id="page-1"><h1>第一页</h1></div></section>
+        <section class="slide"><div class="native-slide" data-page-id="page-2"><h1>第二页</h1></div></section>
+      </div>`
+    const sceneRoots = Array.from(document.querySelectorAll<HTMLElement>('.native-slide'))
+    const titles = Array.from(document.querySelectorAll<HTMLElement>('h1'))
+    sceneRoots.forEach((root) => vi.spyOn(root, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, width: 1920, height: 1080, right: 1920, bottom: 1080 } as DOMRect))
+    titles.forEach((title) => vi.spyOn(title, 'getBoundingClientRect').mockReturnValue({ left: 100, top: 80, width: 600, height: 100, right: 700, bottom: 180 } as DOMRect))
+    const slides = [
+      { pageId: 'page-1', layout: 'core01_cover', props: { title: '第一页' } },
+      { pageId: 'page-2', layout: 'core01_cover', props: { title: '第二页' } },
+    ]
+
+    expect(captureNativeSceneManifests(slides).map((manifest) => manifest.page_id)).toEqual(['page-1', 'page-2'])
+    expect(() => captureNativeSceneManifests([...slides].reverse())).toThrow('第 1 页场景顺序与导出页面不一致')
   })
 })
 

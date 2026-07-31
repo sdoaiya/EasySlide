@@ -1,5 +1,7 @@
 import { toPng } from 'html-to-image'
 import { waitForNativeLayouts } from './exportNativeDeck'
+import { buildNativeSceneManifest, validateNativeSceneManifest, type NativeSceneManifest } from './nativeSceneAdapter'
+import type { NativeSlideSpec } from './types'
 
 const WIDTH = 1920
 const HEIGHT = 1080
@@ -54,6 +56,21 @@ export async function captureNativeDeckFrameSequences(root: ParentNode = documen
     sequences.push(frames)
   }
   return sequences
+}
+
+export function captureNativeSceneManifests(slides: NativeSlideSpec[], root: ParentNode = document): NativeSceneManifest[] {
+  const renderedSlides = Array.from(root.querySelectorAll<HTMLElement>('#deck > .slide'))
+  if (renderedSlides.length !== slides.length) throw new Error('场景页面数量与导出页面不一致')
+  return renderedSlides.map((container, index) => {
+    const sceneRoot = container.querySelector<HTMLElement>('.native-slide')
+    if (!sceneRoot) throw new Error(`第 ${index + 1} 页缺少原生场景根节点`)
+    const slide = slides[index]
+    if (sceneRoot.dataset.pageId !== slide.pageId) throw new Error(`第 ${index + 1} 页场景顺序与导出页面不一致`)
+    const manifest = buildNativeSceneManifest(sceneRoot, slide)
+    const errors = validateNativeSceneManifest(manifest)
+    if (errors.length) throw new Error(`第 ${index + 1} 页场景清单无效：${errors.join('；')}`)
+    return manifest
+  })
 }
 
 async function captureSlide(slide: HTMLElement) {

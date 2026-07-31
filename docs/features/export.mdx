@@ -72,21 +72,17 @@ Narration Video combines your slide images with AI-generated narration into a si
    - **Speaker persona** — the speaking style (e.g. corporate executive, content creator).
    - **Audience** — who the narration is written for.
    - **Tone** — the emotional register of the script.
+   - **Narration mode** — choose a single presenter or a two-speaker dialogue between a host and an expert.
+   - **Speaker voices** — in dialogue mode, select a separate TTS voice for each role.
    - **Voice** — the TTS voice used for audio synthesis (see below).
    - **Ken Burns effect** — subtle zoom/pan motion on each slide (optional).
 4. Click **Start Export**. Progress is shown in the Export Tasks panel.
 
 ### Voice Selection
 
-**Default (edge-tts):** Free voices provided by Microsoft Edge, no API key needed. Options include Chinese (晓晓, 云希), English (Jenny, Guy), and Japanese (Nanami, Keita).
+Narration uses free Microsoft Edge voices through `edge-tts`, with no API key required. Options include Chinese (晓晓, 云希), English (Jenny, Guy), and Japanese (Nanami, Keita).
 
-**ElevenLabs:** Higher-quality, more natural voices. Requires an ElevenLabs API key configured in Settings (see [Configuration → ElevenLabs](/configuration#elevenlabs-narration-video-tts)).
-
-When ElevenLabs is enabled in Settings, the voice dropdown in the export dialog switches to ElevenLabs voices — Rachel, Bella, Adam, Josh, and more. The voice ID is handled automatically; you only pick a name.
-
-<Note>
-  ElevenLabs voices are English-optimized. For Chinese narration, edge-tts Chinese voices (e.g. 晓晓) generally produce better results.
-</Note>
+Dialogue mode generates separate narration segments for the host and expert, synthesizes each segment independently, and combines them with role-aware subtitles. Existing single-speaker narration remains compatible. Repeated exports reuse cached audio when the text, voice, rate, speed, and language are unchanged.
 
 ## Allow Partial Results
 

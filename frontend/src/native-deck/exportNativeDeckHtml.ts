@@ -60,7 +60,7 @@ function mapPageEnterToElementEnter(value: unknown) {
 }
 
 async function inlinePageMedia(page: HTMLElement, mediaMap: Map<string, string>) {
-  const attributes: Array<[HTMLElement, 'src' | 'poster' | 'href']> = [
+  const attributes: Array<readonly [HTMLElement, 'src' | 'poster' | 'href']> = [
     ...Array.from(page.querySelectorAll<HTMLElement>('img[src],video[src],source[src]')).map((element) => [element, 'src'] as const),
     ...Array.from(page.querySelectorAll<HTMLElement>('video[poster]')).map((element) => [element, 'poster'] as const),
     ...Array.from(page.querySelectorAll<HTMLElement>('image[href]')).map((element) => [element, 'href'] as const),

@@ -164,7 +164,7 @@ function reducer(s: State, a: Action): State {
     case 'SET_PREVIEW':
       return { ...s, preview: a.preview };
     case 'RESET_EPHEMERAL':
-      return { ...s, selected: new Set(), showAllProjects: false, preview: null };
+      return { ...s, selected: new Set(), preview: null };
     default:
       return s;
   }
@@ -201,20 +201,20 @@ const ToolbarSection: React.FC<{
 }> = ({ t, state, dispatch, onRefresh, onUpload, onDownload }) => (
   <div className="space-y-2">
     <div className="flex items-center justify-between flex-wrap gap-2">
-      <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-foreground-tertiary">
-        <FolderOpen size={16} className="text-cyan-500" />
+      <div className="flex items-center gap-2 text-sm text-[var(--app-text-secondary)]">
+        <FolderOpen size={16} className="text-[var(--app-accent)]" />
         <span>
           {state.items.length > 0
             ? t('mc.count', { count: state.items.length })
             : t('mc.empty')}
         </span>
         {state.selected.size > 0 && (
-          <span className="ml-2 text-cyan-600 font-medium">
+          <span className="ml-2 font-medium text-[var(--app-accent)]">
             {t('mc.selected', { count: state.selected.size })}
           </span>
         )}
         {state.loading && state.items.length > 0 && (
-          <RefreshCw size={14} className="animate-spin text-gray-400" />
+          <RefreshCw size={14} className="animate-spin text-[var(--app-text-tertiary)]" />
         )}
       </div>
 
@@ -223,7 +223,7 @@ const ToolbarSection: React.FC<{
         <select
           value={state.filter}
           onChange={(e) => dispatch({ type: 'SET_FILTER', value: e.target.value })}
-          className="rounded-full border border-sky-100 bg-white px-3 py-1.5 text-sm text-slate-700 shadow-sm transition-colors cursor-pointer hover:bg-sky-50 hover:text-cyan-700 focus:outline-none dark:border-border-primary dark:bg-background-secondary dark:text-foreground-secondary dark:hover:bg-background-hover"
+          className="cursor-pointer rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-1.5 text-sm text-[var(--app-text-secondary)] shadow-[var(--app-shadow-control)] transition-colors hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--app-accent-soft)]"
         >
           <option value="all">{t('mc.filterAll')}</option>
           <option value="none">{t('mc.filterNone')}</option>
@@ -242,7 +242,7 @@ const ToolbarSection: React.FC<{
             const nextIndex = (currentIndex + 1) % order.length;
             dispatch({ type: 'SET_SORT', value: order[nextIndex] });
           }}
-          className="flex items-center gap-1.5 rounded-full border border-sky-100 bg-white px-3 py-1.5 text-sm text-slate-700 shadow-sm transition-colors hover:bg-sky-50 hover:text-cyan-700 dark:border-border-primary dark:bg-background-secondary dark:text-foreground-secondary dark:hover:bg-background-hover"
+          className="flex items-center gap-1.5 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-1.5 text-sm text-[var(--app-text-secondary)] shadow-[var(--app-shadow-control)] transition-colors hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text)]"
         >
           <ArrowUpDown size={14} />
           <span>
@@ -258,7 +258,7 @@ const ToolbarSection: React.FC<{
         </Button>
 
         <label className="inline-block cursor-pointer">
-          <div className="inline-flex items-center gap-2 rounded-full border border-cyan-100 bg-cyan-50 px-3 py-1.5 text-sm font-medium text-cyan-700 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-border-primary dark:bg-background-secondary dark:text-cyan-300 dark:hover:bg-background-hover">
+          <div className="inline-flex items-center gap-2 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-1.5 text-sm font-medium text-[var(--app-accent)] transition hover:bg-[var(--app-surface-hover)] disabled:cursor-not-allowed disabled:opacity-50">
             <Upload size={16} />
             <span>{state.uploading ? t('common.uploading') : t('common.upload')}</span>
           </div>
@@ -268,7 +268,7 @@ const ToolbarSection: React.FC<{
     </div>
 
     {state.items.length > 0 && (
-      <div className="flex items-center gap-2 rounded-2xl border border-sky-100 bg-sky-50/70 p-2 dark:border-border-primary dark:bg-background-primary">
+      <div className="flex items-center gap-2 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface-hover)] p-2">
         <Button
           variant="ghost"
           size="sm"
@@ -311,7 +311,7 @@ const MaterialGrid: React.FC<{
   onPreview: (e: React.MouseEvent, m: Material) => void;
   onDelete: (e: React.MouseEvent<HTMLButtonElement>, m: Material) => void;
 }> = ({ items, selected, deleting, t, onToggle, onPreview, onDelete }) => (
-  <div className="grid grid-cols-4 gap-4 max-h-96 overflow-y-auto rounded-2xl bg-sky-50/40 p-4 dark:bg-background-primary">
+  <div className="grid max-h-96 grid-cols-4 gap-4 overflow-y-auto rounded-[var(--app-radius-card)] bg-[var(--app-surface-hover)] p-4">
     {items.map((m) => {
       const sel = selected.has(m.id);
       const busy = deleting.has(m.id);
@@ -319,8 +319,8 @@ const MaterialGrid: React.FC<{
         <div
           key={m.id}
           onClick={() => onToggle(m.id)}
-          className={`aspect-video rounded-2xl border-2 cursor-pointer transition-all relative group overflow-hidden bg-white shadow-sm ${
-            sel ? 'border-cyan-500 ring-2 ring-cyan-100' : 'border-sky-100 dark:border-border-primary hover:border-cyan-300'
+          className={`group relative aspect-video cursor-pointer overflow-hidden rounded-[var(--app-radius-control)] border-2 bg-[var(--app-surface)] shadow-[var(--app-shadow-control)] transition-all ${
+            sel ? 'border-[var(--app-accent)]' : 'border-[var(--app-border)] hover:border-[var(--app-border-strong)]'
           }`}
         >
           <img src={getImageUrl(m.url)} alt={displayName(m)} className="absolute inset-0 w-full h-full object-cover" />
@@ -328,7 +328,7 @@ const MaterialGrid: React.FC<{
           <button
             type="button"
             onClick={(e) => onPreview(e, m)}
-            className="absolute top-1 left-1 w-6 h-6 bg-black/60 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow z-10 hover:bg-black/80"
+            className="absolute top-1 left-1 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-[color:var(--app-surface)]/85 text-[var(--app-text)] opacity-0 shadow-[var(--app-shadow-control)] transition-opacity hover:bg-[color:var(--app-surface)]/95 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)]"
             aria-label={t('mc.preview')}
           >
             <Eye size={12} />
@@ -338,19 +338,19 @@ const MaterialGrid: React.FC<{
             type="button"
             onClick={(e) => onDelete(e, m)}
             disabled={busy}
-            className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow z-10 disabled:opacity-60 disabled:cursor-not-allowed"
+            className="absolute -right-2 -top-2 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-[var(--app-error)] text-[var(--app-on-color)] opacity-0 shadow-[var(--app-shadow-control)] transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)] disabled:cursor-not-allowed disabled:opacity-60"
             aria-label={t('mc.remove')}
           >
             {busy ? <RefreshCw size={12} className="animate-spin" /> : <X size={12} />}
           </button>
 
           {sel && (
-            <div className="absolute inset-0 bg-cyan-500/20 flex items-center justify-center">
-              <div className="bg-cyan-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold">✓</div>
+            <div className="absolute inset-0 bg-[color:var(--app-accent-soft)] flex items-center justify-center">
+              <div className="bg-[var(--app-focus)] text-[var(--app-surface)] rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold">✓</div>
             </div>
           )}
 
-          <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs p-1 truncate opacity-0 group-hover:opacity-100 transition-opacity rounded-b-md">
+          <div className="absolute bottom-0 left-0 right-0 truncate bg-[color:var(--app-surface)]/85 p-1 text-xs text-[var(--app-text)] opacity-0 transition-opacity group-hover:opacity-100">
             {displayName(m)}
           </div>
         </div>
@@ -365,18 +365,18 @@ const PreviewOverlay: React.FC<{ url: string; label: string; t: ReturnType<typeo
   t,
   onClose,
 }) => (
-  <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[60]" onClick={onClose}>
+  <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[color:var(--app-surface)]/80" onClick={onClose}>
     <div className="relative max-w-[90vw] max-h-[90vh]">
       <button
         type="button"
         onClick={onClose}
-        className="absolute -top-10 right-0 text-white hover:text-gray-300 transition-colors"
+        className="absolute -top-10 right-0 text-[var(--app-surface)] hover:text-[var(--app-text-tertiary)] transition-colors"
         aria-label={t('mc.closePreview')}
       >
         <X size={24} />
       </button>
-      <img src={url} alt={label} className="max-w-full max-h-[85vh] object-contain rounded-lg" onClick={(e) => e.stopPropagation()} />
-      <div className="text-center text-white text-sm mt-2 truncate max-w-[90vw]">{label}</div>
+      <img src={url} alt={label} className="max-h-[85vh] max-w-full rounded-[var(--app-radius-card)] object-contain" onClick={(e) => e.stopPropagation()} />
+        <div className="text-center text-[var(--app-on-color)] text-sm mt-2 truncate max-w-[90vw]">{label}</div>
     </div>
   </div>
 );
@@ -522,16 +522,16 @@ export const MaterialCenterModal: React.FC<MaterialCenterModalProps> = ({ isOpen
   return (
     <>
       <Modal isOpen={isOpen} onClose={onClose} title={t('mc.title')} size="lg">
-        <div className="space-y-4 rounded-3xl border border-sky-100 bg-gradient-to-br from-white to-sky-50/60 p-4 dark:border-border-primary dark:from-background-secondary dark:to-background-tertiary">
+        <div className="space-y-4 rounded-[var(--app-radius-panel)] border border-[var(--app-border)] bg-[var(--app-surface)] p-4">
           <ToolbarSection t={t} state={s} dispatch={dispatch} onRefresh={fetchItems} onUpload={handleUpload} onDownload={handleDownload} />
 
           {s.loading && s.items.length === 0 ? (
             <div className="flex items-center justify-center py-12">
-              <div className="text-slate-400">{t('common.loading')}</div>
+              <div className="text-[var(--app-text-tertiary)]">{t('common.loading')}</div>
             </div>
           ) : s.items.length === 0 ? (
-            <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-sky-200 bg-white/80 p-4 py-12 text-slate-400">
-              <ImageIcon size={48} className="mb-4 text-cyan-400 opacity-70" />
+            <div className="flex flex-col items-center justify-center rounded-[var(--app-radius-panel)] border border-dashed border-[var(--app-border)] bg-[var(--app-surface-muted)] p-4 py-12 text-[var(--app-text-tertiary)]">
+              <ImageIcon size={48} className="mb-4 text-[var(--app-accent)] opacity-70" />
               <div className="text-sm">{t('mc.empty')}</div>
               <div className="text-xs mt-1">{t('mc.emptyHint')}</div>
             </div>
@@ -547,7 +547,7 @@ export const MaterialCenterModal: React.FC<MaterialCenterModalProps> = ({ isOpen
             />
           )}
 
-          <div className="pt-4 border-t border-sky-100 flex justify-end">
+          <div className="pt-4 border-t border-[var(--app-border)] flex justify-end">
             <Button variant="ghost" onClick={onClose}>
               {t('common.close')}
             </Button>

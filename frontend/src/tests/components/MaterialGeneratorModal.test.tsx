@@ -47,12 +47,13 @@ describe('MaterialGeneratorModal', () => {
   })
 
   it('renders swiss-army tool modes', () => {
-    render(<MaterialGeneratorModal isOpen onClose={() => {}} projectId={null} />)
+    const { container } = render(<MaterialGeneratorModal isOpen onClose={() => {}} projectId={null} />)
 
     expect(screen.getByText('material.toolGenerate')).toBeInTheDocument()
     expect(screen.getByText('material.toolEditFull')).toBeInTheDocument()
     expect(screen.getByText('material.toolRegionEdit')).toBeInTheDocument()
     expect(screen.getByText('material.toolEraseRegion')).toBeInTheDocument()
+    expect(container.innerHTML).not.toContain('shadow-sm')
   })
 
   it('shows region apply mode controls when region edit is selected', () => {
@@ -162,7 +163,7 @@ describe('MaterialGeneratorModal', () => {
 
     fireEvent.click(screen.getByText('material.toolRegionEdit'))
     fireEvent.click(screen.getByText('material.applyReplaceFull'))
-    expect(screen.getByText('material.applyReplaceFull').closest('button')?.className).toContain('border-cyan-500')
+    expect(screen.getByText('material.applyReplaceFull').closest('button')?.className).toContain('border-[var(--app-accent)]')
 
     rerender(<MaterialGeneratorModal isOpen={false} onClose={() => {}} projectId={null} />)
     act(() => {
@@ -172,8 +173,8 @@ describe('MaterialGeneratorModal', () => {
     rerender(<MaterialGeneratorModal isOpen onClose={() => {}} projectId={null} />)
     fireEvent.click(screen.getByText('material.toolRegionEdit'))
 
-    expect(screen.getByText('material.applyOverlay').closest('button')?.className).toContain('border-cyan-500')
-    expect(screen.getByText('material.applyReplaceFull').closest('button')?.className).not.toContain('border-cyan-500')
+    expect(screen.getByText('material.applyOverlay').closest('button')?.className).toContain('border-[var(--app-accent)]')
+    expect(screen.getByText('material.applyReplaceFull').closest('button')?.className).not.toContain('border-[var(--app-accent)]')
 
     vi.useRealTimers()
   })

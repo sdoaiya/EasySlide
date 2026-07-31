@@ -5,6 +5,7 @@ import json
 import pytest
 
 from models import Settings, db
+from services.ai_service import AIService
 from services.task_manager import _append_extra_fields, get_image_prompt_field_names
 
 
@@ -109,3 +110,13 @@ def test_append_extra_fields_keeps_zero_values():
     assert '数量：0' in result
     assert '空白' not in result
     assert '缺失' not in result
+
+
+def test_parse_extra_fields_recognizes_field_at_start_of_text():
+    text, fields = AIService._parse_extra_fields(
+        '版式与重点：左文右图\n页面文字正文',
+        ['版式与重点'],
+    )
+
+    assert text == ''
+    assert fields == {'版式与重点': '左文右图\n页面文字正文'}

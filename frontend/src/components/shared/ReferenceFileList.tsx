@@ -97,7 +97,7 @@ export const ReferenceFileList: React.FC<ReferenceFileListProps> = ({
 
   return (
     <div className={className}>
-      <h3 className="text-sm font-semibold text-gray-700 dark:text-foreground-secondary mb-3">{displayTitle}</h3>
+      <h3 className="mb-3 text-sm font-semibold text-[var(--app-text-secondary)]">{displayTitle}</h3>
       <div className="flex flex-wrap gap-2">
         {files.map(file => (
           <ReferenceFileCard

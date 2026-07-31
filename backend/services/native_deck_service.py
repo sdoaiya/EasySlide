@@ -145,7 +145,6 @@ VISUAL_SYSTEM_BY_PAGE_KIND = {
     'content': 'editorial',
 }
 
-
 class NativeDeckService:
     def __init__(self, manifest_path=None):
         manifest = json.loads(Path(manifest_path or DEFAULT_MANIFEST).read_text(encoding='utf-8'))
@@ -214,6 +213,9 @@ class NativeDeckService:
             return []
         used = set(used_layouts or [])
         recent = list(recent_layouts or [])[-3:]
+        alternatives = [item for item in themed if item.get('layout') != recent[-1]] if recent else []
+        if alternatives:
+            themed = alternatives
 
         def score(layout):
             roles = set(layout.get('roles') or [])
@@ -330,7 +332,29 @@ class NativeDeckService:
             for value in self._path_values(props, path):
                 if isinstance(value, str) and len(value) > budget['maxChars']:
                     raise ValueError(f'{path} 超出 {budget["maxChars"]} 字限制')
+        if layout == 'core01_chart' and props.get('spec'):
+            self._validate_flint_chart_spec(props['spec'])
         return True
+
+    @staticmethod
+    def _validate_flint_chart_spec(value):
+        if not isinstance(value, str) or len(value) > 200_000:
+            raise ValueError('spec 必须是 200KB 以内的 JSON 文本')
+        try:
+            spec = json.loads(value)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ValueError('spec 不是有效 JSON') from exc
+        data = spec.get('data') if isinstance(spec, dict) else None
+        chart_spec = spec.get('chart_spec') if isinstance(spec, dict) else None
+        has_data = isinstance(data, dict) and (
+            isinstance(data.get('values'), list) or isinstance(data.get('url'), str)
+        )
+        if not has_data:
+            raise ValueError('spec 缺少 data.values 或 data.url')
+        if not isinstance(chart_spec, dict) or not isinstance(chart_spec.get('chartType'), str):
+            raise ValueError('spec 缺少 chart_spec.chartType')
+        if not isinstance(chart_spec.get('encodings'), dict):
+            raise ValueError('spec 缺少 chart_spec.encodings')
 
     @staticmethod
     def _validate_metadata(key, value):
@@ -389,8 +413,18 @@ class NativeDeckService:
             maximum = int(limits.get('max') or len(value))
             value = value[:maximum]
             source = deepcopy(value)
+            if all(isinstance(item, str) for item in value):
+                for candidate in [*context['points'], context['title'], context['section']]:
+                    if len(value) >= minimum:
+                        break
+                    if candidate and candidate not in value:
+                        value.append(candidate)
             while len(value) < minimum:
-                value.append(deepcopy(source[len(value) % len(source)]))
+                value.append(
+                    f'{context["section"]} {len(value) + 1}'
+                    if all(isinstance(item, str) for item in value)
+                    else deepcopy(source[len(value) % len(source)])
+                )
             merged[key] = value
         return merged
 

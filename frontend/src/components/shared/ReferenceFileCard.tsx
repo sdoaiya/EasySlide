@@ -121,11 +121,11 @@ export const ReferenceFileCard: React.FC<ReferenceFileCardProps> = ({
     switch (file.parse_status) {
       case 'pending':
       case 'parsing':
-        return <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />;
+        return <Loader2 className="h-4 w-4 animate-spin text-[var(--app-index-yellow)]" />;
       case 'completed':
-        return <CheckCircle2 className="w-4 h-4 text-green-500" />;
+        return <CheckCircle2 className="h-4 w-4 text-[var(--app-index-green)]" />;
       case 'failed':
-        return <XCircle className="w-4 h-4 text-red-500" />;
+        return <XCircle className="h-4 w-4 text-[var(--app-error)]" />;
       default:
         return null;
     }
@@ -150,19 +150,19 @@ export const ReferenceFileCard: React.FC<ReferenceFileCardProps> = ({
     switch (file.parse_status) {
       case 'pending':
       case 'parsing':
-        return 'text-blue-600';
+        return 'text-[var(--app-index-yellow)]';
       case 'completed':
-        return 'text-green-600';
+        return 'text-[var(--app-index-green)]';
       case 'failed':
-        return 'text-red-600';
+        return 'text-[var(--app-error)]';
       default:
-        return 'text-gray-600 dark:text-foreground-tertiary';
+        return 'text-[var(--app-text-secondary)]';
     }
   };
 
   return (
     <div
-      className={`flex items-center gap-2 px-3 py-2 w-72 bg-white dark:bg-background-secondary border border-gray-200 dark:border-border-primary rounded-lg hover:shadow-sm transition-shadow ${
+      className={`flex w-72 items-center gap-2 rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 transition-shadow hover:shadow-[var(--app-shadow-card)] ${
         onClick ? 'cursor-pointer' : ''
       }`}
       onClick={() => {
@@ -175,17 +175,17 @@ export const ReferenceFileCard: React.FC<ReferenceFileCardProps> = ({
       }}
     >
       <div className="flex-shrink-0">
-        <div className="w-8 h-8 bg-blue-50 dark:bg-blue-900/30 rounded-md flex items-center justify-center">
-          <FileText className="w-4 h-4 text-blue-600" />
+        <div className="flex h-8 w-8 items-center justify-center rounded-[var(--app-radius-control)] bg-[var(--app-surface-muted)]">
+          <FileText className="h-4 w-4 text-[var(--app-text-secondary)]" />
         </div>
       </div>
 
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <p className="text-sm font-medium text-gray-900 dark:text-foreground-primary truncate">
+          <p className="truncate text-sm font-medium text-[var(--app-text)]">
             {file.filename}
           </p>
-          <span className="text-xs text-gray-500 dark:text-foreground-tertiary flex-shrink-0">
+          <span className="flex-shrink-0 text-xs text-[var(--app-text-tertiary)]">
             {formatFileSize(file.file_size)}
           </span>
         </div>
@@ -200,13 +200,13 @@ export const ReferenceFileCard: React.FC<ReferenceFileCardProps> = ({
         {file.parse_status === 'completed' && 
          typeof file.image_caption_failed_count === 'number' && 
          file.image_caption_failed_count > 0 && (
-          <p className="text-xs text-orange-500 mt-1">
+          <p className="mt-1 text-xs text-[var(--app-index-yellow)]">
             {t('referenceFile.imageCaptionFailed', { count: file.image_caption_failed_count })}
           </p>
         )}
 
         {file.parse_status === 'failed' && file.error_message && (
-          <p className="text-xs text-red-500 mt-1 line-clamp-2">
+          <p className="mt-1 line-clamp-2 text-xs text-[var(--app-error)]">
             {file.error_message}
           </p>
         )}
@@ -220,7 +220,7 @@ export const ReferenceFileCard: React.FC<ReferenceFileCardProps> = ({
               handleReparse();
             }}
             disabled={isReparsing}
-            className="flex-shrink-0 p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors disabled:opacity-50"
+            className="flex-shrink-0 rounded-[var(--app-radius-control)] p-1 text-[var(--app-text-tertiary)] transition-colors hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text)] disabled:opacity-50"
             title={t('referenceFile.reparse')}
           >
             {isReparsing ? (
@@ -237,7 +237,7 @@ export const ReferenceFileCard: React.FC<ReferenceFileCardProps> = ({
             handleDelete();
           }}
           disabled={isDeleting}
-          className="flex-shrink-0 p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors disabled:opacity-50"
+            className="flex-shrink-0 rounded-[var(--app-radius-control)] p-1 text-[var(--app-text-tertiary)] transition-colors hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-error)] disabled:opacity-50"
           title={deleteMode === 'remove' ? t('referenceFile.removeFromProject') : t('referenceFile.deleteFile')}
         >
           {isDeleting ? (

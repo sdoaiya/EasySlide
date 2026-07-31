@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { cn } from '@/utils';
@@ -24,6 +24,19 @@ export const Modal: React.FC<ModalProps> = ({
 }) => {
   const [isVisible, setIsVisible] = useState(false);
   const [isAnimating, setIsAnimating] = useState(false);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const frame = requestAnimationFrame(() => closeButtonRef.current?.focus());
+    return () => {
+      cancelAnimationFrame(frame);
+      previousFocusRef.current?.focus({ preventScroll: true });
+      previousFocusRef.current = null;
+    };
+  }, [isOpen]);
 
   useEffect(() => {
     if (isOpen) {
@@ -80,8 +93,7 @@ export const Modal: React.FC<ModalProps> = ({
       <div
         className={cn(
           'fixed inset-0 z-0 transition-all duration-300',
-          'bg-gradient-to-br from-black/50 via-black/40 to-black/50',
-          'backdrop-blur-md',
+          'bg-[color:var(--app-surface)]/80',
           isAnimating ? 'opacity-100' : 'opacity-0'
         )}
         onClick={onClose}
@@ -101,14 +113,13 @@ export const Modal: React.FC<ModalProps> = ({
             'relative w-full flex flex-col',
             size === 'full' ? 'max-h-[calc(100vh-2rem)] sm:max-h-[calc(100vh-3rem)]' : 'max-h-[85vh]',
             // 背景和边框
-            'bg-white/95 dark:bg-[#1a1a24]/95',
-            'backdrop-blur-xl',
-            'border border-white/20 dark:border-white/10',
+            'bg-[var(--app-surface)]',
+            'border border-[var(--app-border)]',
             // 圆角 + 裁剪滚动条
-            'rounded-3xl overflow-hidden',
+            'overflow-hidden rounded-[var(--app-radius-modal)]',
             // 阴影 - 多层次
-            'shadow-[0_0_0_1px_rgba(0,0,0,0.03),0_2px_4px_rgba(0,0,0,0.05),0_12px_24px_rgba(0,0,0,0.09)]',
-            'dark:shadow-[0_0_0_1px_rgba(255,255,255,0.05),0_2px_4px_rgba(0,0,0,0.2),0_12px_24px_rgba(0,0,0,0.4)]',
+            'shadow-[var(--app-shadow-soft)]',
+            '',
             // 动画
             'transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]',
             isAnimating
@@ -118,22 +129,13 @@ export const Modal: React.FC<ModalProps> = ({
           )}
           onClick={(e) => e.stopPropagation()}
         >
-          {/* 顶部光晕效果 */}
-          <div className="absolute -top-px left-8 right-8 h-px bg-gradient-to-r from-transparent via-cyan-400/50 to-transparent" />
-
-          {/* 内部光晕 */}
-          <div className="absolute inset-0 rounded-3xl overflow-hidden pointer-events-none">
-            <div className="absolute -top-32 -left-32 w-64 h-64 bg-cyan-400/10 dark:bg-cyan-400/5 rounded-full blur-3xl" />
-            <div className="absolute -bottom-32 -right-32 w-64 h-64 bg-emerald-300/10 dark:bg-emerald-300/5 rounded-full blur-3xl" />
-          </div>
-
           {/* 标题栏 */}
           {title && (
             <div className="relative flex-shrink-0 px-7 pt-7 pb-5">
               <h2
                 id="modal-title"
                 className={cn(
-                  'text-xl font-semibold text-gray-900 dark:text-white tracking-tight',
+                  'text-xl font-semibold text-[var(--app-text)]',
                   showCloseButton || headerActions ? 'pr-24' : ''
                 )}
               >
@@ -156,26 +158,24 @@ export const Modal: React.FC<ModalProps> = ({
           {/* 关闭按钮 */}
           {showCloseButton && (
             <button
+              type="button"
+              ref={closeButtonRef}
               onClick={onClose}
               className={cn(
                 'absolute z-20 group',
-                'w-9 h-9 flex items-center justify-center',
-                'rounded-xl',
-                'text-gray-400 dark:text-gray-500',
-                'hover:text-gray-600 dark:hover:text-gray-300',
-                'hover:bg-gray-100/80 dark:hover:bg-white/10',
+                'w-10 h-10 flex items-center justify-center',
+                'rounded-[var(--app-radius-control)]',
+                'text-[var(--app-text-tertiary)]',
+                'hover:text-[var(--app-text)]',
+                'hover:bg-[var(--app-surface-hover)]',
                 'active:scale-95',
                 'transition-all duration-150',
-                'focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-[#1a1a24]',
+                'focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--app-accent-soft)]',
                 title ? 'top-5 right-5' : 'top-4 right-4'
               )}
               aria-label="关闭"
             >
-              <X
-                size={18}
-                strokeWidth={2}
-                className="transition-transform duration-150 group-hover:scale-110"
-              />
+              <X size={18} strokeWidth={2} />
             </button>
           )}
 
@@ -184,15 +184,12 @@ export const Modal: React.FC<ModalProps> = ({
             className={cn(
               'relative px-7 pb-7 overflow-y-auto flex-1',
               size === 'full' ? 'max-h-[calc(100vh-8rem)]' : 'max-h-[85vh]',
-              'scrollbar-thin scrollbar-thumb-gray-300 dark:scrollbar-thumb-gray-600',
+              'scrollbar-thin scrollbar-thumb-[var(--app-border-strong)]',
               title ? '' : 'pt-7'
             )}
           >
             {children}
           </div>
-
-          {/* 底部边框光晕 */}
-          <div className="absolute -bottom-px left-8 right-8 h-px bg-gradient-to-r from-transparent via-white/20 dark:via-white/10 to-transparent" />
         </div>
       </div>
     </div>,

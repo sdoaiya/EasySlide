@@ -19,7 +19,6 @@ STRING_COLUMNS = (
     "api_key",
     "mineru_token",
     "baidu_api_key",
-    "elevenlabs_api_key",
     "text_api_key",
     "image_api_key",
     "image_caption_api_key",

@@ -143,7 +143,8 @@ describe('native deck offline HTML export', () => {
     expect(html).toContain('--native-element-stagger')
     expect(html).toContain('--native-element-easing')
     expect(html).toContain('ease-in-out')
-    const playerScript = html.split('<script>').at(-1)?.split('</script>')[0]
+    const scripts = html.split('<script>')
+    const playerScript = scripts[scripts.length - 1]?.split('</script>')[0]
     expect(playerScript).toBeTruthy()
     expect(() => new Function(playerScript!)).not.toThrow()
   })

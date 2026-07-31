@@ -105,6 +105,19 @@ BAIDU_API_KEY=your-baidu-api-key
 
 从百度智能云[申请 IAM API Key](https://console.bce.baidu.com/iam/#/iam/apikey/list)。
 
+## Fish Audio 旁白
+
+讲解视频可使用 Fish Audio `s2.1-pro-free` 合成克隆声音。推荐在「设置 → Fish Audio」中保存并测试 Key；也可通过环境变量配置：
+
+```env
+FISH_AUDIO_API_KEY=your-fish-audio-api-key
+FISH_AUDIO_MODEL=s2.1-pro-free
+```
+
+Key 会加密存储，接口响应、任务恢复参数和音频缓存键均不会包含 Key。模型和官方 API 地址由应用固定，不能在前端改写。
+
+详见 [Fish Audio 旁白与语音克隆](/zh/features/fish-audio)。
+
 ## 运行时设置覆盖
 
 以上所有配置也可通过网页设置页面进行配置。通过设置页面配置的参数会存储在数据库中，优先级高于 `.env`。点击"还原默认设置"可恢复为 `.env` 中的值。

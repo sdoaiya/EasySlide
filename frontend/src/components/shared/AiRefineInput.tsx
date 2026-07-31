@@ -83,19 +83,19 @@ const AiRefineInputComponent: React.FC<AiRefineInputProps> = ({
   const isCompactMode = !title;
 
   return (
-    <div className={isCompactMode ? `group ${className}` : `group bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg p-3 md:p-4 border border-purple-200 ${className}`}>
+    <div className={isCompactMode ? `group ${className}` : `group rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)] p-3 shadow-[var(--app-shadow-soft)] md:p-4 ${className}`}>
       {/* 标题和历史按钮 - 仅非紧凑模式显示 */}
       {!isCompactMode && (
         <div className="flex items-center justify-between mb-2 md:mb-3">
           <div className="flex items-center gap-2">
-            <Sparkles size={16} className="text-purple-600 md:w-[18px] md:h-[18px]" />
-            <h3 className="text-xs md:text-sm font-semibold text-gray-800 dark:text-foreground-primary">{title}</h3>
-            <span className="text-xs text-gray-500 dark:text-foreground-tertiary hidden sm:inline">{t('aiRefine.ctrlEnterSubmit')}</span>
+            <Sparkles size={16} className="text-[var(--app-accent)] md:w-[18px] md:h-[18px]" />
+            <h3 className="text-xs font-semibold text-[var(--app-text)] md:text-sm">{title}</h3>
+            <span className="hidden text-xs text-[var(--app-text-tertiary)] sm:inline">{t('aiRefine.ctrlEnterSubmit')}</span>
           </div>
           {history.length > 0 && (
             <button
               onClick={() => setShowHistory(!showHistory)}
-              className="flex items-center gap-1 text-xs text-purple-600 hover:text-purple-800 transition-colors"
+              className="flex items-center gap-1 text-xs text-[var(--app-accent)] transition-colors hover:text-[var(--app-accent-strong)]"
             >
               <History size={14} />
               <span className="hidden sm:inline">{t('aiRefine.history')} ({history.length})</span>
@@ -108,12 +108,12 @@ const AiRefineInputComponent: React.FC<AiRefineInputProps> = ({
       
       {/* 历史记录展示 */}
       {showHistory && history.length > 0 && (
-        <div className={`${isCompactMode ? 'mb-2' : 'mb-3'} p-2 bg-white dark:bg-background-secondary rounded border ${isCompactMode ? 'border-gray-200 dark:border-border-primary shadow-sm dark:shadow-background-primary/30' : 'bg-white/60 border-purple-100'} max-h-32 overflow-y-auto`}>
-          <div className="text-xs text-gray-500 dark:text-foreground-tertiary mb-1">{t('aiRefine.previousRequirements')}</div>
+        <div className={`${isCompactMode ? 'mb-2' : 'mb-3'} max-h-32 overflow-y-auto rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] p-2 shadow-[var(--app-shadow-soft)]`}>
+          <div className="mb-1 text-xs text-[var(--app-text-tertiary)]">{t('aiRefine.previousRequirements')}</div>
           <ul className="space-y-1">
             {history.map((req, idx) => (
-              <li key={idx} className="text-xs text-gray-700 dark:text-foreground-secondary flex items-start gap-1">
-                <span className="text-purple-400 flex-shrink-0">{idx + 1}.</span>
+              <li key={idx} className="flex items-start gap-1 text-xs text-[var(--app-text-secondary)]">
+                <span className="flex-shrink-0 text-[var(--app-accent)]">{idx + 1}.</span>
                 <span className="break-all">{req}</span>
               </li>
             ))}
@@ -125,11 +125,11 @@ const AiRefineInputComponent: React.FC<AiRefineInputProps> = ({
         {/* 紧凑模式下显示图标和历史按钮 */}
         {isCompactMode && (
           <>
-            <Sparkles size={16} className={`flex-shrink-0 transition-colors ${isSubmitting ? 'text-purple-500' : 'text-purple-600'}`} />
+            <Sparkles size={16} className={`flex-shrink-0 transition-colors ${isSubmitting ? 'text-[var(--app-accent-strong)]' : 'text-[var(--app-accent)]'}`} />
             {history.length > 0 && (
               <button
                 onClick={() => setShowHistory(!showHistory)}
-                className="flex items-center gap-1 text-xs text-gray-500 dark:text-foreground-tertiary hover:text-purple-600 transition-colors flex-shrink-0"
+                className="flex flex-shrink-0 items-center gap-1 text-xs text-[var(--app-text-tertiary)] transition-colors hover:text-[var(--app-accent)]"
                 title={t('aiRefine.viewHistory', { count: history.length })}
               >
                 <History size={14} />
@@ -146,15 +146,14 @@ const AiRefineInputComponent: React.FC<AiRefineInputProps> = ({
             onChange={(e) => setRequirement(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={placeholder}
-            className={`w-full px-3 py-1.5 text-sm border ${isCompactMode ? 'border-gray-200 dark:border-border-primary' : 'border-gray-300 dark:border-border-primary'} rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all ${
-              isSubmitting ? 'animate-gradient-x bg-gradient-to-r from-purple-100 via-purple-200 to-purple-100 bg-[length:200%_100%]' : 'bg-white dark:bg-background-secondary'
+            className={`w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] px-3 py-1.5 text-sm text-[var(--app-text)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--app-accent-soft)] ${
+              isSubmitting ? 'bg-[var(--app-surface-hover)]' : 'bg-[var(--app-surface)]'
             }`}
             disabled={isSubmitting}
           />
           {isSubmitting && (
-            <div className="absolute inset-0 rounded-lg overflow-hidden pointer-events-none">
-              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-purple-300/30 to-transparent animate-shimmer" 
-                   style={{ backgroundSize: '200% 100%' }} />
+            <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-[var(--app-radius-control)]">
+              <div className="absolute inset-x-3 bottom-0 h-px animate-pulse bg-[var(--app-accent)]" />
             </div>
           )}
         </div>
@@ -163,10 +162,10 @@ const AiRefineInputComponent: React.FC<AiRefineInputProps> = ({
         <button
           onClick={handleSubmit}
           disabled={!requirement.trim() || isSubmitting}
-          className={`flex-shrink-0 w-9 h-9 flex items-center justify-center rounded-lg transition-all ${
+          className={`flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-[var(--app-radius-control)] transition-all ${
             !requirement.trim() || isSubmitting
-              ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
-              : 'bg-purple-500 text-white hover:bg-purple-600 active:scale-95'
+              ? 'cursor-not-allowed bg-[var(--app-surface-hover)] text-[var(--app-text-tertiary)]'
+              : 'bg-[var(--app-primary-action)] text-[var(--app-surface)] hover:bg-[var(--app-primary-action-hover)] active:scale-95'
           } md:opacity-0 md:group-hover:opacity-100 md:focus:opacity-100`}
           title={t('aiRefine.submitTooltip')}
         >

@@ -28,10 +28,11 @@ const contract: NativeLayoutContract = {
 
 describe('NativeDeckPropertyPanel DashiAI fields', () => {
   function openLayer(name: '页面' | '内容' | '媒体' | '结构' | '视觉' | '动效') {
-    fireEvent.click(screen.getByRole('tab', { name }))
+    const mapped = name === '媒体' ? '图片' : name === '视觉' || name === '动效' ? '设计' : '内容'
+    fireEvent.click(screen.getByRole('tab', { name: mapped }))
   }
 
-  it('separates crowded settings into page, content, media, structure, visual, and motion layers', () => {
+  it('groups page fields into content, design, and image layers', () => {
     render(
       <NativeDeckPropertyPanel
         slide={{
@@ -55,21 +56,21 @@ describe('NativeDeckPropertyPanel DashiAI fields', () => {
       />,
     )
 
-    expect(screen.getByRole('tab', { name: '页面' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: '内容' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByText('页面设置')).toBeInTheDocument()
     expect(screen.getByLabelText('页面角色')).toHaveValue('process')
     expect(screen.getByText('已生成')).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: '内容' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: '媒体' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: '结构' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: '视觉' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: '动效' })).toBeInTheDocument()
-    expect(screen.queryByText('文字与数据')).not.toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: '图片' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: '设计' })).toBeInTheDocument()
+    expect(screen.getAllByRole('tab')).toHaveLength(3)
+    expect(screen.getByText('文字与数据')).toBeInTheDocument()
+    expect(screen.getByLabelText('title')).toHaveValue('路线图')
     expect(screen.queryByText('页面动效')).not.toBeInTheDocument()
 
     openLayer('内容')
+    expect(screen.getByText('页面设置')).toBeInTheDocument()
     expect(screen.getByText('文字与数据')).toBeInTheDocument()
-    expect(screen.queryByText('页面设置')).not.toBeInTheDocument()
 
     openLayer('动效')
     expect(screen.getByText('页面动效')).toBeInTheDocument()
@@ -201,15 +202,6 @@ describe('NativeDeckPropertyPanel DashiAI fields', () => {
       />,
     )
 
-    openLayer('内容')
-    fireEvent.change(screen.getByLabelText('phases 1 heading'), { target: { value: '试点阶段' } })
-    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({
-      phases: [
-        { heading: '试点阶段', points: ['验证需求'] },
-        { heading: '第二阶段', points: ['规模推广'] },
-      ],
-    }))
-
     openLayer('结构')
     fireEvent.click(screen.getByLabelText('重点强调'))
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ highlight: false }))
@@ -335,9 +327,10 @@ describe('NativeDeckPropertyPanel DashiAI fields', () => {
       />,
     )
 
-    expect(screen.getByRole('tab', { name: '页面' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: '内容' })).toHaveAttribute('aria-selected', 'true')
     openLayer('媒体')
     const mediaHeading = screen.getByText('图片内容')
+    expect(mediaHeading).toBeInTheDocument()
     expect(screen.queryByLabelText('title')).not.toBeInTheDocument()
     expect(screen.getByAltText('images 1')).toHaveAttribute('src', '/files/old.png')
     fireEvent.change(screen.getByLabelText('images 1 图片要求'), { target: { value: '主体靠右' } })

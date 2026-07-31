@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, FileText, ChevronRight, Trash2, Pencil } from 'lucide-react';
+import { Clock, Download, FileText, ChevronRight, Trash2, Pencil, Film, Mic2, MoreHorizontal, Presentation } from 'lucide-react';
 import { useT } from '@/hooks/useT';
 import { Card } from '@/components/shared';
 import { getProjectTitle, getFirstPageImage, formatDate, getStatusText, getStatusColor } from '@/utils/projectUtils';
@@ -39,11 +39,13 @@ export interface ProjectCardProps {
   onSelect: (project: Project) => void;
   onToggleSelect: (projectId: string) => void;
   onDelete: (e: React.MouseEvent, project: Project) => void;
+  onExport: (e: React.MouseEvent, project: Project) => void;
   onStartEdit: (e: React.MouseEvent, project: Project) => void;
   onTitleChange: (title: string) => void;
   onTitleKeyDown: (e: React.KeyboardEvent, projectId: string) => void;
   onSaveEdit: (projectId: string) => void;
   isBatchMode: boolean;
+  layout?: 'list' | 'grid';
 }
 
 export const ProjectCard: React.FC<ProjectCardProps> = ({
@@ -54,11 +56,13 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
   onSelect,
   onToggleSelect,
   onDelete,
+  onExport,
   onStartEdit,
   onTitleChange,
   onTitleKeyDown,
   onSaveEdit,
   isBatchMode,
+  layout = 'list',
 }) => {
   const t = useT(projectCardI18n);
   // 检测屏幕尺寸，只在非手机端加载图片（必须在早期返回之前声明hooks）
@@ -94,30 +98,110 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
           : 'typeProject';
   
   const firstPageImage = shouldLoadImage ? getFirstPageImage(project) : null;
+  const initializedKinds = project.workspaces?.filter((workspace) => workspace.state !== 'uninitialized').map((workspace) => workspace.kind) || ['ppt'];
+  const workspaceBadges = [
+    { kind: 'ppt', label: 'PPT', icon: Presentation },
+    { kind: 'video', label: '视频', icon: Film },
+    { kind: 'podcast', label: '播客', icon: Mic2 },
+  ].filter((item) => initializedKinds.includes(item.kind as 'ppt' | 'video' | 'podcast'));
+  const handleOpenKeyDown = (event: React.KeyboardEvent) => {
+    if (isBatchMode || isEditing) return;
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    if ((event.target as HTMLElement).closest('button,input')) return;
+    event.preventDefault();
+    onSelect(project);
+  };
 
+  if (layout === 'grid') {
+    return (
+      <Card
+        className={`group relative overflow-hidden p-0 transition-[background-color,border-color,box-shadow,transform] motion-safe:hover:-translate-y-[3px] motion-safe:focus-visible:-translate-y-[3px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)] ${
+          isSelected
+            ? 'border-[var(--app-accent)] bg-[var(--app-accent-blue-soft)] shadow-[var(--app-shadow-soft)]'
+            : 'border-[var(--app-border)] bg-[var(--app-surface)] hover:border-[var(--app-border-strong)] hover:shadow-[var(--app-shadow-medium)]'
+        } ${isBatchMode ? 'cursor-default' : 'cursor-pointer'}`}
+        onClick={() => onSelect(project)}
+      >
+        <div className={`absolute left-3 top-3 z-10 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100 ${isSelected || isBatchMode ? 'opacity-100' : 'opacity-0'}`} onClick={(event) => event.stopPropagation()}>
+          <input type="checkbox" checked={isSelected} onChange={() => onToggleSelect(projectId)} aria-label={title} className="h-4 w-4 cursor-pointer rounded border-[var(--app-border)] text-[var(--app-accent)] focus-visible:ring-[var(--app-accent-soft)]" />
+        </div>
+        <div className="absolute right-3 top-3 z-10 rounded-[var(--app-radius-control)] bg-[var(--app-surface)] px-2 py-1 text-xs font-medium shadow-[var(--app-shadow-card)]">
+          <span className={statusColor}>{statusText}</span>
+        </div>
+        <div className="aspect-video overflow-hidden border-b border-[var(--app-border)] bg-[var(--app-surface-muted)]">
+          {firstPageImage ? (
+            <img src={firstPageImage} alt={t('projectCard.page', { num: 1 })} className="h-full w-full object-cover" />
+          ) : (
+            <div className="relative flex h-full items-center justify-center bg-[var(--app-surface-muted)] text-[var(--app-text-tertiary)]">
+              <span aria-hidden="true" className="absolute inset-x-0 top-0 flex h-1"><i className="flex-1 bg-[var(--app-error)]" /><i className="flex-1 bg-[var(--app-accent-amber)]" /><i className="flex-1 bg-[var(--app-success)]" /></span>
+              <span className="flex h-14 w-11 items-center justify-center border border-[var(--app-border)] bg-[var(--app-surface)] shadow-[4px_4px_0_var(--app-border)]"><FileText size={22} aria-hidden="true" /></span>
+            </div>
+          )}
+        </div>
+        <div className="p-4">
+          <div className="flex min-h-7 items-start gap-2">
+            {isEditing ? (
+              <input type="text" value={editingTitle} onChange={(event) => onTitleChange(event.target.value)} onKeyDown={(event) => onTitleKeyDown(event, projectId)} onBlur={() => onSaveEdit(projectId)} autoFocus className="min-w-0 flex-1 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 py-1 text-[15px] font-semibold text-[var(--app-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)]" onClick={(event) => event.stopPropagation()} />
+            ) : (
+              <h3
+                role={isBatchMode ? undefined : 'button'}
+                tabIndex={isBatchMode ? undefined : 0}
+                aria-label={isBatchMode ? undefined : title}
+                onKeyDown={handleOpenKeyDown}
+                className="min-w-0 flex-1 truncate text-left text-[15px] font-semibold text-[var(--app-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)]"
+                title={title}
+              >
+                {title}
+              </h3>
+            )}
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-[var(--app-text-secondary)]">
+            {workspaceBadges.map(({ kind, label, icon: Icon }) => <span key={kind} className="flex items-center gap-1 rounded-[var(--app-radius-control)] bg-[var(--app-surface-muted)] px-2 py-1 font-medium"><Icon size={12} />{label}</span>)}
+            {pageCount > 0 && <span className="flex items-center gap-1"><FileText size={14} />{t('projectCard.pages', { count: pageCount })}</span>}
+            <span className="flex items-center gap-1"><Clock size={14} className="text-[var(--app-accent-amber)]" />{formatDate(project.updated_at || project.created_at)}</span>
+          </div>
+          <div className={`relative mt-3 flex items-center justify-end gap-1 border-t border-[var(--app-border)] pt-2 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100 ${isSelected ? 'opacity-100' : 'opacity-0'}`}>
+            <button type="button" onClick={(event) => onStartEdit(event, project)} className="flex h-10 w-10 items-center justify-center rounded-[var(--app-radius-control)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)] [@media(hover:none)]:hidden" aria-label={t('common.edit')} title={t('common.edit')}><Pencil size={16} /></button>
+            <button type="button" onClick={(event) => onExport(event, project)} className="flex h-10 w-10 items-center justify-center rounded-[var(--app-radius-control)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)] [@media(hover:none)]:hidden" aria-label="导出" title="导出"><Download size={16} /></button>
+            <button type="button" onClick={(event) => onDelete(event, project)} className="flex h-10 w-10 items-center justify-center rounded-[var(--app-radius-control)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-error)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)] [@media(hover:none)]:hidden" aria-label={t('common.delete')} title={t('common.delete')}><Trash2 size={16} /></button>
+            <details className="group/more hidden [@media(hover:none)]:block" onClick={(event) => event.stopPropagation()}>
+              <summary role="button" className="flex h-10 w-10 list-none items-center justify-center rounded-[var(--app-radius-control)] text-[var(--app-text-secondary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)]" aria-label="更多操作"><MoreHorizontal size={17} /></summary>
+              <div role="menu" className="absolute bottom-11 right-0 z-20 min-w-28 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] p-1 shadow-[var(--app-shadow-medium)]">
+                <button type="button" role="menuitem" onClick={(event) => onStartEdit(event, project)} className="flex h-10 w-full items-center gap-2 rounded-[var(--app-radius-control)] px-3 text-sm hover:bg-[var(--app-surface-hover)]"><Pencil size={15} />{t('common.edit')}</button>
+                <button type="button" role="menuitem" onClick={(event) => onExport(event, project)} className="flex h-10 w-full items-center gap-2 rounded-[var(--app-radius-control)] px-3 text-sm hover:bg-[var(--app-surface-hover)]"><Download size={15} />导出</button>
+                <button type="button" role="menuitem" onClick={(event) => onDelete(event, project)} className="flex h-10 w-full items-center gap-2 rounded-[var(--app-radius-control)] px-3 text-sm text-[var(--app-error)] hover:bg-[var(--app-surface-hover)]"><Trash2 size={15} />{t('common.delete')}</button>
+              </div>
+            </details>
+            <ChevronRight size={18} className="ml-1 text-[var(--app-text-tertiary)]" />
+          </div>
+        </div>
+      </Card>
+    );
+  }
   return (
     <Card
-      className={`p-4 md:p-5 rounded-[18px] transition-all shadow-sm hover:shadow-[0_18px_45px_rgba(15,23,42,0.10)] ${
+      className={`group p-3 transition-[background-color,border-color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)] ${
         isSelected 
-          ? 'border-2 border-blue-400 bg-sky-50 dark:bg-background-secondary' 
-          : 'border border-slate-200 bg-white dark:border-border-primary'
+          ? 'border-[var(--app-accent)] bg-[var(--app-accent-blue-soft)] shadow-[var(--app-shadow-soft)]'
+          : 'border-[var(--app-border)] bg-[var(--app-surface)] hover:border-[var(--app-border-strong)] hover:bg-[var(--app-surface-hover)]'
       } ${isBatchMode ? 'cursor-default' : 'cursor-pointer'}`}
       onClick={() => onSelect(project)}
     >
-      <div className="flex items-start gap-3 md:gap-5">
+      <div className="flex items-start gap-3">
         {/* 复选框 */}
         <div className="pt-2 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
           <input
             type="checkbox"
             checked={isSelected}
             onChange={() => onToggleSelect(projectId)}
-            className="w-4 h-4 text-blue-600 border-slate-300 dark:border-border-primary rounded focus:ring-blue-500 cursor-pointer"
+            aria-label={title}
+            className="h-4 w-4 cursor-pointer rounded border-[var(--app-border)] text-[var(--app-accent)] focus-visible:ring-[var(--app-accent-soft)]"
           />
         </div>
         
         {/* 中间：项目信息 */}
         <div className="flex-1 min-w-0 py-1">
-          <div className="flex items-center gap-2 md:gap-3 mb-4 flex-wrap">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
             {isEditing ? (
               <input
                 type="text"
@@ -126,18 +210,17 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                 onKeyDown={(e) => onTitleKeyDown(e, projectId)}
                 onBlur={() => onSaveEdit(projectId)}
                 autoFocus
-                className="text-lg md:text-xl font-bold text-slate-950 dark:text-foreground-primary px-2 py-1 border border-blue-400 rounded bg-white dark:bg-background-primary focus:outline-none focus:ring-2 focus:ring-blue-500 flex-1 min-w-0"
+                className="min-w-0 flex-1 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 py-1 text-[15px] font-semibold text-[var(--app-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)]"
                 onClick={(e) => e.stopPropagation()}
               />
             ) : (
-              <h3 
-                className={`text-lg md:text-xl font-bold text-slate-950 dark:text-foreground-primary truncate flex-1 min-w-0 ${
-                  isBatchMode 
-                    ? 'cursor-default' 
-                    : 'cursor-pointer hover:text-blue-600 transition-colors'
-                }`}
-                onClick={(e) => onStartEdit(e, project)}
-                title={isBatchMode ? undefined : t('common.edit')}
+              <h3
+                role={isBatchMode ? undefined : 'button'}
+                tabIndex={isBatchMode ? undefined : 0}
+                aria-label={isBatchMode ? undefined : title}
+                onKeyDown={handleOpenKeyDown}
+                className="min-w-0 flex-1 truncate rounded-[var(--app-radius-control)] text-left text-[15px] font-semibold text-[var(--app-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)]"
+                title={title}
               >
                 {title}
               </h3>
@@ -146,23 +229,23 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
               {statusText}
             </span>
           </div>
-          <div className="flex items-center gap-3 md:gap-5 text-sm md:text-base text-slate-500 dark:text-foreground-tertiary flex-wrap">
-            <span className="rounded-full bg-sky-50 px-3 py-1 text-sm font-medium text-sky-700">
+          <div className="flex flex-wrap items-center gap-3 text-xs text-[var(--app-text-secondary)] md:gap-4">
+            <span className="rounded-[var(--app-radius-control)] bg-[var(--app-surface-muted)] px-2 py-1 font-medium text-[var(--app-text-secondary)]">
               {t(`projectCard.${typeKey}`)}
             </span>
             <span className="flex items-center gap-1.5">
-              <FileText size={16} className="text-blue-600" />
+              <FileText size={16} className="text-[var(--app-accent)]" />
               {t('projectCard.pages', { count: pageCount })}
             </span>
             <span className="flex items-center gap-1.5">
-              <Clock size={16} className="text-orange-500" />
+              <Clock size={16} className="text-[var(--app-accent-amber)]" />
               {formatDate(project.updated_at || project.created_at)}
             </span>
           </div>
         </div>
         
         {/* 右侧：图片预览 */}
-        <div className="hidden sm:block w-44 h-24 md:w-72 md:h-36 rounded-xl overflow-hidden bg-slate-100 dark:bg-background-secondary border border-slate-200 dark:border-border-primary flex-shrink-0">
+        <div className="hidden aspect-video w-40 flex-shrink-0 overflow-hidden rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface-muted)] sm:block md:w-48">
           {firstPageImage ? (
             <img
               src={firstPageImage}
@@ -170,8 +253,8 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
               className="w-full h-full object-cover"
             />
           ) : (
-            <div className="w-full h-full flex items-center justify-center text-gray-400">
-              <span className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-slate-500 shadow-sm ring-1 ring-slate-200">
+            <div className="flex h-full w-full items-center justify-center text-[var(--app-text-tertiary)]">
+              <span className="inline-flex h-12 w-12 items-center justify-center rounded-[var(--app-radius-card)] bg-[var(--app-surface)] text-[var(--app-text-secondary)] shadow-[var(--app-shadow-card)] ring-1 ring-[var(--app-border)]">
                 <FileText size={22} />
               </span>
             </div>
@@ -179,22 +262,35 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
         </div>
         
         {/* 右侧：操作按钮 */}
-        <div className="flex flex-col sm:flex-row items-center gap-2 sm:gap-3 flex-shrink-0 pt-1">
+        <div className={`flex flex-col sm:flex-row items-center gap-2 sm:gap-3 flex-shrink-0 pt-1 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100 ${isSelected ? 'opacity-100' : 'opacity-0'}`}>
           <button
+            type="button"
             onClick={(e) => onStartEdit(e, project)}
-            className="p-2 text-orange-500 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-colors"
+            className="flex h-10 w-10 items-center justify-center rounded-[var(--app-radius-control)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)]"
+            aria-label={t('common.edit')}
             title={t('common.edit')}
           >
             <Pencil size={16} className="md:w-[18px] md:h-[18px]" />
           </button>
           <button
+            type="button"
+            onClick={(e) => onExport(e, project)}
+            className="flex h-10 w-10 items-center justify-center rounded-[var(--app-radius-control)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)]"
+            aria-label="导出"
+            title="导出"
+          >
+            <Download size={16} className="md:w-[18px] md:h-[18px]" />
+          </button>
+          <button
+            type="button"
             onClick={(e) => onDelete(e, project)}
-            className="p-2 text-rose-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+            className="flex h-10 w-10 items-center justify-center rounded-[var(--app-radius-control)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-error)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)]"
+            aria-label={t('common.delete')}
             title={t('common.delete')}
           >
             <Trash2 size={16} className="md:w-[18px] md:h-[18px]" />
           </button>
-          <ChevronRight size={18} className="text-gray-400 md:w-5 md:h-5" />
+          <ChevronRight size={18} className="text-[var(--app-text-tertiary)] md:h-5 md:w-5" />
         </div>
       </div>
     </Card>

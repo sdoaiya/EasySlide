@@ -138,11 +138,20 @@ class Config:
     TTS_DEFAULT_VOICE_EN = os.getenv('TTS_DEFAULT_VOICE_EN', 'en-US-JennyNeural')
     TTS_DEFAULT_VOICE_JA = os.getenv('TTS_DEFAULT_VOICE_JA', 'ja-JP-NanamiNeural')
     TTS_DEFAULT_RATE = os.getenv('TTS_DEFAULT_RATE', '+0%')
+    FISH_AUDIO_API_KEY = os.getenv('FISH_AUDIO_API_KEY', '')
+    FISH_AUDIO_API_BASE = os.getenv('FISH_AUDIO_API_BASE', 'https://api.fish.audio')
+    FISH_AUDIO_MODEL = 's2.1-pro-free'
+    FISH_AUDIO_TTS_CONNECT_TIMEOUT = float(os.getenv('FISH_AUDIO_TTS_CONNECT_TIMEOUT', '15'))
+    FISH_AUDIO_TTS_READ_TIMEOUT = float(os.getenv('FISH_AUDIO_TTS_READ_TIMEOUT', '300'))
+    FISH_AUDIO_TTS_TOTAL_TIMEOUT = float(os.getenv('FISH_AUDIO_TTS_TOTAL_TIMEOUT', '360'))
     VIDEO_OUTPUT_WIDTH = int(os.getenv('VIDEO_OUTPUT_WIDTH', '1920'))
     VIDEO_OUTPUT_HEIGHT = int(os.getenv('VIDEO_OUTPUT_HEIGHT', '1080'))
     VIDEO_FPS = int(os.getenv('VIDEO_FPS', '25'))
     FFMPEG_PATH = os.getenv('FFMPEG_PATH', 'ffmpeg')
     DEFAULT_SILENT_CLIP_DURATION = float(os.getenv('DEFAULT_SILENT_CLIP_DURATION', '3.0'))
+    # Keep production opt-in until the pinned Hyperframes dependency audit is clean.
+    HYPERFRAMES_ENABLED = os.getenv('EASYSLIDE_HYPERFRAMES_ENABLED', '').lower() in {'1', 'true', 'yes'}
+    IMAGE_SCENE_ENABLED = os.getenv('EASYSLIDE_IMAGE_SCENE_ENABLED', '').lower() in {'1', 'true', 'yes'}
 
 
 class DevelopmentConfig(Config):

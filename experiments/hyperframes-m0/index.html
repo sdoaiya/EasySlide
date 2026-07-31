@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EasySlide Hyperframes M0</title>
+  <style>
+    @font-face { font-family: "PingFang SC"; src: local("PingFang SC"); }
+    @font-face { font-family: "Microsoft YaHei"; src: local("Microsoft YaHei"); }
+    @font-face { font-family: "Cascadia Mono"; src: local("Cascadia Mono"); }
+    :root { color-scheme: light; }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    body { background: #F5F5F7; font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; color: #1D1D1F; }
+    #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; background: #F5F5F7; }
+    .scene { position: absolute; inset: 0; width: 100%; height: 100%; padding: 112px 136px; overflow: hidden; background: #F5F5F7; }
+    #scene-chart, #scene-image { opacity: 0; }
+    .scene-content { display: flex; flex-direction: column; width: 100%; height: 100%; gap: 30px; }
+    .eyebrow { margin: 0; color: #007AFF; font-size: 28px; line-height: 1.2; font-weight: 700; }
+    h1, h2, p { margin: 0; }
+    h1 { max-width: 1500px; font-size: 112px; line-height: 1.04; letter-spacing: -0.045em; font-weight: 800; }
+    h2 { font-size: 74px; line-height: 1.08; letter-spacing: -0.035em; font-weight: 750; }
+    .muted { color: #5F5F66; font-size: 30px; line-height: 1.5; }
+    .rule { width: 100%; height: 2px; background: rgba(60, 60, 67, 0.18); transform-origin: left center; }
+    .meta { display: flex; justify-content: space-between; align-items: end; margin-top: auto; font-size: 24px; color: #5F5F66; }
+    .counter { font-family: ui-monospace, "Cascadia Mono", monospace; color: #007AFF; font-size: 38px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .chart-layout { display: grid; grid-template-columns: minmax(0, 0.72fr) minmax(0, 1.28fr); gap: 90px; flex: 1; min-height: 0; align-items: stretch; }
+    .chart-copy { display: flex; flex-direction: column; justify-content: space-between; padding: 18px 0 8px; }
+    .chart { display: flex; align-items: end; gap: 52px; padding: 76px 74px 58px; border: 1px solid rgba(60, 60, 67, 0.18); border-radius: 12px; background: #FFFFFF; }
+    .bar-group { display: flex; flex: 1; flex-direction: column; justify-content: end; gap: 18px; height: 100%; }
+    .bar { width: 100%; min-height: 80px; background: #007AFF; transform-origin: bottom center; }
+    .bar.secondary { background: #86868B; }
+    .bar-label { font-size: 22px; color: #5F5F66; text-align: center; }
+    .bar-value { font-family: ui-monospace, "Cascadia Mono", monospace; font-size: 30px; font-weight: 700; text-align: center; font-variant-numeric: tabular-nums; }
+    .image-layout { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr); gap: 86px; flex: 1; min-height: 0; align-items: center; }
+    .hero-image-shell { overflow: hidden; border: 1px solid rgba(60, 60, 67, 0.18); border-radius: 12px; background: #ECECF0; }
+    .hero-image { display: block; width: 100%; height: auto; }
+    .image-copy { display: flex; flex-direction: column; gap: 34px; }
+    .checklist { display: flex; flex-direction: column; gap: 22px; padding: 0; margin: 8px 0 0; list-style: none; font-size: 28px; color: #5F5F66; }
+    .checklist li { display: flex; gap: 18px; align-items: center; }
+    .checklist li::before { content: ""; width: 14px; height: 14px; border-radius: 50%; background: #007AFF; flex: 0 0 auto; }
+    .footer-index { position: absolute; right: 136px; bottom: 74px; font-family: ui-monospace, "Cascadia Mono", monospace; color: #5F5F66; font-size: 22px; }
+  </style>
+</head>
+<body>
+  <main id="root" data-composition-id="easyslide-m0" data-start="0" data-duration="12" data-track-index="0" data-width="1920" data-height="1080">
+    <section id="scene-title" class="scene clip" data-start="0" data-duration="4" data-track-index="1">
+      <div class="scene-content">
+        <p id="title-eyebrow" class="eyebrow">EASYSLIDE · M0 RENDER GATE</p>
+        <h1 id="title-main">让演示内容按旁白节奏真正运动</h1>
+        <div id="title-rule" class="rule"></div>
+        <div id="title-meta" class="meta"><span>原生结构 · 确定性时间线 · 可降级导出</span><span class="counter">01 / 03</span></div>
+      </div>
+    </section>
+
+    <section id="scene-chart" class="scene clip" data-start="3.6" data-duration="4.4" data-track-index="2">
+      <div class="scene-content">
+        <p id="chart-eyebrow" class="eyebrow">STRUCTURED DATA</p>
+        <div class="chart-layout">
+          <div class="chart-copy">
+            <h2 id="chart-title">图表不是截图，而是可独立编排的元素</h2>
+            <p id="chart-note" class="muted">同一份结构化数据同时驱动预览、关键帧与最终视频。</p>
+          </div>
+          <div id="chart-panel" class="chart">
+            <div class="bar-group"><div class="bar-value">42%</div><div id="bar-a" class="bar secondary" style="height:42%"></div><div class="bar-label">静态镜头</div></div>
+            <div class="bar-group"><div class="bar-value">68%</div><div id="bar-b" class="bar secondary" style="height:68%"></div><div class="bar-label">页面动效</div></div>
+            <div class="bar-group"><div class="bar-value">94%</div><div id="bar-c" class="bar" style="height:94%"></div><div class="bar-label">元素级同步</div></div>
+          </div>
+        </div>
+      </div>
+      <span class="footer-index">02 / 03</span>
+    </section>
+
+    <section id="scene-image" class="scene clip" data-start="7.6" data-duration="4.4" data-track-index="1">
+      <div class="scene-content">
+        <p id="image-eyebrow" class="eyebrow">LOCAL ASSET</p>
+        <div class="image-layout">
+          <div id="image-shell" class="hero-image-shell"><img id="hero-image" class="hero-image" src="assets/hero-visual.svg" alt="结构化演示页面示意图" /></div>
+          <div class="image-copy">
+            <h2 id="image-title">资源、字体和时间线都必须可复现</h2>
+            <ul class="checklist">
+              <li id="check-local">图片资源本地化</li>
+              <li id="check-stable">相同快照得到相同时序</li>
+              <li id="check-fallback">渲染失败回退现有帧序列</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <span class="footer-index">03 / 03</span>
+    </section>
+  </main>
+
+  <script src="assets/gsap.min.js"></script>
+  <script>
+    window.__timelines = window.__timelines || {};
+    const tl = gsap.timeline({ paused: true });
+
+    tl.from("#title-eyebrow", { x: -36, opacity: 0, duration: 0.38, ease: "expo.out" }, 0.2)
+      .from("#title-main", { y: 52, opacity: 0, duration: 0.72, ease: "power3.out" }, 0.34)
+      .from("#title-rule", { scaleX: 0, duration: 0.45, ease: "circ.out" }, 0.62)
+      .from("#title-meta", { x: 30, opacity: 0, duration: 0.34, ease: "back.out(1.2)" }, 0.72);
+
+    tl.fromTo("#scene-chart", { x: 110, opacity: 0 }, { x: 0, opacity: 1, duration: 0.4, ease: "power3.inOut" }, 3.6)
+      .from("#chart-eyebrow", { x: -30, opacity: 0, duration: 0.3, ease: "expo.out" }, 3.82)
+      .from("#chart-title", { y: 42, opacity: 0, duration: 0.62, ease: "power4.out" }, 3.94)
+      .from("#chart-note", { x: -24, opacity: 0, duration: 0.38, ease: "sine.out" }, 4.2)
+      .from("#chart-panel", { scale: 0.96, opacity: 0, duration: 0.52, ease: "back.out(1.15)" }, 4.04)
+      .from("#bar-a", { scaleY: 0, duration: 0.48, ease: "power2.out" }, 4.4)
+      .from("#bar-b", { scaleY: 0, duration: 0.62, ease: "circ.out" }, 4.5)
+      .from("#bar-c", { scaleY: 0, duration: 0.78, ease: "expo.out" }, 4.62);
+
+    tl.fromTo("#scene-image", { x: 110, opacity: 0 }, { x: 0, opacity: 1, duration: 0.4, ease: "power3.inOut" }, 7.6)
+      .from("#image-eyebrow", { x: -30, opacity: 0, duration: 0.3, ease: "expo.out" }, 7.82)
+      .from("#image-shell", { scale: 0.96, opacity: 0, duration: 0.68, ease: "power3.out" }, 7.92)
+      .from("#image-title", { y: 46, opacity: 0, duration: 0.58, ease: "back.out(1.12)" }, 8.04)
+      .from("#check-local", { x: 34, opacity: 0, duration: 0.34, ease: "power2.out" }, 8.4)
+      .from("#check-stable", { x: 34, opacity: 0, duration: 0.42, ease: "circ.out" }, 8.54)
+      .from("#check-fallback", { x: 34, opacity: 0, duration: 0.5, ease: "expo.out" }, 8.68)
+      .to("#scene-image", { opacity: 0, duration: 0.5, ease: "power2.in" }, 11.5);
+
+    window.__timelines["easyslide-m0"] = tl;
+  </script>
+</body>
+</html>

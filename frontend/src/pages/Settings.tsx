@@ -1,8 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
-import { Home, Key, Image, Zap, Save, RotateCcw, Globe, FileText, Brain, ArrowUp, HelpCircle, Link2, ChevronDown, Info, Settings as SettingsIcon, Sparkles, LayoutDashboard, FolderOpen, Box, ImagePlus, List } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Key, Image, Zap, Save, RotateCcw, Globe, FileText, Brain, HelpCircle, Link2, ChevronDown, Info, FolderOpen, List, RefreshCw, Trash2, Mic2, Plus, Upload } from 'lucide-react';
 import { useT } from '@/hooks/useT';
-import { getStaticAssetUrl } from '@/api/client';
 
 // 组件内翻译
 const settingsI18n = {
@@ -26,9 +24,8 @@ const settingsI18n = {
         textReasoning: "文本推理模式", imageReasoning: "图像推理模式",
         baiduOcr: "百度 Inpaint 配置", serviceTest: "服务测试", lazyllmConfig: "LazyLLM 厂商配置",
         vendorApiKeys: "厂商 API Key 配置",
-        exportConfig: "导出设置",
-        advancedSettings: "高级设置",
-        elevenlabs: "ElevenLabs 语音合成"
+        exportConfig: "导出设置", fishAudio: "语音与克隆",
+        advancedSettings: "高级设置"
       },
       openaiOAuth: {
         title: "OpenAI 授权连接",
@@ -66,6 +63,19 @@ const settingsI18n = {
         authRegionHint: "如果授权窗口显示 unsupported_country_region_territory，表示当前网络地区暂不支持 OpenAI 授权，请切换可用网络后重试，或改用 OpenAI API Key / 兼容地址配置。",
         openAuthPage: "打开授权页面",
         copyAuthLink: "复制授权链接",
+      },
+      fishAudio: {
+        title: "Fish Audio 语音与克隆", model: "固定模型", apiKey: "Fish Audio API Key",
+        keyPlaceholder: "输入新的 Fish Audio API Key", keySet: "已设置（长度: {{length}}）",
+        keyHint: "留空保持当前密钥不变", testConnection: "测试连接", connected: "连接成功",
+        verifyFailed: "连接测试失败", voices: "Fish 声音", refresh: "刷新声音", clone: "克隆声音",
+        publicVoices: "官方社区", privateVoices: "我的私有", emptyPublic: "暂无官方社区声音", emptyPrivate: "暂无私有声音",
+        loadFailed: "声音列表加载失败", cloneTitle: "创建私有克隆声音",
+        voiceName: "声音名称", sample: "声音样本", sampleHint: "选择 1-3 个 WAV、MP3、M4A、OPUS 或 FLAC 文件",
+        transcript: "样本文本（可选）", consent: "我确认已获得该声音的使用授权",
+        create: "创建私有声音", cloneFailed: "声音克隆失败", cloneSuccess: "克隆声音已创建",
+        delete: "删除声音", deleteConfirm: "确定删除声音“{{title}}”吗？", deleteSuccess: "声音已删除",
+        private: "私有", public: "官方社区", notConfigured: "保存 Key 后可管理声音"
       },
       theme: { label: "主题模式", light: "浅色", dark: "深色", system: "跟随系统" },
       language: { label: "界面语言", zh: "中文", en: "English" },
@@ -105,12 +115,9 @@ const settingsI18n = {
         textThinkingBudget: "文本思考负载", textThinkingBudgetDesc: "文本推理的思考 token 预算 (1-8192)，数值越大推理越深入",
         enableImageReasoning: "启用图像推理", enableImageReasoningDesc: "开启后，图像生成会使用思考链模式，可能获得更好的构图效果",
         imageThinkingBudget: "图像思考负载", imageThinkingBudgetDesc: "图像推理的思考 token 预算 (1-8192)，数值越大推理越深入",
+        enableImageQualityControl: "图片生成质量控制", enableImageQualityControlDesc: "生成后自动检查文字和画面，最多重试 3 次，通过后才保存",
         baiduOcrApiKey: "百度 Inpaint 服务 Key", baiduOcrApiKeyPlaceholder: "输入百度 Inpaint API Key",
         baiduOcrApiKeyDesc: "使用本机加密凭据保存；仅用于可编辑 PPTX 导出的百度图像修复 / Inpaint 服务。OCR 已内置 PaddleOCR-VL，无需填写 OCR Key",
-        elevenLabsEnabled: "启用 ElevenLabs 语音合成",
-        elevenLabsEnabledDesc: "开启后，视频导出将使用 ElevenLabs 代替 edge-tts 生成旁白音频，音质更自然",
-        elevenLabsApiKey: "ElevenLabs API Key", elevenLabsApiKeyPlaceholder: "输入 ElevenLabs API Key",
-        elevenLabsApiKeyDesc: "使用本机加密凭据保存；留空则保持当前设置不变，API Key 可在 ElevenLabs 控制台获取",
         applyLink: "，请点击此处申请",
         textModelSource: "文本模型提供商格式", textModelSourceDesc: "选择文本生成使用的提供商格式", textModelSourcePlaceholder: "-- 请选择 --",
         imageModelSource: "图片模型提供商格式", imageModelSourceDesc: "选择图片生成使用的提供商格式", imageModelSourcePlaceholder: "-- 请选择 --",
@@ -142,10 +149,21 @@ const settingsI18n = {
       },
       apiKeyTip: { before: "若使用 API Key 模式，可前往 ", linkLabel: "OpenAI Platform", after: " 创建和管理密钥" },
       exportPath: {
-        label: "导出路径",
-        description: "下载导出的文件会直接保存到此目录；应用重启后，后台生成导出文件也会使用此目录。",
+        label: "PPT/视频导出路径",
+        description: "下载的成品会保存到此目录；项目内部导出缓存仍保存在数据目录中，可在下方清理。",
         desktopOnly: "导出路径设置仅桌面版可用",
         notSet: "未读取到导出路径",
+      },
+      exportCache: {
+        title: "项目导出缓存",
+        description: "清理项目内部生成的 PPT、PDF、图片包和视频，不会删除已保存到导出路径的成品。",
+        action: "清理项目导出缓存",
+        confirmTitle: "确认清理导出缓存",
+        confirm: "清理后，任务中心中的旧导出文件将无法再次下载，但已保存到导出路径的成品不会受影响。确定继续吗？",
+        confirmAction: "确认清理",
+        success: "已清理 {{count}} 个文件，释放 {{size}}",
+        skipped: "{{count}} 个项目仍有导出任务，已跳过",
+        failed: "清理项目导出缓存失败",
       },
       serviceTest: {
         title: "服务测试", description: "提前验证关键服务配置是否可用，避免使用期间异常。",
@@ -197,9 +215,8 @@ const settingsI18n = {
         textReasoning: "Text Reasoning Mode", imageReasoning: "Image Reasoning Mode",
         baiduOcr: "Baidu Inpaint Configuration", serviceTest: "Service Test", lazyllmConfig: "LazyLLM Provider Configuration",
         vendorApiKeys: "Vendor API Key Configuration",
-        exportConfig: "Export Settings",
-        advancedSettings: "Advanced Settings",
-        elevenlabs: "ElevenLabs Text-to-Speech"
+        exportConfig: "Export Settings", fishAudio: "Voice & Cloning",
+        advancedSettings: "Advanced Settings"
       },
       openaiOAuth: {
         title: "OpenAI Authorization",
@@ -237,6 +254,19 @@ const settingsI18n = {
         authRegionHint: "If the authorization window shows unsupported_country_region_territory, the current network region does not support OpenAI authorization. Switch to a supported network, or use an API key / compatible endpoint.",
         openAuthPage: "Open authorization page",
         copyAuthLink: "Copy authorization link",
+      },
+      fishAudio: {
+        title: "Fish Audio Voice & Cloning", model: "Fixed model", apiKey: "Fish Audio API Key",
+        keyPlaceholder: "Enter a new Fish Audio API key", keySet: "Set (length: {{length}})",
+        keyHint: "Leave empty to keep the saved key", testConnection: "Test connection", connected: "Connected",
+        verifyFailed: "Connection test failed", voices: "Fish voices", refresh: "Refresh voices", clone: "Clone voice",
+        publicVoices: "Official community", privateVoices: "My private", emptyPublic: "No official community voices", emptyPrivate: "No private voices",
+        loadFailed: "Failed to load voices", cloneTitle: "Create private cloned voice",
+        voiceName: "Voice name", sample: "Voice samples", sampleHint: "Choose 1-3 WAV, MP3, M4A, OPUS, or FLAC files",
+        transcript: "Sample transcript (optional)", consent: "I confirm I have permission to use this voice",
+        create: "Create private voice", cloneFailed: "Voice cloning failed", cloneSuccess: "Cloned voice created",
+        delete: "Delete voice", deleteConfirm: "Delete voice “{{title}}”?", deleteSuccess: "Voice deleted",
+        private: "Private", public: "Official community", notConfigured: "Save an API key to manage voices"
       },
       theme: { label: "Theme", light: "Light", dark: "Dark", system: "System" },
       language: { label: "Interface Language", zh: "中文", en: "English" },
@@ -276,12 +306,9 @@ const settingsI18n = {
         textThinkingBudget: "Text Thinking Budget", textThinkingBudgetDesc: "Token budget for text reasoning (1-8192), higher values enable deeper reasoning",
         enableImageReasoning: "Enable Image Reasoning", enableImageReasoningDesc: "When enabled, image generation uses chain-of-thought mode for better composition",
         imageThinkingBudget: "Image Thinking Budget", imageThinkingBudgetDesc: "Token budget for image reasoning (1-8192), higher values enable deeper reasoning",
+        enableImageQualityControl: "Image Generation Quality Control", enableImageQualityControlDesc: "Review text and visuals after generation, retry up to 3 times, and save only after passing",
         baiduOcrApiKey: "Baidu Inpaint Service Key", baiduOcrApiKeyPlaceholder: "Enter Baidu Inpaint API Key",
         baiduOcrApiKeyDesc: "Saved with locally encrypted credentials. Only used for Baidu image repair / inpaint in editable PPTX export. OCR uses built-in PaddleOCR-VL and needs no OCR key.",
-        elevenLabsEnabled: "Enable ElevenLabs Text-to-Speech",
-        elevenLabsEnabledDesc: "When enabled, video export uses ElevenLabs instead of edge-tts for narration audio, providing more natural voice quality",
-        elevenLabsApiKey: "ElevenLabs API Key", elevenLabsApiKeyPlaceholder: "Enter ElevenLabs API Key",
-        elevenLabsApiKeyDesc: "Saved with locally encrypted credentials. Leave empty to keep the current setting. Get your API key from the ElevenLabs dashboard.",
         applyLink: ", click here to apply",
         textModelSource: "Text Model Provider Format", textModelSourceDesc: "Select the provider format for text generation", textModelSourcePlaceholder: "-- Select --",
         imageModelSource: "Image Model Provider Format", imageModelSourceDesc: "Select the provider format for image generation", imageModelSourcePlaceholder: "-- Select --",
@@ -313,10 +340,21 @@ const settingsI18n = {
       },
       apiKeyTip: { before: "For API key mode, create and manage keys in ", linkLabel: "OpenAI Platform", after: "" },
       exportPath: {
-        label: "Export Path",
-        description: "Downloaded export files are saved here directly. After restarting the app, backend export generation will also use this folder.",
+        label: "PPT/Video Export Path",
+        description: "Downloaded files are saved here. Internal project export caches remain in the data folder and can be cleared below.",
         desktopOnly: "Export path settings are only available in the desktop app",
         notSet: "Export path not loaded",
+      },
+      exportCache: {
+        title: "Project Export Cache",
+        description: "Remove internally generated PPT, PDF, image archive, and video files without deleting finished files saved to the export path.",
+        action: "Clear Project Export Cache",
+        confirmTitle: "Clear Export Cache?",
+        confirm: "Old export files in the task center will no longer be downloadable. Finished files saved to the export path will not be affected. Continue?",
+        confirmAction: "Clear Cache",
+        success: "Cleared {{count}} files and freed {{size}}",
+        skipped: "Skipped {{count}} projects with active export tasks",
+        failed: "Failed to clear project export cache",
       },
       serviceTest: {
         title: "Service Test", description: "Verify key service configurations before use to avoid issues.",
@@ -349,11 +387,11 @@ const settingsI18n = {
     }
   }
 };
-import { Button, Input, Card, Loading, Modal, useToast, useConfirm } from '@/components/shared';
+import { AppTopNav, Button, Input, Loading, Modal, useToast, useConfirm } from '@/components/shared';
 import * as api from '@/api/endpoints';
 import type { OutputLanguage } from '@/api/endpoints';
 import { OUTPUT_LANGUAGE_OPTIONS } from '@/api/endpoints';
-import type { Settings as SettingsType } from '@/types';
+import type { FishAudioVoice, FishAudioVoiceAsset, Settings as SettingsType } from '@/types';
 
 // 配置项类型定义
 type FieldType = 'text' | 'password' | 'number' | 'select' | 'buttons' | 'switch';
@@ -397,6 +435,7 @@ const LAZYLLM_SOURCES = [
   { value: 'sensenova', label: 'SenseNova (商汤)' },
   { value: 'minimax', label: 'MiniMax' },
   { value: 'openai', label: 'OpenAI' },
+  { value: 'volcengine', label: 'Volcengine Ark (火山引擎)' },
   { value: 'kimi', label: 'Kimi' },
 ];
 
@@ -409,7 +448,7 @@ const ALL_PROVIDER_SOURCES = [
 ];
 
 // 需要 API Key + Base URL 的提供商（非 LazyLLM 厂商）
-const API_KEY_PROVIDERS = new Set(['gemini', 'openai']);
+const API_KEY_PROVIDERS = new Set(['gemini', 'openai', 'volcengine']);
 
 // LazyLLM 厂商名集合
 const LAZYLLM_VENDOR_SET = new Set(LAZYLLM_SOURCES.map(s => s.value));
@@ -419,6 +458,7 @@ const initialFormData = {
   ai_provider_format: 'gemini' as string,
   api_base_url: '',
   api_key: '',
+  fish_audio_api_key: '',
   text_model: '',
   image_model: '',
   image_caption_model: '',
@@ -433,6 +473,7 @@ const initialFormData = {
   text_thinking_budget: 1024,
   enable_image_reasoning: false,
   image_thinking_budget: 1024,
+  enable_image_quality_control: false,
   baidu_api_key: '',
   // LazyLLM 配置
   text_model_source: '',
@@ -447,8 +488,6 @@ const initialFormData = {
   image_caption_api_key: '',
   image_caption_api_base_url: '',
   openai_image_api_protocol: 'auto',
-  // ElevenLabs TTS
-  elevenlabs_api_key: '',
 };
 
 type ModelType = 'text' | 'image' | 'image_caption';
@@ -487,7 +526,7 @@ const GlobalVendorKeyInput: React.FC<{
     ? t('settings.fields.vendorApiKeySet', { length: keyLength })
     : t('settings.fields.vendorApiKeyPlaceholder', { vendor: vendorLabel });
   return (
-    <div className="pl-3 border-l-2 border-cyan-200 dark:border-cyan-700">
+    <div className="pl-3 border-l-2 border-[var(--app-border-strong)]">
       <Input
         label={t('settings.fields.vendorApiKey', { vendor: vendorLabel })}
         type="password"
@@ -500,7 +539,7 @@ const GlobalVendorKeyInput: React.FC<{
           }));
         }}
       />
-      <p className="mt-1 text-sm text-gray-500 dark:text-foreground-tertiary">{t('settings.fields.vendorApiKeyDesc')}</p>
+      <p className="mt-1 text-sm text-[var(--app-text-tertiary)]">{t('settings.fields.vendorApiKeyDesc')}</p>
     </div>
   );
 };
@@ -509,6 +548,7 @@ const formDataFromSettings = (data: SettingsType): typeof initialFormData => ({
   ai_provider_format: resolveLazyllmVendor(data.ai_provider_format || 'gemini', data.lazyllm_api_keys_info),
   api_base_url: data.api_base_url || '',
   api_key: '',
+  fish_audio_api_key: '',
   image_resolution: data.image_resolution || '2K',
   max_description_workers: data.max_description_workers || 5,
   max_image_workers: data.max_image_workers || 4,
@@ -522,6 +562,7 @@ const formDataFromSettings = (data: SettingsType): typeof initialFormData => ({
   text_thinking_budget: data.text_thinking_budget || 1024,
   enable_image_reasoning: data.enable_image_reasoning || false,
   image_thinking_budget: data.image_thinking_budget || 1024,
+  enable_image_quality_control: data.enable_image_quality_control || false,
   baidu_api_key: '',
   text_model_source: data.text_model_source || '',
   image_model_source: data.image_model_source || '',
@@ -534,7 +575,6 @@ const formDataFromSettings = (data: SettingsType): typeof initialFormData => ({
   image_caption_api_key: '',
   image_caption_api_base_url: data.image_caption_api_base_url || '',
   openai_image_api_protocol: data.openai_image_api_protocol || 'auto',
-  elevenlabs_api_key: '',
 });
 
 const settingsPayloadFromResponse = (response: unknown): SettingsType | null => {
@@ -552,8 +592,11 @@ const apiErrorMessage = (error: unknown, fallback: string): string => {
   return payload?.message || err.message || fallback;
 };
 
-// Settings 组件 - 纯嵌入模式（可复用）
-export const Settings: React.FC = () => {
+type SettingsProps = {
+  embedded?: boolean;
+};
+
+export const Settings: React.FC<SettingsProps> = ({ embedded = false }) => {
   const t = useT(settingsI18n);
   const { show, ToastContainer } = useToast();
   const { confirm, ConfirmDialog } = useConfirm();
@@ -589,7 +632,20 @@ export const Settings: React.FC = () => {
   const [openAITextModels, setOpenAITextModels] = useState<string[]>([]);
   const [openAIImageModels, setOpenAIImageModels] = useState<string[]>([]);
   const [openAIModelsLoading, setOpenAIModelsLoading] = useState(false);
+  const [dataDir, setDataDir] = useState('');
   const [exportDir, setExportDir] = useState('');
+  const [isClearingExportCache, setIsClearingExportCache] = useState(false);
+  const [fishVoices, setFishVoices] = useState<FishAudioVoice[]>([]);
+  const [fishVoiceScope, setFishVoiceScope] = useState<'public' | 'private'>('public');
+  const [fishVoiceAssets, setFishVoiceAssets] = useState<FishAudioVoiceAsset[]>([]);
+  const [fishVoicesLoading, setFishVoicesLoading] = useState(false);
+  const [fishVerifyLoading, setFishVerifyLoading] = useState(false);
+  const [fishCloneOpen, setFishCloneOpen] = useState(false);
+  const [fishCloneTitle, setFishCloneTitle] = useState('');
+  const [fishCloneFiles, setFishCloneFiles] = useState<File[]>([]);
+  const [fishCloneTranscripts, setFishCloneTranscripts] = useState<string[]>([]);
+  const [fishCloneConsent, setFishCloneConsent] = useState(false);
+  const [fishCloneLoading, setFishCloneLoading] = useState(false);
   const [modelPicker, setModelPicker] = useState<ModelPickerState>({
     isOpen: false,
     modelKey: null,
@@ -598,28 +654,157 @@ export const Settings: React.FC = () => {
     loading: false,
     error: '',
   });
+  const openAIModelsRequestRef = useRef(0);
+  const modelPickerRequestRef = useRef(0);
+
+  const clearModelPicker = () => {
+    modelPickerRequestRef.current += 1;
+    setModelPicker({
+      isOpen: false,
+      modelKey: null,
+      label: '',
+      models: [],
+      loading: false,
+      error: '',
+    });
+  };
+
+  const clearOpenAIModelCache = () => {
+    openAIModelsRequestRef.current += 1;
+    setOpenAIModels([]);
+    setOpenAITextModels([]);
+    setOpenAIImageModels([]);
+    setOpenAIModelsLoading(false);
+  };
+
+  const refreshFishVoices = async (showError = true) => {
+    setFishVoicesLoading(true);
+    try {
+      const response = await api.getFishAudioVoices({
+        scope: fishVoiceScope,
+        sortBy: fishVoiceScope === 'public' ? 'task_count' : 'created_at',
+      });
+      setFishVoices(response.data?.voices || []);
+    } catch (error) {
+      if (showError) {
+        show({ message: apiErrorMessage(error, t('settings.fishAudio.loadFailed')), type: 'error' });
+      }
+    } finally {
+      setFishVoicesLoading(false);
+    }
+  };
+
+  const handleVerifyFishAudio = async () => {
+    setFishVerifyLoading(true);
+    try {
+      const response = await api.verifyFishAudio(formData.fish_audio_api_key || undefined);
+      if (response.data?.connected) {
+        show({ message: `${t('settings.fishAudio.connected')} · ${response.data.model}`, type: 'success' });
+      }
+    } catch (error) {
+      show({ message: apiErrorMessage(error, t('settings.fishAudio.verifyFailed')), type: 'error' });
+    } finally {
+      setFishVerifyLoading(false);
+    }
+  };
+
+  const resetFishCloneForm = () => {
+    setFishCloneTitle('');
+    setFishCloneFiles([]);
+    setFishCloneTranscripts([]);
+    setFishCloneConsent(false);
+  };
+
+  const handleCreateFishVoice = async () => {
+    if (!fishCloneTitle.trim() || fishCloneFiles.length === 0 || !fishCloneConsent) return;
+    setFishCloneLoading(true);
+    try {
+      const response = await api.createFishAudioVoice({
+        title: fishCloneTitle.trim(),
+        files: fishCloneFiles,
+        transcripts: fishCloneTranscripts,
+        consentConfirmed: fishCloneConsent,
+      });
+      if (response.data) {
+        setFishVoices((current) => [response.data!, ...current.filter((voice) => voice.id !== response.data!.id)]);
+        setFishVoiceScope('private');
+      }
+      setFishCloneOpen(false);
+      resetFishCloneForm();
+      show({ message: t('settings.fishAudio.cloneSuccess'), type: 'success' });
+    } catch (error) {
+      show({ message: apiErrorMessage(error, t('settings.fishAudio.cloneFailed')), type: 'error' });
+    } finally {
+      setFishCloneLoading(false);
+    }
+  };
+
+  const handleDeleteFishVoice = (voice: FishAudioVoice) => {
+    confirm(
+      t('settings.fishAudio.deleteConfirm', { title: voice.title }),
+      async () => {
+        try {
+          await api.deleteFishAudioVoice(voice.id);
+          setFishVoices((current) => current.filter((item) => item.id !== voice.id));
+          show({ message: t('settings.fishAudio.deleteSuccess'), type: 'success' });
+        } catch (error) {
+          show({ message: apiErrorMessage(error, t('settings.fishAudio.delete')), type: 'error' });
+        }
+      },
+      { title: t('settings.fishAudio.delete'), confirmText: t('settings.fishAudio.delete'), variant: 'danger' },
+    );
+  };
+
+  const saveFishVoiceAssets = async (assets: FishAudioVoiceAsset[]) => {
+    const response = await api.updateSettings({ fish_audio_voice_assets: assets });
+    const saved = settingsPayloadFromResponse(response);
+    setFishVoiceAssets(saved?.fish_audio_voice_assets || assets);
+    if (saved) setSettings(saved);
+  };
+
+  const updateFishVoiceAsset = (assetId: string, patch: Partial<FishAudioVoiceAsset>) => {
+    setFishVoiceAssets((current) => current.map((asset) => asset.id === assetId ? { ...asset, ...patch } : asset));
+  };
+
+  const addFishVoiceAsset = (voice: FishAudioVoice) => {
+    if (fishVoiceAssets.some((asset) => asset.voice === voice.id)) return;
+    void saveFishVoiceAssets([...fishVoiceAssets, {
+      id: `voice-${voice.id}`,
+      name: voice.title,
+      voice: voice.id,
+      avatar: '',
+      rate: '+0%',
+      language: voice.languages[0] || 'zh',
+      default_emotion: 'warm',
+      use_case: '通用旁白',
+      synthetic: false,
+    }]);
+  };
 
   const refreshOpenAIModels = async (connected: boolean) => {
+    const requestId = ++openAIModelsRequestRef.current;
     if (!connected) {
-      setOpenAIModels([]);
-      setOpenAITextModels([]);
-      setOpenAIImageModels([]);
+      clearOpenAIModelCache();
       return;
     }
 
     setOpenAIModelsLoading(true);
     try {
       const modelsResp = await api.getOpenAIOAuthModels();
+      if (requestId !== openAIModelsRequestRef.current) return;
       const allModels = modelsResp.data?.models || [];
       setOpenAIModels(allModels);
       setOpenAITextModels(modelsResp.data?.text_models || allModels.filter((model) => !model.includes('image')));
       setOpenAIImageModels(modelsResp.data?.image_models || allModels.filter((model) => model.includes('image')));
     } catch {
+      if (requestId !== openAIModelsRequestRef.current) return;
       setOpenAIModels([]);
       setOpenAITextModels([]);
       setOpenAIImageModels([]);
     } finally {
-      setOpenAIModelsLoading(false);
+      if (requestId === openAIModelsRequestRef.current) {
+        setOpenAIModelsLoading(false);
+      }
     }
   };
 
@@ -748,6 +933,7 @@ export const Settings: React.FC = () => {
     apiBaseKey: keyof typeof initialFormData;
     label: string;
   }) => {
+    const requestId = ++modelPickerRequestRef.current;
     const provider = ((formData[item.sourceKey] as string) || formData.ai_provider_format || 'gemini').trim();
     setModelPicker({
       isOpen: true,
@@ -785,6 +971,7 @@ export const Settings: React.FC = () => {
         throw new Error(t('settings.fields.modelReferenceUnsupported'));
       }
 
+      if (requestId !== modelPickerRequestRef.current) return;
       setModelPicker(prev => ({
         ...prev,
         models,
@@ -792,6 +979,7 @@ export const Settings: React.FC = () => {
         error: models.length ? '' : t('settings.fields.modelReferenceEmpty'),
       }));
     } catch (error) {
+      if (requestId !== modelPickerRequestRef.current) return;
       const message = apiErrorMessage(error, t('settings.fields.modelReferenceError'));
       setModelPicker(prev => ({ ...prev, loading: false, error: message }));
     }
@@ -896,14 +1084,35 @@ export const Settings: React.FC = () => {
           max: 8192,
           description: t('settings.fields.imageThinkingBudgetDesc'),
         },
+        {
+          key: 'enable_image_quality_control',
+          label: t('settings.fields.enableImageQualityControl'),
+          type: 'switch',
+          description: t('settings.fields.enableImageQualityControlDesc'),
+        },
       ],
     },
   ];
 
   useEffect(() => {
     loadSettings();
+    loadDataDir();
     loadExportDir();
   }, []);
+
+  useEffect(() => {
+    if ((settings?.fish_audio_api_key_length || 0) > 0) {
+      void refreshFishVoices(false);
+    } else {
+      setFishVoices([]);
+    }
+  }, [settings?.fish_audio_api_key_length, fishVoiceScope]);
+
+  const loadDataDir = async () => {
+    if (!window.electronAPI?.getDataDir) return;
+    const dir = await window.electronAPI.getDataDir();
+    setDataDir(dir);
+  };
 
   const loadExportDir = async () => {
     if (!window.electronAPI?.getExportDir) return;
@@ -918,6 +1127,7 @@ export const Settings: React.FC = () => {
       const loadedSettings = settingsPayloadFromResponse(response);
       if (loadedSettings) {
         setSettings(loadedSettings);
+        setFishVoiceAssets(loadedSettings.fish_audio_voice_assets || []);
         setFormData(formDataFromSettings(loadedSettings));
         sessionStorage.setItem('easyslide-settings', JSON.stringify(loadedSettings));
         await refreshOpenAIModels(Boolean(loadedSettings.openai_oauth_connected));
@@ -928,6 +1138,7 @@ export const Settings: React.FC = () => {
         try {
           const parsedSettings = JSON.parse(cachedSettings);
           setSettings(parsedSettings);
+          setFishVoiceAssets(parsedSettings.fish_audio_voice_assets || []);
           setFormData(formDataFromSettings(parsedSettings));
           await refreshOpenAIModels(Boolean(parsedSettings.openai_oauth_connected));
         } catch {
@@ -957,7 +1168,7 @@ export const Settings: React.FC = () => {
     setIsSaving(true);
     try {
       const {
-        api_key, mineru_token, baidu_api_key, elevenlabs_api_key, lazyllm_api_keys,
+        api_key, fish_audio_api_key, mineru_token, baidu_api_key, lazyllm_api_keys,
         text_api_key, image_api_key, image_caption_api_key,
         ...otherData
       } = formData;
@@ -968,9 +1179,9 @@ export const Settings: React.FC = () => {
 
       // Only send sensitive fields if user entered a new value
       if (api_key) payload.api_key = api_key;
+      if (fish_audio_api_key) payload.fish_audio_api_key = fish_audio_api_key;
       if (mineru_token) payload.mineru_token = mineru_token;
       if (baidu_api_key) payload.baidu_api_key = baidu_api_key;
-      if (elevenlabs_api_key) payload.elevenlabs_api_key = elevenlabs_api_key;
       if (text_api_key) payload.text_api_key = text_api_key;
       if (image_api_key) payload.image_api_key = image_api_key;
       if (image_caption_api_key) payload.image_caption_api_key = image_caption_api_key;
@@ -993,7 +1204,7 @@ export const Settings: React.FC = () => {
         // Clear all sensitive fields after save
         setFormData(prev => ({
           ...prev,
-          api_key: '', mineru_token: '', baidu_api_key: '', elevenlabs_api_key: '',
+          api_key: '', fish_audio_api_key: '', mineru_token: '', baidu_api_key: '',
           lazyllm_api_keys: {},
           text_api_key: '', image_api_key: '', image_caption_api_key: '',
         }));
@@ -1018,9 +1229,12 @@ export const Settings: React.FC = () => {
           const response = await api.resetSettings();
           const resetSettings = settingsPayloadFromResponse(response);
           if (resetSettings) {
+            clearModelPicker();
+            clearOpenAIModelCache();
             setSettings(resetSettings);
             setFormData(formDataFromSettings(resetSettings));
             sessionStorage.setItem('easyslide-settings', JSON.stringify(resetSettings));
+            await refreshOpenAIModels(Boolean(resetSettings.openai_oauth_connected));
             show({ message: t('settings.messages.resetSuccess'), type: 'success' });
           }
         } catch (error: any) {
@@ -1050,6 +1264,16 @@ export const Settings: React.FC = () => {
     await window.electronAPI.openDataDir();
   };
 
+  const handleChooseDataDir = async () => {
+    if (!window.electronAPI?.chooseDataDir) {
+      show({ message: '数据目录设置仅桌面版可用', type: 'info' });
+      return;
+    }
+    const dir = await window.electronAPI.chooseDataDir();
+    setDataDir(dir);
+    show({ message: '数据目录已更新，重启应用后生效', type: 'success' });
+  };
+
   const handleChooseExportDir = async () => {
     if (!window.electronAPI?.chooseExportDir) {
       show({ message: t('settings.exportPath.desktopOnly'), type: 'info' });
@@ -1068,7 +1292,94 @@ export const Settings: React.FC = () => {
     await window.electronAPI.openExportDir();
   };
 
+  const handleClearExportCache = () => {
+    confirm(
+      t('settings.exportCache.confirm'),
+      async () => {
+        setIsClearingExportCache(true);
+        try {
+          const response = await api.clearExportCache();
+          const result = response.data!;
+          const freedSize = result.freed_bytes >= 1024 * 1024
+            ? `${(result.freed_bytes / (1024 * 1024)).toFixed(1)} MB`
+            : `${Math.ceil(result.freed_bytes / 1024)} KB`;
+          show({
+            message: t('settings.exportCache.success', { count: result.deleted_files, size: freedSize }),
+            type: 'success',
+          });
+          if (result.skipped_active_projects > 0) {
+            show({
+              message: t('settings.exportCache.skipped', { count: result.skipped_active_projects }),
+              type: 'info',
+            });
+          }
+        } catch (error) {
+          show({
+            message: apiErrorMessage(error, t('settings.exportCache.failed')),
+            type: 'error',
+          });
+        } finally {
+          setIsClearingExportCache(false);
+        }
+      },
+      {
+        title: t('settings.exportCache.confirmTitle'),
+        confirmText: t('settings.exportCache.confirmAction'),
+        cancelText: t('settings.messages.resetCancelBtn'),
+        variant: 'danger',
+      }
+    );
+  };
+
   const handleFieldChange = (key: string, value: any) => {
+    if (key === 'ai_provider_format') {
+      clearModelPicker();
+      clearOpenAIModelCache();
+      setFormData(prev => ({
+        ...prev,
+        ai_provider_format: value,
+        api_key: '',
+        api_base_url: '',
+        lazyllm_api_keys: {},
+        text_model_source: value,
+        image_model_source: value,
+        image_caption_model_source: value,
+        text_model: '',
+        image_model: '',
+        image_caption_model: '',
+        text_api_key: '',
+        image_api_key: '',
+        image_caption_api_key: '',
+        text_api_base_url: '',
+        image_api_base_url: '',
+        image_caption_api_base_url: '',
+        openai_image_api_protocol: 'auto',
+      }));
+      return;
+    }
+
+    const modelSourceFields: Record<string, {
+      model: keyof typeof initialFormData;
+      apiKey: keyof typeof initialFormData;
+      apiBase: keyof typeof initialFormData;
+    }> = {
+      text_model_source: { model: 'text_model', apiKey: 'text_api_key', apiBase: 'text_api_base_url' },
+      image_model_source: { model: 'image_model', apiKey: 'image_api_key', apiBase: 'image_api_base_url' },
+      image_caption_model_source: { model: 'image_caption_model', apiKey: 'image_caption_api_key', apiBase: 'image_caption_api_base_url' },
+    };
+    const modelFields = modelSourceFields[key];
+    if (modelFields) {
+      clearModelPicker();
+      setFormData(prev => ({
+        ...prev,
+        [key]: value,
+        [modelFields.model]: '',
+        [modelFields.apiKey]: '',
+        [modelFields.apiBase]: '',
+      }));
+      return;
+    }
+
     setFormData(prev => ({ ...prev, [key]: value }));
   };
 
@@ -1189,7 +1500,7 @@ export const Settings: React.FC = () => {
     if (field.type === 'buttons' && field.options) {
       return (
         <div key={field.key}>
-          <label className="block text-sm font-medium text-gray-700 dark:text-foreground-secondary mb-2">
+          <label className="mb-2 block text-sm font-medium text-[var(--app-text-secondary)]">
             {field.label}
           </label>
           <div className="flex flex-wrap gap-2">
@@ -1198,14 +1509,10 @@ export const Settings: React.FC = () => {
                 key={option.value}
                 type="button"
                 onClick={() => handleFieldChange(field.key, option.value)}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                className={`rounded-[var(--app-radius-control)] px-4 py-2 text-sm font-medium transition-colors ${
                   value === option.value
-                    ? option.value === 'openai'
-                      ? 'bg-gradient-to-r from-sky-500 to-blue-600 text-white shadow-md'
-                      : option.value === 'lazyllm'
-                        ? 'bg-gradient-to-r from-sky-500 to-cyan-600 text-white shadow-md'
-                        : 'bg-gradient-to-r from-emerald-500 to-green-600 text-white shadow-md'
-                    : 'bg-white dark:bg-background-secondary border border-gray-200 dark:border-border-primary text-gray-700 dark:text-foreground-secondary hover:bg-gray-50 dark:hover:bg-background-hover hover:border-gray-300 dark:hover:border-gray-500'
+                    ? 'border border-[var(--app-border)] bg-[var(--app-surface)] text-[var(--app-text)] shadow-[var(--app-shadow-control)]'
+                    : 'border border-[var(--app-border)] bg-[var(--app-surface)] text-[var(--app-text-secondary)] hover:border-[var(--app-border-strong)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text)]'
                 }`}
               >
                 {option.label}
@@ -1213,7 +1520,7 @@ export const Settings: React.FC = () => {
             ))}
           </div>
           {field.description && (
-            <p className="mt-1 text-xs text-gray-500 dark:text-foreground-tertiary">{field.description}</p>
+            <p className="mt-1 text-xs text-[var(--app-text-tertiary)]">{field.description}</p>
           )}
         </div>
       );
@@ -1222,13 +1529,13 @@ export const Settings: React.FC = () => {
     if (field.type === 'select' && field.options) {
       return (
         <div key={field.key}>
-          <label className="block text-sm font-medium text-gray-700 dark:text-foreground-secondary mb-2">
+          <label className="mb-2 block text-sm font-medium text-[var(--app-text-secondary)]">
             {field.label}
           </label>
           <select
             value={value as string}
             onChange={(e) => handleFieldChange(field.key, e.target.value)}
-            className="w-full h-10 px-4 rounded-lg border border-gray-200 dark:border-border-primary bg-white dark:bg-background-secondary focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
+            className="h-10 w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-4 text-[var(--app-text)] outline-none transition-colors focus:border-[var(--app-accent)]"
           >
             {!(value as string) && (
               <option value="" disabled>
@@ -1242,7 +1549,7 @@ export const Settings: React.FC = () => {
             ))}
           </select>
           {field.description && (
-            <p className="mt-1 text-sm text-gray-500 dark:text-foreground-tertiary">{field.description}</p>
+            <p className="mt-1 text-sm text-[var(--app-text-tertiary)]">{field.description}</p>
           )}
         </div>
       );
@@ -1254,25 +1561,25 @@ export const Settings: React.FC = () => {
       return (
         <div key={field.key}>
           <div className="flex items-center justify-between">
-            <label className="block text-sm font-medium text-gray-700 dark:text-foreground-secondary">
+            <label className="block text-sm font-medium text-[var(--app-text-secondary)]">
               {field.label}
             </label>
             <button
               type="button"
               onClick={() => handleFieldChange(field.key, !isEnabled)}
-              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:ring-offset-2 ${
-                isEnabled ? 'bg-cyan-500' : 'bg-gray-200'
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus-visible:border focus-visible:border-[var(--app-accent)] ${
+                isEnabled ? 'bg-[var(--app-accent)]' : 'bg-[var(--app-surface-hover)]'
               }`}
             >
               <span
-                className={`inline-block h-4 w-4 transform rounded-full bg-white dark:bg-background-secondary transition-transform ${
+                className={`inline-block h-4 w-4 transform rounded-full bg-[var(--app-surface)] transition-transform ${
                   isEnabled ? 'translate-x-6' : 'translate-x-1'
                 }`}
               />
             </button>
           </div>
           {field.description && (
-            <p className="mt-1 text-sm text-gray-500 dark:text-foreground-tertiary">{field.description}</p>
+            <p className="mt-1 text-sm text-[var(--app-text-tertiary)]">{field.description}</p>
           )}
         </div>
       );
@@ -1309,10 +1616,10 @@ export const Settings: React.FC = () => {
           disabled={isDisabled}
         />
         {(field.description || field.link) && (
-          <p className="mt-1 text-sm text-gray-500 dark:text-foreground-tertiary">
+          <p className="mt-1 text-sm text-[var(--app-text-tertiary)]">
             {field.description}
             {field.link && (
-              <a href={field.link} target="_blank" rel="noopener noreferrer" className="text-cyan-500 hover:underline">{t('settings.fields.applyLink')}</a>
+              <a href={field.link} target="_blank" rel="noopener noreferrer" className="text-[var(--app-accent)] hover:underline">{t('settings.fields.applyLink')}</a>
             )}
           </p>
         )}
@@ -1369,7 +1676,7 @@ export const Settings: React.FC = () => {
     // lazyllm openai vendor is handled separately
 
     return (
-      <div key={item.modelKey} className="pb-6 border-b border-gray-200 dark:border-border-primary last:border-b-0 last:pb-0 space-y-3">
+      <div key={item.modelKey} className="space-y-3 border-b border-[var(--app-border)] pb-6 last:border-b-0 last:pb-0">
         {/* 模型名称 */}
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
           <div className="min-w-0 flex-1">
@@ -1390,18 +1697,18 @@ export const Settings: React.FC = () => {
           </Button>
         </div>
         {item.description && (
-          <p className="-mt-1 text-sm text-gray-500 dark:text-foreground-tertiary">{item.description}</p>
+          <p className="-mt-1 text-sm text-[var(--app-text-tertiary)]">{item.description}</p>
         )}
 
         {/* 提供商选择 */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-foreground-secondary mb-2">
+          <label className="mb-2 block text-sm font-medium text-[var(--app-text-secondary)]">
             {item.sourceLabel}
           </label>
           <select
             value={sourceValue}
             onChange={(e) => handleFieldChange(item.sourceKey, e.target.value)}
-            className="w-full h-10 px-4 rounded-lg border border-gray-200 dark:border-border-primary bg-white dark:bg-background-secondary focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
+            className="h-10 w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-4 text-[var(--app-text)] outline-none transition-colors focus:border-[var(--app-accent)]"
           >
             <option value="">{t('settings.fields.modelProviderPlaceholder')}</option>
             {ALL_PROVIDER_SOURCES.map((option) => (
@@ -1414,14 +1721,14 @@ export const Settings: React.FC = () => {
               </option>
             ))}
           </select>
-          <p className="mt-1 text-sm text-gray-500 dark:text-foreground-tertiary">
+          <p className="mt-1 text-sm text-[var(--app-text-tertiary)]">
             {t('settings.fields.modelProviderDesc')}
           </p>
         </div>
 
         {/* Gemini/OpenAI 提供商：显示 API Base URL + API Key */}
         {isApiKeyProvider && (
-          <div className="space-y-3 pl-3 border-l-2 border-cyan-300 dark:border-cyan-700">
+          <div className="space-y-3 border-l-2 border-[var(--app-border-strong)] pl-3">
             <Input
               label={t('settings.fields.perModelApiBaseUrl')}
               type="text"
@@ -1441,7 +1748,7 @@ export const Settings: React.FC = () => {
                 value={formData[item.apiKeyKey] as string}
                 onChange={(e) => handleFieldChange(item.apiKeyKey, e.target.value)}
               />
-              <p className="mt-1 text-sm text-gray-500 dark:text-foreground-tertiary">
+              <p className="mt-1 text-sm text-[var(--app-text-tertiary)]">
                 {t('settings.fields.perModelApiKeyDesc')}
               </p>
             </div>
@@ -1450,20 +1757,20 @@ export const Settings: React.FC = () => {
 
         {/* Image API Protocol: for image model when effective provider is openai */}
         {item.sourceKey === 'image_model_source' && (sourceValue === 'openai' || (!sourceValue && formData.ai_provider_format === 'openai')) && (
-          <div className="pl-3 border-l-2 border-cyan-300 dark:border-cyan-700">
-            <label className="block text-sm font-medium text-gray-700 dark:text-foreground-secondary mb-2">
+          <div className="border-l-2 border-[var(--app-border-strong)] pl-3">
+            <label className="mb-2 block text-sm font-medium text-[var(--app-text-secondary)]">
               {t('settings.fields.imageApiProtocol')}
             </label>
             <select
               value={formData.openai_image_api_protocol}
               onChange={(e) => handleFieldChange('openai_image_api_protocol', e.target.value)}
-              className="w-full h-10 px-4 rounded-lg border border-gray-200 dark:border-border-primary bg-white dark:bg-background-secondary focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
+              className="h-10 w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-4 text-[var(--app-text)] outline-none transition-colors focus:border-[var(--app-accent)]"
             >
               <option value="auto">{t('settings.fields.imageApiProtocolAuto')}</option>
               <option value="images">{t('settings.fields.imageApiProtocolImages')}</option>
               <option value="chat">{t('settings.fields.imageApiProtocolChat')}</option>
             </select>
-            <p className="mt-1 text-sm text-gray-500 dark:text-foreground-tertiary">
+            <p className="mt-1 text-sm text-[var(--app-text-tertiary)]">
               {t('settings.fields.imageApiProtocolDesc')}
             </p>
           </div>
@@ -1477,7 +1784,7 @@ export const Settings: React.FC = () => {
             ? t('settings.fields.vendorApiKeySet', { length: keyLength })
             : t('settings.fields.vendorApiKeyPlaceholder', { vendor: vendorLabel });
           return (
-            <div className="pl-3 border-l-2 border-cyan-200 dark:border-cyan-700">
+            <div className="border-l-2 border-[var(--app-border-strong)] pl-3">
               <Input
                 label={t('settings.fields.vendorApiKey', { vendor: vendorLabel })}
                 type="password"
@@ -1490,7 +1797,7 @@ export const Settings: React.FC = () => {
                   }));
                 }}
               />
-              <p className="mt-1 text-sm text-gray-500 dark:text-foreground-tertiary">
+              <p className="mt-1 text-sm text-[var(--app-text-tertiary)]">
                 {t('settings.fields.vendorApiKeyDesc')}
               </p>
             </div>
@@ -1508,6 +1815,37 @@ export const Settings: React.FC = () => {
     );
   }
 
+  const settingsNavigation = (
+    <nav
+      aria-label={t('nav.settings')}
+      data-layout={embedded ? 'embedded' : 'sidebar'}
+      className={embedded
+        ? 'sticky top-0 z-10 grid grid-cols-2 gap-1 border-b border-[var(--app-border)] bg-[var(--app-surface)] py-3 shadow-[var(--app-shadow-card)] sm:grid-cols-6'
+        : 'sticky top-16 z-10 grid grid-cols-2 gap-1 border-b border-[var(--app-border)] bg-[var(--app-surface)] px-5 py-3 shadow-[var(--app-shadow-card)] sm:grid-cols-3 md:px-8 lg:top-0 lg:grid-cols-1 lg:content-start lg:gap-1 lg:border-b-0 lg:border-r lg:px-3 lg:py-4 lg:shadow-none'}
+    >
+      {[
+        { id: 'settings-provider', label: t('settings.sections.apiConfig'), icon: Key },
+        { id: 'settings-models', label: t('settings.sections.modelConfig'), icon: FileText },
+        { id: 'settings-fish-audio', label: t('settings.sections.fishAudio'), icon: Mic2 },
+        { id: 'settings-performance', label: t('settings.sections.advancedSettings'), icon: Zap },
+        { id: 'settings-tests', label: t('settings.serviceTest.title'), icon: RefreshCw },
+        { id: 'settings-export', label: t('settings.sections.exportConfig'), icon: FolderOpen },
+      ].map(({ id, label, icon: Icon }) => (
+        <button
+          key={id}
+          type="button"
+          onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+          className="group flex min-h-10 items-center gap-2 rounded-[var(--app-radius-control)] border border-transparent px-3 text-left text-sm font-medium text-[var(--app-text-secondary)] transition-[background-color,color,border-color,transform] duration-150 hover:border-[var(--app-border-soft)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text)] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--app-accent-soft)] focus-visible:ring-offset-1 focus-visible:ring-offset-[var(--app-surface)]"
+        >
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--app-radius-control)] border border-[var(--app-border-soft)] bg-[var(--app-surface-muted)] text-[var(--app-text-tertiary)] shadow-[var(--app-shadow-control)] transition-[background-color,color,border-color] group-hover:border-[color:var(--app-accent-soft)] group-hover:bg-[color:var(--app-accent-soft)] group-hover:text-[var(--app-accent)]">
+            <Icon size={15} aria-hidden="true" />
+          </span>
+          <span className="truncate">{label}</span>
+        </button>
+      ))}
+    </nav>
+  );
+
   return (
     <>
       <ToastContainer />
@@ -1521,7 +1859,7 @@ export const Settings: React.FC = () => {
         {modelPicker.loading ? (
           <Loading message={t('settings.fields.modelReferenceLoading')} />
         ) : modelPicker.error ? (
-          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+          <div className="rounded-[var(--app-radius-control)] border border-[var(--app-error)] bg-[var(--app-surface)] px-4 py-3 text-sm text-[var(--app-error)]">
             {modelPicker.error}
           </div>
         ) : (
@@ -1531,7 +1869,7 @@ export const Settings: React.FC = () => {
                 key={model}
                 type="button"
                 onClick={() => handleChooseReferencedModel(model)}
-                className="w-full rounded-lg border border-gray-200 bg-white px-4 py-2.5 text-left text-sm font-medium text-gray-800 transition-colors hover:border-cyan-300 hover:bg-cyan-50 dark:border-border-primary dark:bg-background-secondary dark:text-foreground-primary dark:hover:bg-background-hover"
+                className="w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-4 py-2.5 text-left text-sm font-medium text-[var(--app-text)] transition-colors hover:border-[var(--app-border-strong)] hover:bg-[var(--app-surface-hover)]"
               >
                 {model}
               </button>
@@ -1539,82 +1877,109 @@ export const Settings: React.FC = () => {
           </div>
         )}
       </Modal>
-      <div className="space-y-10 pb-28">
-        <div className="rounded-[1.75rem] border border-sky-100 bg-gradient-to-br from-sky-50 via-white to-emerald-50 p-5 md:p-6 shadow-sm">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-            <div>
-              <div className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-sky-600 border border-sky-100 shadow-sm">
-                <Sparkles size={14} />
-                {t('settings.sections.aiProviderOpenAI')}
-              </div>
-              <h2 className="mt-4 text-2xl font-bold text-slate-950 dark:text-foreground-primary">{t('settings.sections.apiConfig')}</h2>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500 dark:text-foreground-tertiary">
-                {t('settings.sections.apiConfigDesc')} · {t('settings.openaiOAuth.description')}
-              </p>
-            </div>
-            <div className="grid grid-cols-2 gap-3 text-sm">
-              <div className="rounded-2xl border border-white bg-white/80 px-4 py-3 shadow-sm">
-                <div className="text-slate-400">{t('settings.fields.aiProviderFormat')}</div>
-                <div className="mt-1 font-semibold text-slate-900 dark:text-foreground-primary">{formData.ai_provider_format || 'openai'}</div>
-              </div>
-              <div className="rounded-2xl border border-white bg-white/80 px-4 py-3 shadow-sm">
-                <div className="text-slate-400">{t('settings.openaiOAuth.title')}</div>
-                <div className={settings?.openai_oauth_connected ? 'mt-1 font-semibold text-emerald-600' : 'mt-1 font-semibold text-slate-900 dark:text-foreground-primary'}>
-                  {settings?.openai_oauth_connected ? t('settings.openaiOAuth.connected') : t('settings.openaiOAuth.disconnected')}
-                </div>
-              </div>
-            </div>
+      <Modal
+        isOpen={fishCloneOpen}
+        onClose={() => { setFishCloneOpen(false); resetFishCloneForm(); }}
+        title={t('settings.fishAudio.cloneTitle')}
+        size="lg"
+      >
+        <div className="space-y-5">
+          <Input
+            label={t('settings.fishAudio.voiceName')}
+            value={fishCloneTitle}
+            maxLength={80}
+            onChange={(event) => setFishCloneTitle(event.target.value)}
+          />
+          <div>
+            <label htmlFor="fish-audio-samples" className="mb-2 block text-sm font-medium text-[var(--app-text-secondary)]">
+              {t('settings.fishAudio.sample')}
+            </label>
+            <label
+              htmlFor="fish-audio-samples"
+              className="flex min-h-20 cursor-pointer items-center justify-center gap-2 rounded-[var(--app-radius-control)] border border-dashed border-[var(--app-border-strong)] bg-[var(--app-surface-muted)] px-4 text-sm text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]"
+            >
+              <Upload size={18} aria-hidden="true" />
+              <span>{fishCloneFiles.length ? fishCloneFiles.map((file) => file.name).join('、') : t('settings.fishAudio.sampleHint')}</span>
+            </label>
+            <input
+              id="fish-audio-samples"
+              aria-label={t('settings.fishAudio.sample')}
+              type="file"
+              multiple
+              accept=".wav,.mp3,.m4a,.opus,.flac,audio/*"
+              className="sr-only"
+              onChange={(event) => {
+                const selected = Array.from(event.target.files || []);
+                const files = [...fishCloneFiles, ...selected]
+                  .filter((file, index, all) => all.findIndex((item) => (
+                    item.name === file.name && item.size === file.size && item.lastModified === file.lastModified
+                  )) === index)
+                  .slice(0, 3);
+                setFishCloneFiles(files);
+                setFishCloneTranscripts(files.map((_, index) => fishCloneTranscripts[index] || ''));
+                event.target.value = '';
+              }}
+            />
+          </div>
+          {fishCloneFiles.map((file, index) => (
+            <Input
+              key={`${file.name}-${file.lastModified}`}
+              label={`${file.name} · ${t('settings.fishAudio.transcript')}`}
+              value={fishCloneTranscripts[index] || ''}
+              onChange={(event) => setFishCloneTranscripts((current) => {
+                const next = [...current];
+                next[index] = event.target.value;
+                return next;
+              })}
+            />
+          ))}
+          <label className="flex items-start gap-3 text-sm text-[var(--app-text-secondary)]">
+            <input
+              type="checkbox"
+              checked={fishCloneConsent}
+              onChange={(event) => setFishCloneConsent(event.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border-[var(--app-border-strong)] accent-[var(--app-accent)]"
+            />
+            <span>{t('settings.fishAudio.consent')}</span>
+          </label>
+          <div className="flex justify-end gap-2 border-t border-[var(--app-border)] pt-4">
+            <Button variant="secondary" onClick={() => { setFishCloneOpen(false); resetFishCloneForm(); }}>
+              {t('settings.messages.resetCancelBtn')}
+            </Button>
+            <Button
+              variant="primary"
+              icon={<Plus size={16} />}
+              loading={fishCloneLoading}
+              disabled={!fishCloneTitle.trim() || fishCloneFiles.length === 0 || !fishCloneConsent}
+              onClick={handleCreateFishVoice}
+            >
+              {t('settings.fishAudio.create')}
+            </Button>
           </div>
         </div>
+      </Modal>
+      <div className={embedded ? 'min-h-0' : 'min-h-0 lg:grid lg:grid-cols-[176px_minmax(0,1fr)] lg:items-start'}>
+        {settingsNavigation}
+        <div className={embedded ? 'min-w-0 space-y-0' : 'mx-auto min-w-0 w-full max-w-[1040px] space-y-0 px-5 md:px-8'}>
 
-        <div className="rounded-[2rem] border border-slate-100 bg-white p-6 md:p-8 shadow-sm dark:bg-background-secondary dark:border-border-primary">
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-foreground-primary mb-2 flex items-center">
-            <FolderOpen size={20} />
-            <span className="ml-2">{t('settings.sections.exportConfig')}</span>
+        <section id="settings-openai" data-testid="openai-primary-section" className="scroll-mt-32 border-b border-[var(--app-border)] py-7">
+          <h2 className="mb-1 flex items-center text-xl font-semibold text-[var(--app-text)]">
+            <Link2 size={20} className="text-[var(--app-accent)]" />
+            <span className="ml-2">{t('settings.sections.aiProviderOpenAI')}</span>
           </h2>
-          <p className="text-sm text-gray-500 dark:text-foreground-tertiary mb-4">{t('settings.exportPath.description')}</p>
-          <div className="rounded-2xl border border-sky-100 bg-sky-50/50 p-4 dark:border-border-primary dark:bg-background-primary">
-            <div className="text-sm font-medium text-gray-700 dark:text-foreground-secondary mb-2">{t('settings.exportPath.label')}</div>
-            <div className="min-h-10 rounded-xl bg-white px-3 py-2 text-sm text-slate-700 shadow-sm break-all dark:bg-background-secondary dark:text-foreground-secondary">
-              {exportDir || t('settings.exportPath.notSet')}
-            </div>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <Button
-                variant="secondary"
-                icon={<FolderOpen size={18} />}
-                onClick={handleChooseExportDir}
-              >
-                {t('settings.actions.chooseExportDir')}
-              </Button>
-              <Button
-                variant="secondary"
-                icon={<FolderOpen size={18} />}
-                onClick={handleOpenExportDir}
-              >
-                {t('settings.actions.openExportDir')}
-              </Button>
-            </div>
-            {!window.electronAPI?.chooseExportDir && (
-              <p className="mt-3 text-xs text-amber-600">{t('settings.exportPath.desktopOnly')}</p>
-            )}
-          </div>
-        </div>
-
-        <div data-testid="openai-primary-section" className="rounded-[2rem] border border-slate-100 bg-white p-6 md:p-8 shadow-sm dark:bg-background-secondary dark:border-border-primary">
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-foreground-primary mb-1 flex items-center">
-            <Link2 size={20} className="text-emerald-500" />
-            <span className="ml-2">{t('settings.openaiOAuth.title')}</span>
-          </h2>
-          <p className="text-sm text-gray-500 dark:text-foreground-tertiary mb-4">{t('settings.openaiOAuth.description')}</p>
-          <div className="p-4 border border-sky-100 dark:border-border-primary rounded-2xl bg-gradient-to-br from-white to-sky-50/60 dark:from-background-secondary dark:to-background-tertiary">
+          <h3 className="mt-4 text-sm font-semibold text-[var(--app-text)]">
+            {t('settings.openaiOAuth.title')}
+          </h3>
+          <p className="mb-4 text-sm text-[var(--app-text-secondary)]">{t('settings.openaiOAuth.description')}</p>
+          <div className="border-t border-[var(--app-border)] pt-4">
             <div className="mb-4 grid gap-2 md:grid-cols-3">
               {[
                 t('settings.openaiOAuth.setupConnect'),
                 t('settings.openaiOAuth.setupRecommended'),
                 t('settings.openaiOAuth.setupCreate'),
               ].map((label, index) => (
-                <div key={label} className="flex items-center gap-2 rounded-2xl border border-sky-100 bg-white/80 px-3 py-2 text-xs font-medium text-slate-600 shadow-sm dark:border-border-primary dark:bg-background-primary dark:text-foreground-secondary">
-                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-sky-100 text-[11px] font-bold text-sky-600 dark:bg-sky-900/30 dark:text-sky-300">
+                <div key={label} className="flex items-center gap-2 rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 text-xs font-medium text-[var(--app-text-secondary)]">
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[color:var(--app-accent-soft)] text-[11px] font-bold text-[var(--app-accent)]">
                     {index + 1}
                   </span>
                   <span>{label}</span>
@@ -1623,13 +1988,13 @@ export const Settings: React.FC = () => {
             </div>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className={`w-2.5 h-2.5 rounded-full ${settings?.openai_oauth_connected ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}`} />
+                <div className={`h-2.5 w-2.5 rounded-full ${settings?.openai_oauth_connected ? 'bg-[var(--app-index-green)]' : 'bg-[var(--app-border-strong)]'}`} />
                 <div>
-                  <span className="text-sm font-medium text-gray-700 dark:text-foreground-secondary">
+                  <span className="text-sm font-medium text-[var(--app-text-secondary)]">
                     {settings?.openai_oauth_connected ? t('settings.openaiOAuth.connected') : t('settings.openaiOAuth.disconnected')}
                   </span>
                   {settings?.openai_oauth_connected && settings?.openai_oauth_account_id && (
-                    <span className="ml-2 text-sm text-gray-500 dark:text-foreground-tertiary">
+                    <span className="ml-2 text-sm text-[var(--app-text-tertiary)]">
                       ({settings.openai_oauth_account_id})
                     </span>
                   )}
@@ -1639,7 +2004,7 @@ export const Settings: React.FC = () => {
                 {settings?.openai_oauth_connected ? (
                   <button
                     onClick={handleOAuthDisconnect}
-                    className="px-4 py-2 text-sm font-medium text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors"
+                    className="rounded-[var(--app-radius-control)] border border-[var(--app-error)] bg-[var(--app-surface)] px-4 py-2 text-sm font-medium text-[var(--app-error)] transition-colors hover:bg-[var(--app-surface-hover)]"
                   >
                     {t('settings.openaiOAuth.disconnectBtn')}
                   </button>
@@ -1647,26 +2012,26 @@ export const Settings: React.FC = () => {
                   <button
                     onClick={handleOAuthAuthorize}
                     disabled={oauthConnecting}
-                    className="px-5 py-2.5 text-sm font-semibold text-white bg-gradient-to-r from-sky-500 to-emerald-400 rounded-full hover:shadow-lg transition-all disabled:opacity-50"
+                    className="rounded-[var(--app-radius-control)] bg-[var(--app-primary-action)] px-5 py-2.5 text-sm font-semibold text-[var(--app-surface)] transition-colors hover:bg-[var(--app-primary-action-hover)] disabled:opacity-50"
                   >
                     {oauthConnecting ? t('settings.openaiOAuth.connecting') : t('settings.openaiOAuth.authorizeBtn')}
                   </button>
                 )}
               </div>
             </div>
-            <p className="mt-3 text-xs text-gray-500 dark:text-foreground-tertiary">{t('settings.openaiOAuth.hint')}</p>
+            <p className="mt-3 text-xs text-[var(--app-text-tertiary)]">{t('settings.openaiOAuth.hint')}</p>
             {!settings?.openai_oauth_connected && (
-              <div className="mt-3 flex items-center gap-2 rounded-2xl border border-sky-100 bg-sky-50/80 px-3 py-2 text-xs font-medium text-sky-700 dark:border-border-primary dark:bg-background-primary dark:text-sky-300">
+              <div className="mt-3 flex items-center gap-2 rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface-hover)] px-3 py-2 text-xs font-medium text-[var(--app-accent)]">
                 <Info size={14} />
                 <span>{t('settings.openaiOAuth.connectFirst')}</span>
               </div>
             )}
             {!settings?.openai_oauth_connected && lastOAuthAuthUrl && (
-              <div className="mt-3 rounded-2xl border border-cyan-100 bg-white/90 p-3 text-xs text-slate-600 shadow-sm dark:border-border-primary dark:bg-background-primary dark:text-foreground-secondary">
-                <p className="mb-2 font-medium text-cyan-700 dark:text-cyan-300">
+              <div className="mt-3 rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)] p-3 text-xs text-[var(--app-text-secondary)] shadow-[var(--app-shadow-control)]">
+                <p className="mb-2 font-medium text-[var(--app-accent)]">
                   {t('settings.openaiOAuth.authLinkReady')}
                 </p>
-                <p className="mb-2 text-slate-500 dark:text-foreground-tertiary">
+                <p className="mb-2 text-[var(--app-text-secondary)]">
                   {t('settings.openaiOAuth.authRegionHint')}
                 </p>
                 <div className="flex flex-wrap gap-2">
@@ -1674,14 +2039,14 @@ export const Settings: React.FC = () => {
                     href={lastOAuthAuthUrl}
                     target="_blank"
                     rel="noreferrer"
-                    className="rounded-full bg-cyan-600 px-3 py-1.5 font-semibold text-white transition hover:bg-cyan-700"
+                    className="rounded-[var(--app-radius-control)] bg-[var(--app-primary-action)] px-3 py-1.5 font-semibold text-[var(--app-surface)] transition hover:bg-[var(--app-primary-action-hover)]"
                   >
                     {t('settings.openaiOAuth.openAuthPage')}
                   </a>
                   <button
                     type="button"
                     onClick={() => copyToClipboard(lastOAuthAuthUrl)}
-                    className="rounded-full border border-cyan-100 bg-cyan-50 px-3 py-1.5 font-semibold text-cyan-700 transition hover:bg-cyan-100 dark:border-border-primary dark:bg-background-secondary dark:text-cyan-300"
+                    className="rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-1.5 font-semibold text-[var(--app-accent)] transition hover:bg-[var(--app-surface-hover)]"
                   >
                     {t('settings.openaiOAuth.copyAuthLink')}
                   </button>
@@ -1692,7 +2057,7 @@ export const Settings: React.FC = () => {
               <button
                 type="button"
                 onClick={handleApplyOpenAIRecommended}
-                className="rounded-full border border-emerald-100 bg-white px-4 py-2 text-xs font-semibold text-emerald-700 shadow-sm transition hover:border-emerald-200 hover:bg-emerald-50 dark:bg-background-primary dark:border-border-primary dark:text-emerald-300"
+                className="rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-4 py-2 text-xs font-semibold text-[var(--app-text-secondary)] shadow-[var(--app-shadow-control)] transition hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text)]"
               >
                 {t('settings.openaiOAuth.applyRecommendedBtn')}
               </button>
@@ -1701,25 +2066,25 @@ export const Settings: React.FC = () => {
               <div className="mt-3">
                 <button
                   onClick={() => setManualCallbackOpen(v => !v)}
-                  className="text-xs text-sky-600 dark:text-sky-400 hover:underline"
+                  className="inline-flex min-h-8 items-center rounded-[var(--app-radius-control)] px-2 text-xs text-[var(--app-accent)] hover:bg-[var(--app-surface-hover)]"
                 >
                   {t('settings.openaiOAuth.manualCallbackLabel')}
                 </button>
                 {manualCallbackOpen && (
-                  <div className="mt-2 p-3 bg-sky-50 dark:bg-sky-900/20 border border-sky-200 dark:border-sky-800 rounded-xl">
-                    <p className="text-xs text-sky-700 dark:text-sky-300 mb-2">{t('settings.openaiOAuth.manualCallbackHint')}</p>
+                  <div className="mt-2 rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface-hover)] p-3">
+                    <p className="mb-2 text-xs text-[var(--app-text-secondary)]">{t('settings.openaiOAuth.manualCallbackHint')}</p>
                     <div className="flex gap-2">
                       <input
                         type="text"
                         value={manualCallbackUrl}
                         onChange={(e) => setManualCallbackUrl(e.target.value)}
                         placeholder={t('settings.openaiOAuth.manualCallbackPlaceholder')}
-                        className="flex-1 px-3 py-1.5 text-xs border border-gray-300 dark:border-border-primary rounded-md bg-white dark:bg-background-secondary text-gray-900 dark:text-foreground-primary placeholder-gray-400"
+                        className="flex-1 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-1.5 text-xs text-[var(--app-text)] placeholder:text-[var(--app-text-tertiary)] outline-none transition-colors focus:border-[var(--app-accent)]"
                       />
                       <button
                         onClick={handleManualCallback}
                         disabled={manualCallbackSubmitting || !manualCallbackUrl.trim()}
-                        className="px-3 py-1.5 text-xs font-medium text-white bg-slate-900 dark:bg-white dark:text-gray-900 rounded-md hover:bg-slate-800 dark:hover:bg-gray-100 transition-colors disabled:opacity-50"
+                        className="rounded-[var(--app-radius-control)] bg-[var(--app-primary-action)] px-3 py-1.5 text-xs font-medium text-[var(--app-surface)] transition-colors hover:bg-[var(--app-primary-action-hover)] disabled:opacity-50"
                       >
                         {t('settings.openaiOAuth.manualCallbackSubmit')}
                       </button>
@@ -1729,18 +2094,18 @@ export const Settings: React.FC = () => {
               </div>
             )}
             {settings?.openai_oauth_connected && (
-              <div className="mt-4 rounded-2xl border border-emerald-100 bg-white/80 p-4 dark:bg-background-primary dark:border-border-primary">
+              <div className="mt-4 rounded-[var(--app-radius-panel)] border border-[var(--app-border)] bg-[var(--app-surface)] p-4">
                 <div className="flex items-center justify-between gap-3">
-                  <h3 className="text-sm font-semibold text-slate-800 dark:text-foreground-primary">
+                  <h3 className="text-sm font-semibold text-[var(--app-text)]">
                     {t('settings.openaiOAuth.availableModels')}
                   </h3>
                   {settings.openai_oauth_account_id && (
-                    <span className="text-xs text-slate-400">{settings.openai_oauth_account_id}</span>
+                    <span className="text-xs text-[var(--app-text-tertiary)]">{settings.openai_oauth_account_id}</span>
                   )}
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {openAIModelsLoading ? (
-                    <span className="text-xs text-slate-500">{t('settings.openaiOAuth.loadingModels')}</span>
+                    <span className="text-xs text-[var(--app-text-secondary)]">{t('settings.openaiOAuth.loadingModels')}</span>
                   ) : openAIModels.length > 0 ? (
                     <div className="grid w-full gap-3 md:grid-cols-2">
                       {[
@@ -1753,11 +2118,11 @@ export const Settings: React.FC = () => {
                           models: openAIImageModels.length > 0 ? openAIImageModels : openAIModels.filter((model) => model.includes('image')),
                         },
                       ].filter((group) => group.models.length > 0).map((group) => (
-                        <div key={group.title} className="rounded-2xl border border-emerald-100 bg-emerald-50/60 p-3">
-                          <div className="text-xs font-semibold text-emerald-800">{group.title}</div>
+                        <div key={group.title} className="rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-3">
+                          <div className="text-xs font-semibold text-[var(--app-text)]">{group.title}</div>
                           <div className="mt-2 flex flex-wrap gap-2">
                             {group.models.slice(0, 8).map((model) => (
-                              <span key={model} className="rounded-full border border-emerald-100 bg-white px-3 py-1 text-xs font-medium text-emerald-700">
+                              <span key={model} className="rounded-md border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-1 text-xs font-medium text-[var(--app-text-muted)]">
                                 {model}
                               </span>
                             ))}
@@ -1766,31 +2131,31 @@ export const Settings: React.FC = () => {
                       ))}
                     </div>
                   ) : (
-                    <span className="text-xs text-slate-500">{t('settings.openaiOAuth.noAvailableModels')}</span>
+                    <span className="text-xs text-[var(--app-text-secondary)]">{t('settings.openaiOAuth.noAvailableModels')}</span>
                   )}
                 </div>
               </div>
             )}
           </div>
-        </div>
+        </section>
 
         {/* 默认 API 配置区块 */}
-        <div data-testid="global-api-config-section" className="rounded-3xl border border-slate-100 bg-white p-5 md:p-6 shadow-sm dark:bg-background-secondary dark:border-border-primary">
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-foreground-primary mb-1 flex items-center">
-            <Key size={20} className="text-sky-500" />
+        <section id="settings-provider" data-testid="global-api-config-section" className="scroll-mt-32 border-b border-[var(--app-border)] py-7">
+          <h2 className="mb-1 flex items-center text-xl font-semibold text-[var(--app-text)]">
+            <Key size={20} className="text-[var(--app-accent)]" />
             <span className="ml-2">{t('settings.sections.apiConfig')}</span>
           </h2>
-          <p className="text-sm text-gray-500 dark:text-foreground-tertiary mb-4">{t('settings.sections.apiConfigDesc')}</p>
+          <p className="mb-4 text-sm text-[var(--app-text-secondary)]">{t('settings.sections.apiConfigDesc')}</p>
           <div className="space-y-4">
             {/* 提供商下拉 */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-foreground-secondary mb-2">
+              <label className="mb-2 block text-sm font-medium text-[var(--app-text-secondary)]">
                 {t('settings.fields.aiProviderFormat')}
               </label>
               <select
                 value={formData.ai_provider_format}
                 onChange={(e) => handleFieldChange('ai_provider_format', e.target.value)}
-                className="w-full h-10 px-4 rounded-lg border border-gray-200 dark:border-border-primary bg-white dark:bg-background-secondary focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
+                className="h-10 w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-4 text-[var(--app-text)] focus:outline-none focus:border-[var(--app-border-strong)]"
               >
                 {ALL_PROVIDER_SOURCES.map((option) => (
                   <option
@@ -1802,12 +2167,12 @@ export const Settings: React.FC = () => {
                   </option>
                 ))}
               </select>
-              <p className="mt-1 text-sm text-gray-500 dark:text-foreground-tertiary">{t('settings.fields.aiProviderFormatDesc')}</p>
+              <p className="mt-1 text-sm text-[var(--app-text-tertiary)]">{t('settings.fields.aiProviderFormatDesc')}</p>
             </div>
 
             {/* Gemini/OpenAI: API Base URL + API Key */}
             {API_KEY_PROVIDERS.has(formData.ai_provider_format) && (
-              <div className="space-y-3 pl-3 border-l-2 border-cyan-300 dark:border-cyan-700">
+              <div className="space-y-3 pl-3 border-l-2 border-[var(--app-border-strong)]">
                 <Input
                   label={t('settings.fields.apiBaseUrl')}
                   type="text"
@@ -1815,7 +2180,7 @@ export const Settings: React.FC = () => {
                   value={formData.api_base_url}
                   onChange={(e) => handleFieldChange('api_base_url', e.target.value)}
                 />
-                <p className="-mt-2 text-sm text-gray-500 dark:text-foreground-tertiary">{t('settings.fields.apiBaseUrlDesc')}</p>
+                <p className="-mt-2 text-sm text-[var(--app-text-tertiary)]">{t('settings.fields.apiBaseUrlDesc')}</p>
                 <div>
                   <Input
                     label={t('settings.fields.apiKey')}
@@ -1828,7 +2193,7 @@ export const Settings: React.FC = () => {
                     value={formData.api_key}
                     onChange={(e) => handleFieldChange('api_key', e.target.value)}
                   />
-                  <p className="mt-1 text-sm text-gray-500 dark:text-foreground-tertiary">{t('settings.fields.apiKeyDesc')}</p>
+                  <p className="mt-1 text-sm text-[var(--app-text-tertiary)]">{t('settings.fields.apiKeyDesc')}</p>
                 </div>
               </div>
             )}
@@ -1840,21 +2205,21 @@ export const Settings: React.FC = () => {
           </div>
 
           {/* OpenAI API Key tip */}
-          <div className="mt-3 pl-4 border-l-4 border-blue-300 dark:border-blue-600">
-            <p className="text-sm text-gray-700 dark:text-foreground-secondary">
+          <div className="mt-3 rounded-[var(--app-radius-control)] border border-[var(--app-accent-soft)] bg-[var(--app-accent-soft)] px-3 py-2">
+            <p className="text-sm text-[var(--app-text-secondary)]">
               {t('settings.apiKeyTip.before')}
-              <a href={OPENAI_PLATFORM_URL} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 underline font-medium">{t('settings.apiKeyTip.linkLabel')}</a>
+              <a href={OPENAI_PLATFORM_URL} target="_blank" rel="noopener noreferrer" className="font-medium text-[var(--app-accent)] underline">{t('settings.apiKeyTip.linkLabel')}</a>
               {t('settings.apiKeyTip.after')}
             </p>
           </div>
 
           {/* API Key 获取指南 */}
-          <div className="mt-2 pl-4 border-l-4 border-blue-300 dark:border-blue-600">
-            <p className="text-sm font-medium text-gray-800 dark:text-foreground-primary flex items-center gap-1.5 mb-2">
-              <HelpCircle size={15} className="text-blue-500" />
+          <div className="mt-2 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-3 py-2">
+            <p className="mb-2 flex items-center gap-1.5 text-sm font-medium text-[var(--app-text)]">
+              <HelpCircle size={15} className="text-[var(--app-accent)]" />
               {t('settings.apiKeyHelp.title')}
             </p>
-            <ol className="text-sm text-gray-700 dark:text-foreground-secondary space-y-1 list-decimal list-inside ml-1">
+            <ol className="ml-1 list-inside list-decimal space-y-1 text-sm text-[var(--app-text-secondary)]">
               <li>
                 {t('settings.apiKeyHelp.step1', { link: '{{link}}' }).split('{{link}}')[0]}
                 <span className="inline-flex items-center gap-2">
@@ -1862,13 +2227,13 @@ export const Settings: React.FC = () => {
                     href={OPENAI_PLATFORM_URL}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-blue-600 hover:text-blue-800 underline font-medium"
+                    className="font-medium text-[var(--app-accent)] underline"
                   >
                     {t('settings.apiKeyHelp.linkLabel')}
                   </a>
                   <button
                     onClick={() => copyToClipboard(OPENAI_PLATFORM_URL)}
-                    className="text-xs px-2 py-0.5 bg-blue-100 hover:bg-blue-200 dark:bg-blue-900/30 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-300 rounded transition-colors"
+                    className="inline-flex min-h-8 items-center rounded-[var(--app-radius-control)] bg-[var(--app-accent-soft)] px-2 text-xs text-[var(--app-accent)] transition-colors hover:bg-[var(--app-surface-hover)]"
                   >
                     {t('settings.apiKeyHelp.copyLink')}
                   </button>
@@ -1880,51 +2245,202 @@ export const Settings: React.FC = () => {
               <li>{t('settings.apiKeyHelp.step4')}</li>
             </ol>
           </div>
-        </div>
+        </section>
 
         {/* 模型配置区块 */}
-        <div className="rounded-[2rem] border border-slate-100 bg-white p-6 md:p-8 shadow-sm dark:bg-background-secondary dark:border-border-primary">
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-foreground-primary mb-5 flex items-center">
-            <FileText size={20} />
+        <section id="settings-models" data-testid="model-config-section" className="scroll-mt-32 border-b border-[var(--app-border)] py-7">
+          <h2 className="mb-5 flex items-center text-xl font-semibold text-[var(--app-text)]">
+            <FileText size={20} className="text-[var(--app-accent)]" />
             <span className="ml-2">{t('settings.sections.modelConfig')}</span>
           </h2>
           <div className="space-y-5">
             {modelConfigItems.map(renderModelConfigGroup)}
           </div>
-        </div>
+        </section>
+
+        <section id="settings-fish-audio" className="scroll-mt-32 border-b border-[var(--app-border)] py-7">
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+            <h2 className="flex items-center text-xl font-semibold text-[var(--app-text)]">
+              <Mic2 size={20} aria-hidden="true" />
+              <span className="ml-2">{t('settings.fishAudio.title')}</span>
+            </h2>
+            <div className="text-sm text-[var(--app-text-secondary)]">
+              {t('settings.fishAudio.model')} · <code className="font-semibold text-[var(--app-text)]">{settings?.fish_audio_model || 's2.1-pro-free'}</code>
+            </div>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+            <div>
+              <Input
+                label={t('settings.fishAudio.apiKey')}
+                type="password"
+                placeholder={(settings?.fish_audio_api_key_length || 0) > 0
+                  ? t('settings.fishAudio.keySet', { length: settings?.fish_audio_api_key_length || 0 })
+                  : t('settings.fishAudio.keyPlaceholder')}
+                value={formData.fish_audio_api_key}
+                onChange={(event) => handleFieldChange('fish_audio_api_key', event.target.value)}
+              />
+              <p className="mt-1 text-xs text-[var(--app-text-tertiary)]">{t('settings.fishAudio.keyHint')}</p>
+            </div>
+            <Button
+              variant="secondary"
+              icon={<RefreshCw size={16} />}
+              loading={fishVerifyLoading}
+              disabled={!formData.fish_audio_api_key && !(settings?.fish_audio_api_key_length || 0)}
+              onClick={handleVerifyFishAudio}
+            >
+              {t('settings.fishAudio.testConnection')}
+            </Button>
+          </div>
+
+          <div className="mt-6 border-t border-[var(--app-border)] pt-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-sm font-semibold text-[var(--app-text)]">{t('settings.fishAudio.voices')}</h3>
+                <div className="flex rounded-[var(--app-radius-control)] border border-[var(--app-border)] p-0.5">
+                  <Button
+                    variant={fishVoiceScope === 'public' ? 'primary' : 'ghost'}
+                    size="sm"
+                    onClick={() => setFishVoiceScope('public')}
+                  >
+                    {t('settings.fishAudio.publicVoices')}
+                  </Button>
+                  <Button
+                    variant={fishVoiceScope === 'private' ? 'primary' : 'ghost'}
+                    size="sm"
+                    onClick={() => setFishVoiceScope('private')}
+                  >
+                    {t('settings.fishAudio.privateVoices')}
+                  </Button>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon={<RefreshCw size={15} />}
+                  loading={fishVoicesLoading}
+                  disabled={!(settings?.fish_audio_api_key_length || 0)}
+                  onClick={() => void refreshFishVoices()}
+                >
+                  {t('settings.fishAudio.refresh')}
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  icon={<Plus size={15} />}
+                  disabled={!(settings?.fish_audio_api_key_length || 0)}
+                  onClick={() => setFishCloneOpen(true)}
+                >
+                  {t('settings.fishAudio.clone')}
+                </Button>
+              </div>
+            </div>
+
+            <div className="mt-3" aria-live="polite">
+              {fishVoicesLoading && fishVoices.length === 0 ? (
+                <Loading message={t('common.loading')} />
+              ) : fishVoices.length > 0 ? (
+                <div className="divide-y divide-[var(--app-border)] border-y border-[var(--app-border)]">
+                  {fishVoices.map((voice) => (
+                    <div key={voice.id} className="flex min-h-14 items-center justify-between gap-3 py-3">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium text-[var(--app-text)]">{voice.title}</div>
+                        <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-[var(--app-text-tertiary)]">
+                          <span>{voice.visibility === 'public' ? t('settings.fishAudio.public') : t('settings.fishAudio.private')}</span>
+                          {voice.languages.length > 0 && <span>{voice.languages.join(' · ')}</span>}
+                          {voice.author && <span>{voice.author}</span>}
+                          <span>{voice.state}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Button variant="ghost" size="sm" disabled={fishVoiceAssets.some((asset) => asset.voice === voice.id)} onClick={() => addFishVoiceAsset(voice)}>
+                          {fishVoiceAssets.some((asset) => asset.voice === voice.id) ? '已保存角色' : '保存为角色'}
+                        </Button>
+                        {voice.visibility !== 'public' && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            icon={<Trash2 size={16} />}
+                            aria-label={`${t('settings.fishAudio.delete')} ${voice.title}`}
+                            title={`${t('settings.fishAudio.delete')} ${voice.title}`}
+                            onClick={() => handleDeleteFishVoice(voice)}
+                          />
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="py-5 text-sm text-[var(--app-text-tertiary)]">
+                  {(settings?.fish_audio_api_key_length || 0) > 0
+                    ? t(fishVoiceScope === 'public' ? 'settings.fishAudio.emptyPublic' : 'settings.fishAudio.emptyPrivate')
+                    : t('settings.fishAudio.notConfigured')}
+                </p>
+              )}
+            </div>
+            {fishVoiceAssets.length > 0 && (
+              <div className="mt-5 border-t border-[var(--app-border)] pt-4">
+                <h3 className="text-sm font-semibold">人物声线资产库</h3>
+                <div className="mt-2 divide-y divide-[var(--app-border)]">
+                  {fishVoiceAssets.map((asset) => (
+                    <div key={asset.id} className="grid gap-3 py-4 sm:grid-cols-[48px_minmax(0,1fr)_auto]">
+                      <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-full bg-[var(--app-surface-secondary)] text-sm font-semibold text-[var(--app-text-secondary)]">
+                        {/^https?:\/\/|^data:image\//.test(asset.avatar) ? <img src={asset.avatar} alt="" className="h-full w-full object-cover" /> : asset.avatar || asset.name.slice(0, 1)}
+                      </div>
+                      <div className="grid min-w-0 gap-2 sm:grid-cols-2">
+                        <input aria-label={`角色名称 ${asset.id}`} value={asset.name} onChange={(event) => updateFishVoiceAsset(asset.id, { name: event.target.value })} placeholder="角色名称" className="h-9 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-sm" />
+                        <input aria-label={`适用场景 ${asset.id}`} value={asset.use_case} onChange={(event) => updateFishVoiceAsset(asset.id, { use_case: event.target.value })} placeholder="适用场景" className="h-9 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-sm" />
+                        <input aria-label={`角色头像 ${asset.id}`} value={asset.avatar} onChange={(event) => updateFishVoiceAsset(asset.id, { avatar: event.target.value })} placeholder="头像 URL 或表情" className="h-9 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-sm" />
+                        <div className="grid grid-cols-2 gap-2">
+                          <select aria-label={`默认语速 ${asset.id}`} value={asset.rate} onChange={(event) => updateFishVoiceAsset(asset.id, { rate: event.target.value })} className="h-9 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-sm"><option value="-10%">慢</option><option value="+0%">正常</option><option value="+10%">快</option></select>
+                          <select aria-label={`默认语气 ${asset.id}`} value={asset.default_emotion} onChange={(event) => updateFishVoiceAsset(asset.id, { default_emotion: event.target.value as FishAudioVoiceAsset['default_emotion'] })} className="h-9 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-sm">{['curious', 'emphasis', 'confident', 'calm', 'warm', 'excited'].map((emotion) => <option key={emotion} value={emotion}>{emotion}</option>)}</select>
+                        </div>
+                      </div>
+                      <div className="flex items-start gap-1">
+                        <Button variant="secondary" size="sm" onClick={() => void saveFishVoiceAssets(fishVoiceAssets)}>保存</Button>
+                        <Button variant="ghost" size="sm" icon={<Trash2 size={15} />} aria-label={`删除角色资产 ${asset.name}`} onClick={() => void saveFishVoiceAssets(fishVoiceAssets.filter((item) => item.id !== asset.id))} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
 
         {/* 其余配置区块（配置驱动，排除性能配置和推理模式） */}
-        <div className="space-y-10">
+        <div className="space-y-0">
           {settingsSections.filter((section) =>
             section.title !== t('settings.sections.performanceConfig') &&
             section.title !== t('settings.sections.textReasoning') &&
             section.title !== t('settings.sections.imageReasoning')
           ).map((section) => (
-            <div key={section.title} className="rounded-[2rem] border border-slate-100 bg-white p-6 md:p-8 shadow-sm dark:bg-background-secondary dark:border-border-primary">
-              <h2 className="text-xl font-semibold text-gray-900 dark:text-foreground-primary mb-5 flex items-center">
+            <section key={section.title} className="border-b border-[var(--app-border)] py-7">
+              <h2 className="mb-5 flex items-center text-xl font-semibold text-[var(--app-text)]">
                 {section.icon}
                 <span className="ml-2">{section.title}</span>
               </h2>
               <div className="space-y-5">
                 {section.fields.map((field) => renderField(field))}
               </div>
-            </div>
+            </section>
           ))}
         </div>
 
         {/* 高级设置（折叠区域） */}
-        <div className="rounded-[2rem] border border-slate-100 bg-white p-6 md:p-8 shadow-sm dark:bg-background-secondary dark:border-border-primary">
+        <section id="settings-performance" className="scroll-mt-32 border-b border-[var(--app-border)] py-7">
           <button
             type="button"
             onClick={() => setAdvancedOpen(!advancedOpen)}
             className="w-full flex items-center justify-between px-0 py-3 text-left hover:opacity-80 transition-opacity"
           >
-            <span className="text-lg font-semibold text-gray-900 dark:text-foreground-primary">
+            <span className="text-lg font-semibold text-[var(--app-text)]">
               {t('settings.sections.advancedSettings')}
             </span>
             <ChevronDown
               size={20}
-              className={`text-gray-500 dark:text-foreground-tertiary transition-transform duration-200 ${advancedOpen ? 'rotate-180' : ''}`}
+              className={`text-[var(--app-text-tertiary)] transition-transform duration-200 ${advancedOpen ? 'rotate-180' : ''}`}
             />
           </button>
           {advancedOpen && (
@@ -1936,7 +2452,7 @@ export const Settings: React.FC = () => {
                 section.title === t('settings.sections.imageReasoning')
               ).map((section) => (
                 <div key={section.title}>
-                  <h2 className="text-xl font-semibold text-gray-900 dark:text-foreground-primary mb-4 flex items-center">
+                  <h2 className="mb-4 flex items-center text-xl font-semibold text-[var(--app-text)]">
                     {section.icon}
                     <span className="ml-2">{section.title}</span>
                   </h2>
@@ -1947,19 +2463,19 @@ export const Settings: React.FC = () => {
               ))}
             </div>
           )}
-        </div>
+        </section>
 
         {/* 服务测试区 */}
-        <div className="space-y-5 rounded-[2rem] border border-slate-100 bg-white p-6 md:p-8 shadow-sm dark:bg-background-secondary dark:border-border-primary">
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-foreground-primary mb-2 flex items-center">
+        <section id="settings-tests" className="scroll-mt-32 space-y-5 border-b border-[var(--app-border)] py-7">
+          <h2 className="mb-2 flex items-center text-xl font-semibold text-[var(--app-text)]">
             <FileText size={20} />
             <span className="ml-2">{t('settings.serviceTest.title')}</span>
           </h2>
-          <p className="text-sm text-gray-500 dark:text-foreground-tertiary">
+          <p className="text-sm text-[var(--app-text-tertiary)]">
             {t('settings.serviceTest.description')}
           </p>
-          <div className="pl-4 border-l-4 border-sky-200 dark:border-sky-700">
-            <p className="text-sm text-gray-700 dark:text-foreground-secondary">
+          <div className="pl-4 border-l-4 border-[var(--app-border-strong)]">
+            <p className="text-sm text-[var(--app-text-secondary)]">
               💡 {t('settings.serviceTest.tip')}
             </p>
           </div>
@@ -1995,12 +2511,12 @@ export const Settings: React.FC = () => {
               return (
                 <div
                   key={item.key}
-                  className="py-4 border-b border-gray-200 dark:border-border-primary last:border-b-0 space-y-2"
+                  className="space-y-2 border-b border-[var(--app-border)] py-4 last:border-b-0"
                 >
                   <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div>
-                      <div className="text-base font-semibold text-gray-800 dark:text-foreground-primary">{t(item.titleKey)}</div>
-                      <div className="text-sm text-gray-500 dark:text-foreground-tertiary">{t(item.descriptionKey)}</div>
+                      <div className="text-base font-semibold text-[var(--app-text)]">{t(item.titleKey)}</div>
+                      <div className="text-sm text-[var(--app-text-tertiary)]">{t(item.descriptionKey)}</div>
                     </div>
                     <Button
                       variant="secondary"
@@ -2012,12 +2528,12 @@ export const Settings: React.FC = () => {
                     </Button>
                   </div>
                   {testState.status === 'success' && (
-                    <p className="text-sm text-green-600">
+                    <p className="text-sm text-[var(--app-index-green)]">
                       {testState.message}{testState.detail ? `｜${testState.detail}` : ''}
                     </p>
                   )}
                   {testState.status === 'error' && (
-                    <p className="text-sm text-red-600">
+                    <p className="text-sm text-[var(--app-error)]">
                       {testState.message}
                     </p>
                   )}
@@ -2025,10 +2541,70 @@ export const Settings: React.FC = () => {
               );
             })}
           </div>
-        </div>
+        </section>
 
-        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-sky-100 bg-white/90 px-4 py-3 shadow-[0_-18px_45px_rgba(15,23,42,0.10)] backdrop-blur-xl dark:border-border-primary dark:bg-background-primary/90">
-          <div className="mx-auto flex max-w-6xl items-center justify-between gap-3">
+        <section id="settings-export" className="scroll-mt-32 py-7">
+          <h2 className="mb-2 flex items-center text-xl font-semibold text-[var(--app-text)]">
+            <FolderOpen size={20} />
+            <span className="ml-2">{t('settings.sections.exportConfig')}</span>
+          </h2>
+          <p className="mb-4 text-sm text-[var(--app-text-secondary)]">{t('settings.exportPath.description')}</p>
+          <div className="space-y-5 rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface-secondary)] p-5 shadow-[var(--app-shadow-card)]">
+            <div>
+              <div className="mb-2 text-sm font-medium text-[var(--app-text-secondary)]">数据目录</div>
+              <div className="min-h-10 rounded-[var(--app-radius-control)] bg-[var(--app-surface)] px-3 py-2 text-sm text-[var(--app-text-secondary)] break-all">
+                {dataDir || '未读取到数据目录'}
+              </div>
+              <p className="mt-2 text-xs text-[var(--app-text-tertiary)]">数据库、上传文件和默认导出目录会使用此位置；更改后需重启应用。</p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Button variant="secondary" icon={<FolderOpen size={18} />} onClick={handleChooseDataDir}>
+                  选择数据目录
+                </Button>
+                <Button variant="secondary" icon={<FolderOpen size={18} />} onClick={handleOpenDataDir}>
+                  {t('settings.actions.openDataDir')}
+                </Button>
+              </div>
+            </div>
+            <div>
+            <div className="mb-2 text-sm font-medium text-[var(--app-text-secondary)]">{t('settings.exportPath.label')}</div>
+            <div className="min-h-10 rounded-[var(--app-radius-control)] bg-[var(--app-surface)] px-3 py-2 text-sm text-[var(--app-text-secondary)] break-all">
+              {exportDir || t('settings.exportPath.notSet')}
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Button variant="secondary" icon={<FolderOpen size={18} />} onClick={handleChooseExportDir}>
+                {t('settings.actions.chooseExportDir')}
+              </Button>
+              <Button variant="secondary" icon={<FolderOpen size={18} />} onClick={handleOpenExportDir}>
+                {t('settings.actions.openExportDir')}
+              </Button>
+            </div>
+            {!window.electronAPI?.chooseExportDir && (
+              <p className="mt-3 text-xs text-[var(--app-index-yellow)]">{t('settings.exportPath.desktopOnly')}</p>
+            )}
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-4 border-t border-[var(--app-border)] pt-5">
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium text-[var(--app-text-secondary)]">
+                  {t('settings.exportCache.title')}
+                </div>
+                <p className="mt-1 text-xs text-[var(--app-text-tertiary)]">
+                  {t('settings.exportCache.description')}
+                </p>
+              </div>
+              <Button
+                variant="secondary"
+                icon={<Trash2 size={18} />}
+                loading={isClearingExportCache}
+                onClick={handleClearExportCache}
+              >
+                {t('settings.exportCache.action')}
+              </Button>
+            </div>
+          </div>
+        </section>
+
+        <div className="sticky bottom-0 z-20 border-t border-[var(--app-border)] bg-[var(--app-surface)] py-3 shadow-[0_-1px_2px_var(--app-border-soft)]">
+          <div className="flex items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2">
               <Button
                 variant="secondary"
@@ -2057,109 +2633,17 @@ export const Settings: React.FC = () => {
           </div>
         </div>
 
+        </div>
       </div>
     </>
   );
 };
 
-// SettingsPage 组件 - 完整页面包装
-const SCROLL_SHOW_THRESHOLD = 300;
-
-export const SettingsPage: React.FC = () => {
-  const navigate = useNavigate();
-  const location = useLocation();
-  const t = useT(settingsI18n);
-  const [showTop, setShowTop] = useState(false);
-  const hasInAppBackHistory = typeof window !== 'undefined' && typeof window.history.state?.idx === 'number'
-    ? window.history.state.idx > 0
-    : false;
-  const canNavigateBack = hasInAppBackHistory || Boolean((location.state as { from?: string } | null)?.from);
-
-  const handleBack = () => {
-    if (canNavigateBack) {
-      navigate(-1);
-      return;
-    }
-    navigate('/app');
-  };
-
-  const navItems = [
-    { label: t('nav.home'), icon: Home, path: '/' },
-    { label: t('nav.createProject'), icon: LayoutDashboard, path: '/app' },
-    { label: t('nav.history'), icon: FolderOpen, path: '/history' },
-    { label: t('nav.materialCenter'), icon: Box, path: '/app' },
-    { label: t('nav.materialGenerate'), icon: ImagePlus, path: '/app' },
-    { label: t('nav.settings'), icon: SettingsIcon, path: '/settings' },
-  ];
-
-  useEffect(() => {
-    const onScroll = () => setShowTop(window.scrollY > SCROLL_SHOW_THRESHOLD);
-    window.addEventListener('scroll', onScroll, { passive: true });
-    return () => window.removeEventListener('scroll', onScroll);
-  }, []);
-
-  return (
-    <div className="min-h-screen bg-[#f5f9fc] dark:bg-background-primary">
-      <div className="container mx-auto px-4 py-8 max-w-6xl">
-        <Card className="p-0 overflow-hidden border-sky-100 shadow-[0_25px_80px_rgba(15,70,120,0.10)]">
-          <div className="space-y-0">
-            <nav className="flex flex-col gap-4 border-b border-sky-100 bg-white/90 p-4 dark:border-border-primary dark:bg-background-secondary/90 lg:flex-row lg:items-center lg:justify-between">
-              <button
-                type="button"
-                onClick={() => navigate('/app')}
-                className="flex items-center gap-2 text-left font-semibold text-cyan-700"
-              >
-                <img src={getStaticAssetUrl('/logo-nav.png')} alt="EasySlide Logo" className="h-8 w-8 rounded-full" />
-                <span>EasySlide</span>
-              </button>
-              <div className="flex flex-wrap items-center gap-1 text-sm text-slate-600 dark:text-foreground-secondary">
-                {navItems.map((item) => {
-                  const Icon = item.icon;
-                  return (
-                    <button
-                      key={item.label}
-                      type="button"
-                      onClick={() => navigate(item.path)}
-                      className={`inline-flex items-center gap-1.5 rounded-full px-3 py-2 transition-colors hover:bg-sky-50 hover:text-cyan-700 dark:hover:bg-background-hover ${
-                        item.path === '/settings' ? 'bg-sky-50 text-cyan-700 dark:bg-background-hover' : ''
-                      }`}
-                    >
-                      <Icon size={15} />
-                      {item.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </nav>
-            <div className="border-b border-sky-100 bg-white/70 p-5 dark:border-border-primary dark:bg-background-secondary/70">
-                <Button
-                  variant="secondary"
-                  icon={<Home size={18} />}
-                  onClick={handleBack}
-                >
-                  {t('nav.backToHome')}
-                </Button>
-            </div>
-
-            <div className="p-6 md:p-10">
-              <Settings />
-            </div>
-          </div>
-        </Card>
-      </div>
-
-      {showTop && (
-        <button
-          data-testid="back-to-top-button"
-          aria-label="Back to top"
-          title="Back to top"
-          onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-          className="fixed bottom-24 right-6 p-3 rounded-full bg-cyan-600 text-white shadow-lg hover:bg-cyan-700 transition-all z-50"
-        >
-          <ArrowUp size={20} />
-        </button>
-      )}
-    </div>
-  );
-};
-
+export const SettingsPage: React.FC<{ showNavigation?: boolean }> = ({ showNavigation = true }) => (
+  <div className="flex min-h-screen flex-col bg-[var(--app-bg)] text-[var(--app-text)] lg:pl-[216px]">
+    {showNavigation && <AppTopNav />}
+    <main className="mx-auto w-full max-w-[1280px] flex-1 bg-[var(--app-surface)] shadow-[var(--app-shadow-card)]">
+      <Settings />
+    </main>
+  </div>
+);

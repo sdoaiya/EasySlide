@@ -1,8 +1,9 @@
-﻿import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Plus, FileText, Sparkle, Download, Upload, ChevronDown, List, SlidersHorizontal } from 'lucide-react';
 import { useT } from '@/hooks/useT';
 import PresetCapsules from '@/components/shared/PresetCapsules';
+import { ProjectRailPortal, useProjectRailTarget } from '@/components/content-project/useProjectRailTarget';
 import { getStaticAssetUrl } from '@/api/client';
 
 // 组件内翻译
@@ -125,7 +126,7 @@ import { Button, Loading, useConfirm, useToast, AiRefineInput, FilePreviewModal,
 import { MarkdownTextarea, type MarkdownTextareaRef } from '@/components/shared/MarkdownTextarea';
 import { OutlineCard } from '@/components/outline/OutlineCard';
 import { useProjectStore } from '@/store/useProjectStore';
-import { refineOutline, updateProject, addPage } from '@/api/endpoints';
+import { refineOutline, updateProject, addPagesBatch } from '@/api/endpoints';
 import { useImagePaste, buildMaterialsMarkdown } from '@/hooks/useImagePaste';
 import type { Material } from '@/types';
 import { exportProjectToMarkdown, parseMarkdownPages } from '@/utils/projectUtils';
@@ -164,8 +165,20 @@ export const OutlineEditor: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const t = useT(outlineI18n);
+  const projectRailTarget = useProjectRailTarget();
   const { projectId } = useParams<{ projectId: string }>();
   const fromHistory = (location.state as any)?.from === 'history';
+  const handleBack = useCallback(() => {
+    if (fromHistory) {
+      navigate('/history');
+      return;
+    }
+    if (window.history.length > 1) {
+      navigate(-1);
+      return;
+    }
+    navigate('/');
+  }, [fromHistory, navigate]);
   const {
     currentProject,
     syncProject,
@@ -441,15 +454,11 @@ export const OutlineEditor: React.FC = () => {
         show({ message: t('outline.messages.importEmpty'), type: 'error' });
         throw new Error('empty-import');
       }
-      const startIndex = currentProject.pages.reduce((max, p) => Math.max(max, (p.order_index ?? 0) + 1), 0);
-      await Promise.all(parsed.map(({ title, points, text: desc, part, extra_fields }, i) =>
-        addPage(projectId, {
-          outline_content: { title, points },
-          description_content: desc ? { text: desc, ...(extra_fields ? { extra_fields } : {}) } : undefined,
-          part,
-          order_index: startIndex + i,
-        })
-      ));
+      await addPagesBatch(projectId, parsed.map(({ title, points, text: desc, part, extra_fields }) => ({
+        outline_content: { title, points },
+        description_content: desc ? { text: desc, ...(extra_fields ? { extra_fields } : {}) } : undefined,
+        part,
+      })));
       await syncProject(projectId);
       show({ message: t('outline.messages.importSuccess'), type: 'success' });
     } catch (error) {
@@ -466,20 +475,17 @@ export const OutlineEditor: React.FC = () => {
     return <Loading fullscreen message={t('outline.messages.loadingProject')} />;
   }
 
-  if (isGlobalLoading && !isOutlineStreaming) {
-    return <Loading fullscreen message={t('outline.messages.generatingOutline')} />;
-  }
-
   return (
-    <div data-testid="outline-editor-workspace" className="h-full min-h-0 overflow-hidden bg-gradient-to-b from-sky-50 via-white to-slate-50 dark:from-background-primary dark:via-background-primary dark:to-background-secondary flex flex-col">
-      <header className="bg-white/90 dark:bg-background-secondary/95 backdrop-blur border-b border-sky-100 dark:border-border-primary px-4 md:px-7 py-2 flex-shrink-0">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+    <div data-testid="outline-editor-workspace" className="relative flex h-full min-h-0 flex-col overflow-hidden bg-[var(--app-canvas)] text-[var(--app-text)]">
+      <header className="shrink-0 border-b border-[var(--app-border)] bg-[var(--app-surface)]">
+        <div className="flex min-h-[52px] items-center px-4 md:px-6">
+        <div className="flex w-full flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <Button
               variant="ghost"
               size="sm"
               icon={<ArrowLeft size={16} />}
-              onClick={() => navigate(fromHistory ? '/history' : '/app')}
+              onClick={handleBack}
               className="flex-shrink-0"
             >
               <span className="hidden sm:inline">{t('common.back')}</span>
@@ -487,12 +493,12 @@ export const OutlineEditor: React.FC = () => {
             <img src={getStaticAssetUrl('/logo-nav.png')} alt="EasySlide Logo" className="h-8 w-auto" />
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <span className="text-lg font-bold text-slate-900 dark:text-foreground-primary">{t('outline.title')}</span>
-                <span className="hidden sm:inline rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-600">
+                <span className="text-lg font-semibold text-[var(--app-text)]">{t('outline.title')}</span>
+                <span className="hidden rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-2 py-0.5 text-[11px] font-semibold text-[var(--app-text-secondary)] sm:inline">
                   {t('outline.workflowStage')}
                 </span>
               </div>
-              <p className="hidden md:block text-xs text-slate-500 dark:text-foreground-tertiary">{t('outline.workflowHint')}</p>
+              <p className="hidden text-xs text-[var(--app-text-secondary)] md:block">{t('outline.workflowHint')}</p>
             </div>
           </div>
 
@@ -500,29 +506,31 @@ export const OutlineEditor: React.FC = () => {
             <Button variant="primary" icon={<Plus size={16} />} onClick={addNewPage}>
               {t('outline.addPage')}
             </Button>
-            <Button variant="secondary" onClick={handleGenerateOutline} disabled={isOutlineStreaming}>
+            {currentProject.creation_type !== 'blank' && <Button variant="secondary" onClick={handleGenerateOutline} disabled={isOutlineStreaming}>
               {isOutlineStreaming
                 ? t('outline.generating')
                 : currentProject.pages.length === 0
                   ? currentProject.creation_type === 'outline' ? t('outline.parseOutline') : t('outline.autoGenerate')
                   : currentProject.creation_type === 'outline' ? t('outline.reParseOutline') : t('outline.reGenerate')}
-            </Button>
+            </Button>}
             <div className="relative" ref={fileMenuRef}>
               <Button
                 variant="secondary"
                 onClick={() => setFileMenuOpen(!fileMenuOpen)}
                 icon={<FileText size={16} />}
+                aria-expanded={fileMenuOpen}
+                aria-haspopup="menu"
               >
                 {t('outline.importExport')}
                 <ChevronDown size={14} className={`ml-1 transition-transform duration-200 ${fileMenuOpen ? 'rotate-180' : ''}`} />
               </Button>
               {fileMenuOpen && (
-                <div className="absolute right-0 top-full mt-2 z-50 w-36 rounded-xl border border-sky-100 dark:border-border-primary bg-white dark:bg-background-secondary shadow-lg overflow-hidden">
+                <div role="menu" className="absolute right-0 top-full z-50 mt-2 w-36 overflow-hidden rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)] shadow-[var(--app-shadow-soft)]">
                   <button
                     type="button"
                     onClick={() => { handleExportOutline(); setFileMenuOpen(false); }}
                     disabled={currentProject.pages.length === 0}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-600 dark:text-foreground-tertiary hover:bg-sky-50 dark:hover:bg-background-hover disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--app-accent-soft)] disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <Download size={14} />
                     {t('outline.export')}
@@ -530,7 +538,7 @@ export const OutlineEditor: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => { setIsImportModalOpen(true); setFileMenuOpen(false); }}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-600 dark:text-foreground-tertiary hover:bg-sky-50 dark:hover:bg-background-hover"
+                    className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--app-accent-soft)]"
                   >
                     <Upload size={14} />
                     {t('outline.import')}
@@ -540,8 +548,9 @@ export const OutlineEditor: React.FC = () => {
             </div>
           </div>
         </div>
+        </div>
 
-        <div className="mt-3">
+        <div className="border-t border-[var(--app-border)] px-4 py-2 md:px-6">
           <AiRefineInput
             title=""
             placeholder={t('outline.aiPlaceholder')}
@@ -553,14 +562,20 @@ export const OutlineEditor: React.FC = () => {
         </div>
       </header>
 
-      <main data-testid="outline-editor-scroll-region" className="flex-1 min-h-0 overflow-y-auto p-3 pb-24 md:p-4 md:pb-24">
+      <main data-testid="outline-editor-scroll-region" className="min-h-0 flex-1 overflow-y-auto p-3 pb-20 md:p-4 md:pb-20" aria-busy={isGlobalLoading || isOutlineStreaming}>
+        {(isGlobalLoading || isOutlineStreaming) && (
+          <div role="status" aria-live="polite" className="mb-3 flex min-h-9 items-center gap-2 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 text-sm text-[var(--app-text-secondary)]">
+            <span className="h-2 w-2 animate-pulse rounded-full bg-[var(--app-accent)]" aria-hidden="true" />
+            {t('outline.messages.generatingOutline')}
+          </div>
+        )}
         {currentProject.pages.length > 0 && (
           <div className="mb-3 flex justify-end">
             <button
               type="button"
               aria-expanded={isContextExpanded}
               onClick={() => setIsContextExpanded((expanded) => !expanded)}
-              className="inline-flex h-9 items-center gap-1.5 rounded-md border border-sky-100 bg-white px-3 text-sm font-medium text-slate-600 hover:bg-sky-50 dark:border-border-primary dark:bg-background-secondary dark:text-foreground-secondary dark:hover:bg-background-hover"
+              className="inline-flex h-9 items-center gap-1.5 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 text-sm font-medium text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)]"
             >
               {isContextExpanded ? t('outline.collapseContext') : t('outline.expandContext')}
               <ChevronDown size={15} className={isContextExpanded ? 'rotate-180' : ''} />
@@ -569,12 +584,12 @@ export const OutlineEditor: React.FC = () => {
         )}
         {(currentProject.pages.length === 0 || isContextExpanded) && (
         <section data-testid="outline-context-fields" className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-          <div className="bg-white dark:bg-background-secondary rounded-lg shadow-sm dark:shadow-none border border-sky-100 dark:border-border-primary overflow-hidden">
-            <div className="h-12 px-5 flex items-center gap-2 border-b border-slate-100 dark:border-border-secondary">
+          <div className="overflow-hidden rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)] shadow-[var(--app-shadow-soft)]">
+            <div className="h-12 px-5 flex items-center gap-2 border-b border-[var(--app-border)]">
               {currentProject.creation_type === 'idea'
-                ? <Sparkle size={18} className="text-sky-500" />
-                : <FileText size={18} className="text-sky-500" />}
-              <h2 className="font-bold text-slate-800 dark:text-foreground-primary">{inputLabel}</h2>
+                ? <Sparkle size={18} className="text-[var(--app-accent)]" />
+                : <FileText size={18} className="text-[var(--app-accent)]" />}
+              <h2 className="font-bold text-[var(--app-text)]">{inputLabel}</h2>
             </div>
             <MarkdownTextarea
               ref={desktopTextareaRef}
@@ -591,10 +606,10 @@ export const OutlineEditor: React.FC = () => {
             />
           </div>
 
-          <div className="bg-white dark:bg-background-secondary rounded-lg shadow-sm dark:shadow-none border border-sky-100 dark:border-border-primary overflow-hidden">
-            <div className="h-12 px-5 flex items-center gap-2 border-b border-slate-100 dark:border-border-secondary">
-              <SlidersHorizontal size={18} className="text-sky-500" />
-              <h2 className="font-bold text-slate-800 dark:text-foreground-primary">{t('outline.outlineRequirements')}</h2>
+          <div className="overflow-hidden rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)] shadow-[var(--app-shadow-soft)]">
+            <div className="h-12 px-5 flex items-center gap-2 border-b border-[var(--app-border)]">
+              <SlidersHorizontal size={18} className="text-[var(--app-accent)]" />
+              <h2 className="font-bold text-[var(--app-text)]">{t('outline.outlineRequirements')}</h2>
             </div>
             <div data-testid="outline-requirements-textarea">
               <MarkdownTextarea
@@ -631,17 +646,18 @@ export const OutlineEditor: React.FC = () => {
           showToast={show}
         />
 
-        <section className="mt-3 grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-4">
-          <aside className="bg-white dark:bg-background-secondary rounded-lg shadow-sm border border-sky-100 dark:border-border-primary p-3 lg:sticky lg:top-3 lg:max-h-[calc(100dvh-210px)] overflow-hidden flex flex-col">
+        <section className={`mt-3 ${projectRailTarget ? 'block' : 'grid grid-cols-1 gap-4 lg:grid-cols-[260px_1fr]'}`}>
+          <ProjectRailPortal target={projectRailTarget}>
+          <aside className={`flex flex-col overflow-hidden ${projectRailTarget ? 'h-full min-h-0' : 'rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)] p-3 shadow-[var(--app-shadow-soft)] lg:sticky lg:top-3 lg:max-h-[calc(100dvh-210px)]'}`}>
             <div className="flex items-center justify-between px-2 pb-3">
               <div>
-                <h3 className="flex items-center gap-2 font-bold text-slate-700 dark:text-foreground-primary">
-                  <List size={17} className="text-sky-500" />
+                <h3 className="flex items-center gap-2 font-semibold text-[var(--app-text)]">
+                  <List size={17} className="text-[var(--app-accent)]" />
                   {t('outline.pageNavigation')}
                 </h3>
-                <p className="text-xs text-slate-400 mt-0.5">{t('outline.pageNavigationHint')}</p>
+                <p className="mt-0.5 text-xs text-[var(--app-text-tertiary)]">{t('outline.pageNavigationHint')}</p>
               </div>
-              <span className="rounded-full bg-sky-50 px-3 py-1 text-sm font-semibold text-sky-700">
+              <span className="rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-3 py-1 text-sm font-semibold text-[var(--app-text-secondary)]">
                 {t('outline.pageCount', { count: String(currentProject.pages.length) })}
               </span>
             </div>
@@ -659,31 +675,32 @@ export const OutlineEditor: React.FC = () => {
                       setSelectedPageId(page.id || null);
                       document.getElementById(`outline-page-${page.id || index}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
                     }}
-                    className={`h-20 w-full overflow-hidden text-left rounded-lg border px-3 py-2 transition-all ${
+                    className={`h-20 w-full overflow-hidden rounded-[var(--app-radius-card)] border px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)] ${
                       selected
-                        ? 'border-sky-300 bg-sky-50 shadow-sm'
-                        : 'border-slate-100 bg-white hover:border-sky-200 hover:bg-sky-50/60 dark:border-border-primary dark:bg-background-secondary dark:hover:bg-background-hover'
+                        ? 'border-[var(--app-accent)] bg-[var(--app-accent-soft)] shadow-[var(--app-shadow-card)]'
+                        : 'border-[var(--app-border)] bg-[var(--app-surface)] hover:border-[var(--app-accent)] hover:bg-[var(--app-surface-hover)]'
                     }`}
                   >
-                    <span className="text-xs font-semibold text-slate-400">{t('outline.page', { num: index + 1 })}</span>
-                    <span className="block mt-0.5 text-sm font-bold text-slate-700 dark:text-foreground-primary line-clamp-1">{navTitle}</span>
-                    <span className="block text-xs text-slate-500 dark:text-foreground-tertiary line-clamp-1">{navSubtitle || t('outline.keyPoints')}</span>
+                    <span className="text-xs font-semibold text-[var(--app-text-tertiary)]">{t('outline.page', { num: index + 1 })}</span>
+                    <span className="mt-0.5 block line-clamp-1 text-sm font-semibold text-[var(--app-text)]">{navTitle}</span>
+                    <span className="block line-clamp-1 text-xs text-[var(--app-text-secondary)]">{navSubtitle || t('outline.keyPoints')}</span>
                   </button>
                 );
               })}
             </div>
           </aside>
+          </ProjectRailPortal>
 
           <div className="min-w-0">
           {currentProject.pages.length === 0 && !isOutlineStreaming ? (
-            <div className="text-center py-12 md:py-20 bg-white dark:bg-background-secondary rounded-2xl border border-sky-100 dark:border-border-primary shadow-sm">
+            <div className="rounded-[var(--app-radius-panel)] border border-[var(--app-border)] bg-[var(--app-surface)] py-12 text-center shadow-[var(--app-shadow-soft)] md:py-20">
               <div className="flex justify-center mb-4">
-                <FileText size={48} className="text-gray-300" />
+                <FileText size={48} className="text-[var(--app-text-tertiary)]" />
               </div>
-              <h3 className="text-lg font-semibold text-gray-800 dark:text-foreground-primary mb-2">
+              <h3 className="mb-2 text-lg font-semibold text-[var(--app-text)]">
                 {t('outline.noPages')}
               </h3>
-              <p className="text-gray-500 dark:text-foreground-tertiary mb-6">
+              <p className="mb-6 text-[var(--app-text-tertiary)]">
                 {t('outline.noPagesHint')}
               </p>
             </div>
@@ -724,19 +741,19 @@ export const OutlineEditor: React.FC = () => {
                       style={{ opacity: skeletonFading ? 0 : 1 }}
                     >
                       <div className="animate-pulse">
-                        <div className="bg-white dark:bg-background-secondary rounded-xl shadow-sm border border-gray-100 dark:border-border-primary p-4">
+                        <div className="rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)] p-4 shadow-[var(--app-shadow-soft)]">
                         <div className="flex items-start gap-3">
-                          <div className="w-5 h-5 bg-gray-200 dark:bg-gray-700 rounded mt-1" />
+                          <div className="mt-1 h-5 w-5 rounded-[var(--app-radius-control)] bg-[var(--app-surface-muted)]" />
                           <div className="flex-1 space-y-3">
                             <div className="flex items-center gap-2">
-                              <div className="h-4 w-12 bg-gray-200 dark:bg-gray-700 rounded" />
-                              <div className="h-4 w-16 bg-cyan-100 dark:bg-cyan-900/30 rounded" />
+                              <div className="h-4 w-12 rounded-[var(--app-radius-control)] bg-[var(--app-surface-muted)]" />
+                              <div className="h-4 w-16 rounded bg-[var(--app-accent-soft)]" />
                             </div>
-                            <div className="h-5 w-2/3 bg-gray-200 dark:bg-gray-700 rounded" />
+                            <div className="h-5 w-2/3 rounded-[var(--app-radius-control)] bg-[var(--app-surface-muted)]" />
                             <div className="space-y-2">
-                              <div className="h-3.5 w-full bg-gray-100 dark:bg-gray-800 rounded" />
-                              <div className="h-3.5 w-4/5 bg-gray-100 dark:bg-gray-800 rounded" />
-                              <div className="h-3.5 w-3/5 bg-gray-100 dark:bg-gray-800 rounded" />
+                              <div className="h-3.5 w-full rounded-[var(--app-radius-control)] bg-[var(--app-surface-hover)]" />
+                              <div className="h-3.5 w-4/5 rounded-[var(--app-radius-control)] bg-[var(--app-surface-hover)]" />
+                              <div className="h-3.5 w-3/5 rounded-[var(--app-radius-control)] bg-[var(--app-surface-hover)]" />
                             </div>
                           </div>
                         </div>
@@ -751,12 +768,12 @@ export const OutlineEditor: React.FC = () => {
           </div>
         </section>
       </main>
-      <footer data-testid="outline-editor-footer" className="pointer-events-none fixed bottom-5 left-1/2 z-50 w-[calc(100vw-32px)] max-w-xl -translate-x-1/2">
-        <div data-testid="outline-editor-footer-bar" className="pointer-events-auto flex min-h-[56px] items-center justify-between gap-3 rounded-2xl border border-sky-100/80 bg-white/95 px-3 py-2 shadow-[0_16px_45px_rgba(15,23,42,0.18)] backdrop-blur-xl dark:border-border-primary dark:bg-background-secondary/95 dark:shadow-none">
+      <footer data-testid="outline-editor-footer" className="pointer-events-none fixed inset-x-0 bottom-0 z-20 px-4 md:px-6">
+        <div data-testid="outline-editor-footer-bar" className="pointer-events-auto mx-auto flex min-h-[44px] max-w-5xl items-center justify-between gap-3 rounded-[var(--app-radius-panel)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 shadow-[var(--app-shadow-floating)]">
           <Button
             variant="secondary"
             icon={<ArrowLeft size={16} />}
-            onClick={() => navigate(fromHistory ? '/history' : '/app')}
+            onClick={handleBack}
           >
             {t('common.previous')}
           </Button>
@@ -777,7 +794,7 @@ export const OutlineEditor: React.FC = () => {
                 }
               }
               await saveAllPages();
-              navigate(`/project/${projectId}/detail`);
+              navigate(`/project/${projectId}/ppt/detail`);
             }}
           >
             {t('common.next')}
@@ -809,6 +826,7 @@ export const OutlineEditor: React.FC = () => {
         onClose={() => setIsMaterialSelectorOpen(false)}
         onSelect={activeMaterialTarget === 'input' ? handleInputMaterialSelect : handleReqMaterialSelect}
         multiple
+        mediaKindFilter={['image']}
       />
     </div>
   );

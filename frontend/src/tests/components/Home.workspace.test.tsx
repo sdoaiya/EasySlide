@@ -1,4 +1,4 @@
-import { act, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import { Home } from '@/pages/Home';
@@ -38,16 +38,16 @@ describe('Home workspace clone', () => {
     vi.useRealTimers();
   });
 
-  it('renders workspace-oriented creation entry copy', () => {
+  it('renders the token-driven creation workspace', () => {
     const { container } = render(
       <MemoryRouter>
         <Home />
       </MemoryRouter>
     );
 
-    expect(container.firstElementChild?.className).toContain('bg-[#f5f9fc]');
+    expect(container.firstElementChild).toHaveClass('create-reference-canvas');
     expect(container.firstElementChild?.className).not.toContain('yellow');
-    expect(container.querySelector('#create')).not.toBeInTheDocument();
+    expect(container.querySelector('#create')).toBeInTheDocument();
     expect(screen.queryByTitle('View on GitHub')).not.toBeInTheDocument();
   });
 
@@ -63,7 +63,10 @@ describe('Home workspace clone', () => {
     );
 
     expect(container.querySelector('#create')).toBeInTheDocument();
-    expect(container.querySelector('#create button')?.className).toContain('from-sky-500');
+    const createNavButton = within(screen.getByRole('navigation', { name: '工作台导航' })).getByRole('button', { name: '创建项目' });
+    expect(createNavButton).toHaveAttribute('aria-current', 'page');
+    expect(createNavButton).toHaveClass('bg-[var(--app-surface)]');
+    expect(screen.getByRole('button', { name: '下一步' })).toHaveClass('bg-[var(--app-primary-action)]');
     expect(screen.getAllByText(/PDF \/ PPTX/i).length).toBeGreaterThan(0);
   });
 
@@ -76,28 +79,36 @@ describe('Home workspace clone', () => {
     );
 
     const nav = screen.getByRole('navigation', { name: '工作台导航' });
+    expect(nav).toHaveClass('lg:fixed', 'lg:w-[216px]', 'lg:border-r');
+    expect(nav).not.toHaveClass('lg:overflow-hidden');
     expect(within(nav).getByRole('button', { name: '首页' })).toBeInTheDocument();
     expect(within(nav).getByRole('button', { name: '创建项目' })).toBeInTheDocument();
     expect(within(nav).getByRole('button', { name: '我的项目' })).toBeInTheDocument();
     expect(within(nav).getByRole('button', { name: '素材中心' })).toBeInTheDocument();
     expect(within(nav).getByRole('button', { name: '素材生成' })).toBeInTheDocument();
     expect(within(nav).queryByRole('button', { name: '使用手册' })).not.toBeInTheDocument();
-    expect(within(nav).getByRole('button', { name: '设置' })).toBeInTheDocument();
+    const settingsButton = within(nav).getByRole('button', { name: '设置' });
+    expect(settingsButton).toBeInTheDocument();
+    expect(settingsButton).not.toHaveTextContent('设置');
+    expect(within(nav).getByRole('button', { name: '界面语言' })).not.toHaveTextContent(/EN|中/);
+    fireEvent.click(within(nav).getByRole('button', { name: '主题模式' }));
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'EasySlide' })).toBeInTheDocument();
   });
 
-  it('matches the ezppt app hero headline and capability cards', () => {
-    render(
+  it('keeps creation controls focused on the real workflow instead of a marketing hero', () => {
+    const { container } = render(
       <MemoryRouter>
         <Home />
       </MemoryRouter>
     );
 
-    expect(screen.getByRole('heading', { level: 1, name: '让 AI 协助完成从构思到成稿的 PPT 创作流程。' })).toBeInTheDocument();
-    expect(screen.getByText('从想法到成稿，始终轻松、清晰、可控')).toBeInTheDocument();
-    expect(screen.getByText('从想法轻松起步')).toBeInTheDocument();
-    expect(screen.getByText('每一步均可编辑')).toBeInTheDocument();
-    expect(screen.getByText('每一步均可优化')).toBeInTheDocument();
-    expect(screen.getByText('资产与模板可复用')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: '创建项目' })).toBeInTheDocument();
+    expect(container.querySelector('#create')).toHaveClass('border-y', 'bg-[var(--app-surface)]');
+    expect(container.querySelector('#create')).not.toHaveClass('rounded-[var(--app-radius-modal)]');
+    expect(screen.getByRole('radiogroup', { name: '创建方式' })).toBeInTheDocument();
+    expect(screen.getByRole('radiogroup', { name: '生成模式' })).toBeInTheDocument();
+    expect(screen.queryByText('从想法到成稿，始终轻松、清晰、可控')).not.toBeInTheDocument();
   });
 
   it('removes the showcase and footer from the local workspace page', () => {

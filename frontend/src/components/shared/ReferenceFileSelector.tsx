@@ -439,13 +439,13 @@ export const ReferenceFileSelector: React.FC<ReferenceFileSelectorProps> = React
 
   const getStatusIcon = (file: ReferenceFile) => {
     if (parsingIds.has(file.id) || file.parse_status === 'parsing') {
-      return <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />;
+      return <Loader2 className="h-4 w-4 animate-spin text-[var(--app-index-yellow)]" />;
     }
     switch (file.parse_status) {
       case 'completed':
-        return <CheckCircle2 className="w-4 h-4 text-green-500" />;
+        return <CheckCircle2 className="h-4 w-4 text-[var(--app-index-green)]" />;
       case 'failed':
-        return <XCircle className="w-4 h-4 text-red-500" />;
+        return <XCircle className="h-4 w-4 text-[var(--app-error)]" />;
       default:
         return null;
     }
@@ -487,15 +487,15 @@ export const ReferenceFileSelector: React.FC<ReferenceFileSelectorProps> = React
       <div className="space-y-4">
         {/* 工具栏 */}
         <div className="flex items-center justify-between flex-wrap gap-2">
-          <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-foreground-tertiary">
+          <div className="flex items-center gap-2 text-sm text-[var(--app-text-secondary)]">
             <span>{files.length > 0 ? t('referenceFile.totalFiles', { count: files.length }) : t('referenceFile.noFiles')}</span>
             {selectedFiles.size > 0 && (
-              <span className="ml-2 text-banana-600">
+              <span className="ml-2 text-[var(--app-accent)]">
                 {t('referenceFile.selectedCount', { count: selectedFiles.size })}
               </span>
             )}
             {isLoading && files.length > 0 && (
-              <RefreshCw size={14} className="animate-spin text-gray-400" />
+              <RefreshCw size={14} className="animate-spin text-[var(--app-text-tertiary)]" />
             )}
           </div>
           <div className="flex items-center gap-2 flex-wrap">
@@ -503,7 +503,7 @@ export const ReferenceFileSelector: React.FC<ReferenceFileSelectorProps> = React
             <select
               value={filterProjectId}
               onChange={(e) => setFilterProjectId(e.target.value)}
-              className="px-3 py-1.5 text-sm text-gray-700 dark:text-foreground-secondary bg-transparent hover:bg-gray-100 dark:hover:bg-background-hover rounded-md focus:outline-none transition-colors cursor-pointer"
+              className="cursor-pointer rounded-[var(--app-radius-control)] border border-transparent bg-transparent px-3 py-1.5 text-sm text-[var(--app-text-secondary)] transition-colors hover:bg-[var(--app-surface-hover)] focus-visible:border-[var(--app-accent)] focus-visible:outline-none"
             >
               <option value="all">{t('referenceFile.allAttachments')}</option>
               <option value="none">{t('referenceFile.unclassified')}</option>
@@ -520,7 +520,7 @@ export const ReferenceFileSelector: React.FC<ReferenceFileSelectorProps> = React
                 const nextIndex = (currentIndex + 1) % order.length;
                 setSortBy(order[nextIndex]);
               }}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-700 dark:text-foreground-secondary hover:bg-gray-100 dark:hover:bg-background-hover rounded-md transition-colors"
+                className="flex items-center gap-1.5 rounded-[var(--app-radius-control)] px-3 py-1.5 text-sm text-[var(--app-text-secondary)] transition-colors hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text)]"
             >
               <ArrowUpDown size={14} />
               <span>
@@ -570,20 +570,20 @@ export const ReferenceFileSelector: React.FC<ReferenceFileSelectorProps> = React
         />
 
         {/* 文件列表 */}
-        <div className="border border-gray-200 dark:border-border-primary rounded-lg max-h-96 overflow-y-auto">
+        <div className="max-h-96 overflow-y-auto rounded-[var(--app-radius-card)] border border-[var(--app-border)]">
           {isLoading ? (
             <div className="flex items-center justify-center py-12">
-              <Loader2 className="w-6 h-6 text-gray-400 animate-spin" />
-              <span className="ml-2 text-gray-500 dark:text-foreground-tertiary">{t('referenceFile.loading')}</span>
+              <Loader2 className="h-6 w-6 animate-spin text-[var(--app-text-tertiary)]" />
+              <span className="ml-2 text-[var(--app-text-tertiary)]">{t('referenceFile.loading')}</span>
             </div>
           ) : files.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-gray-400">
-              <FileText className="w-12 h-12 mb-2" />
+            <div className="flex flex-col items-center justify-center py-12 text-[var(--app-text-tertiary)]">
+              <FileText className="mb-2 h-12 w-12" />
               <p>{t('referenceFile.noRefFiles')}</p>
               <p className="text-sm mt-1">{t('referenceFile.noRefFilesHint')}</p>
             </div>
           ) : (
-            <div className="divide-y divide-gray-200 dark:divide-border-primary">
+            <div className="divide-y divide-[var(--app-border)]">
               {sortedFiles.map((file) => {
                 const isSelected = selectedFiles.has(file.id);
                 const isDeleting = deletingIds.has(file.id);
@@ -592,10 +592,19 @@ export const ReferenceFileSelector: React.FC<ReferenceFileSelectorProps> = React
                 return (
                   <div
                     key={file.id}
+                    role="checkbox"
+                    tabIndex={file.parse_status === 'failed' ? -1 : 0}
+                    aria-checked={isSelected}
                     onClick={() => handleSelectFile(file)}
-                    className={`
-                      p-4 cursor-pointer transition-colors
-                      ${isSelected ? 'bg-banana-50 dark:bg-background-secondary border-l-4 border-l-banana-500' : 'hover:bg-gray-50 dark:hover:bg-background-hover'}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        handleSelectFile(file);
+                      }
+                    }}
+                      className={`
+                      cursor-pointer border-l-4 border-l-transparent p-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--app-accent-soft)]
+                      ${isSelected ? 'border-l-[var(--app-primary-action)] bg-[var(--app-surface-muted)]' : 'hover:bg-[var(--app-surface-hover)]'}
                       ${file.parse_status === 'failed' ? 'opacity-60' : ''}
                     `}
                   >
@@ -604,34 +613,34 @@ export const ReferenceFileSelector: React.FC<ReferenceFileSelectorProps> = React
                       <div className="flex-shrink-0 mt-1">
                         <div
                           className={`
-                            w-5 h-5 rounded border-2 flex items-center justify-center
+                            flex h-5 w-5 items-center justify-center rounded border-2
                             ${isSelected
-                              ? 'bg-banana-500 border-banana-500'
-                              : 'border-gray-300 dark:border-border-primary'
+                              ? 'border-[var(--app-primary-action)] bg-[var(--app-primary-action)]'
+                              : 'border-[var(--app-border)]'
                             }
                             ${file.parse_status === 'failed' ? 'opacity-50' : ''}
                           `}
                         >
                           {isSelected && (
-                            <CheckCircle2 className="w-4 h-4 text-white" />
+                            <CheckCircle2 className="h-4 w-4 text-[var(--app-surface)]" />
                           )}
                         </div>
                       </div>
 
                       {/* 文件图标 */}
                       <div className="flex-shrink-0">
-                        <div className="w-10 h-10 bg-blue-50 dark:bg-blue-900/30 rounded-lg flex items-center justify-center">
-                          <FileText className="w-5 h-5 text-blue-600" />
+                        <div className="flex h-10 w-10 items-center justify-center rounded-[var(--app-radius-control)] bg-[var(--app-surface-muted)]">
+                          <FileText className="h-5 w-5 text-[var(--app-text-secondary)]" />
                         </div>
                       </div>
 
                       {/* 文件信息 */}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
-                          <p className="text-sm font-medium text-gray-900 dark:text-foreground-primary truncate">
+                          <p className="truncate text-sm font-medium text-[var(--app-text)]">
                             {file.filename}
                           </p>
-                          <span className="text-xs text-gray-500 dark:text-foreground-tertiary flex-shrink-0">
+                          <span className="flex-shrink-0 text-xs text-[var(--app-text-tertiary)]">
                             {formatFileSize(file.file_size)}
                           </span>
                         </div>
@@ -639,17 +648,17 @@ export const ReferenceFileSelector: React.FC<ReferenceFileSelectorProps> = React
                         {/* 状态 */}
                         <div className="flex items-center gap-1.5 mt-1">
                           {getStatusIcon(file)}
-                          <p className="text-xs text-gray-600 dark:text-foreground-tertiary">
+                          <p className="text-xs text-[var(--app-text-secondary)]">
                             {getStatusText(file)}
                             {isPending && (
-                              <span className="ml-1 text-orange-500">{t('referenceFile.parseOnConfirm')}</span>
+                              <span className="ml-1 text-[var(--app-index-yellow)]">{t('referenceFile.parseOnConfirm')}</span>
                             )}
                           </p>
                         </div>
 
                         {/* 失败信息 */}
                         {file.parse_status === 'failed' && file.error_message && (
-                          <p className="text-xs text-red-500 mt-1 line-clamp-1">
+                          <p className="mt-1 line-clamp-1 text-xs text-[var(--app-error)]">
                             {file.error_message}
                           </p>
                         )}
@@ -658,7 +667,7 @@ export const ReferenceFileSelector: React.FC<ReferenceFileSelectorProps> = React
                         {file.parse_status === 'completed' && 
                          typeof file.image_caption_failed_count === 'number' && 
                          file.image_caption_failed_count > 0 && (
-                          <p className="text-xs text-orange-500 mt-1">
+                          <p className="mt-1 text-xs text-[var(--app-index-yellow)]">
                             ⚠️ {t('referenceFile.imageCaptionFailed', { count: file.image_caption_failed_count })}
                           </p>
                         )}
@@ -668,7 +677,7 @@ export const ReferenceFileSelector: React.FC<ReferenceFileSelectorProps> = React
                       <button
                         onClick={(e) => handleDeleteFile(e, file)}
                         disabled={isDeleting}
-                        className="flex-shrink-0 p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors disabled:opacity-50"
+                        className="flex-shrink-0 rounded-[var(--app-radius-control)] p-1 text-[var(--app-text-tertiary)] transition-colors hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-error)] disabled:opacity-50"
                         title={t('referenceFile.deleteFile')}
                       >
                         {isDeleting ? (
@@ -686,8 +695,8 @@ export const ReferenceFileSelector: React.FC<ReferenceFileSelectorProps> = React
         </div>
 
         {/* 底部操作栏 */}
-        <div className="flex items-center justify-between pt-4 border-t border-gray-200 dark:border-border-primary">
-          <p className="text-xs text-gray-500 dark:text-foreground-tertiary">
+        <div className="flex items-center justify-between border-t border-[var(--app-border)] pt-4">
+          <p className="text-xs text-[var(--app-text-tertiary)]">
             💡 {t('referenceFile.autoParseHint')}
           </p>
           <div className="flex items-center gap-2">

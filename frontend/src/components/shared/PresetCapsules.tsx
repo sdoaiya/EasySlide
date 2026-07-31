@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { Plus, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useT } from '@/hooks/useT';
@@ -116,9 +116,9 @@ export default function PresetCapsules({ type, onAppend }: PresetCapsulesProps) 
     saveUserPresets(type, updated);
   }, [userPresets, type]);
 
-  const capsuleBase = 'inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs cursor-pointer transition-colors max-w-[200px] truncate';
-  const systemCapsule = `${capsuleBase} bg-gray-100 dark:bg-background-primary text-gray-600 dark:text-foreground-secondary hover:bg-banana-50 dark:hover:bg-banana-900/20 hover:text-banana-700 dark:hover:text-banana-400 border border-gray-200 dark:border-border-primary`;
-  const userCapsule = `${capsuleBase} bg-banana-50 dark:bg-banana-900/20 text-banana-700 dark:text-banana-400 hover:bg-banana-100 dark:hover:bg-banana-900/30 border border-banana-200 dark:border-banana-700/40`;
+  const capsuleBase = 'inline-flex min-h-8 max-w-[200px] cursor-pointer items-center gap-1 truncate rounded-[var(--app-radius-control)] px-2.5 py-1 text-xs transition-colors';
+  const systemCapsule = `${capsuleBase} border border-[var(--app-border)] bg-[var(--app-surface-hover)] text-[var(--app-text-secondary)] hover:border-[var(--app-accent)] hover:text-[var(--app-accent)]`;
+  const userCapsule = `${capsuleBase} border border-[var(--app-accent)] bg-[var(--app-accent-soft)] text-[var(--app-accent)] hover:bg-[var(--app-surface-hover)]`;
 
   return (
     <>
@@ -156,10 +156,10 @@ export default function PresetCapsules({ type, onAppend }: PresetCapsulesProps) 
               type="button"
               data-testid={`${type}-delete-preset-${i}`}
               aria-label="Delete preset"
-              className="ml-0.5 p-0.5 rounded-full hover:bg-banana-200 dark:hover:bg-banana-800/40 transition-colors"
+              className="ml-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-[var(--app-radius-control)] transition-colors hover:bg-[var(--app-surface-hover)]"
               onClick={(e) => { e.stopPropagation(); handleDeletePreset(i); }}
             >
-              <X size={10} />
+              <X size={12} />
             </button>
           </span>
         ))}
@@ -169,7 +169,7 @@ export default function PresetCapsules({ type, onAppend }: PresetCapsulesProps) 
           type="button"
           data-testid={`${type}-add-preset`}
           onClick={() => setIsModalOpen(true)}
-          className={`${capsuleBase} bg-white dark:bg-background-primary text-gray-400 dark:text-foreground-tertiary hover:text-banana-600 dark:hover:text-banana-400 hover:border-banana-300 dark:hover:border-banana-600/40 border border-dashed border-gray-300 dark:border-border-primary`}
+          className={`${capsuleBase} border border-dashed border-[var(--app-border)] bg-[var(--app-surface)] text-[var(--app-text-tertiary)] hover:border-[var(--app-accent)] hover:text-[var(--app-accent)]`}
         >
           <Plus size={10} />
           {t('preset.addCustom')}
@@ -185,7 +185,7 @@ export default function PresetCapsules({ type, onAppend }: PresetCapsulesProps) 
       >
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-foreground-secondary mb-1.5">
+            <label className="mb-1.5 block text-sm font-medium text-[var(--app-text-secondary)]">
               {t('preset.nameLabel')}
             </label>
             <input
@@ -194,11 +194,11 @@ export default function PresetCapsules({ type, onAppend }: PresetCapsulesProps) 
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               placeholder={t('preset.namePlaceholder')}
-              className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-border-primary bg-gray-50 dark:bg-background-primary text-gray-700 dark:text-foreground-secondary placeholder-gray-400 dark:placeholder-foreground-tertiary/50 focus:outline-none focus:border-banana-300 dark:focus:border-banana-500/40 transition-colors"
+              className="w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 text-sm text-[var(--app-text)] transition-colors placeholder:text-[var(--app-text-tertiary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--app-accent-soft)]"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-foreground-secondary mb-1.5">
+            <label className="mb-1.5 block text-sm font-medium text-[var(--app-text-secondary)]">
               {t('preset.contentLabel')}
             </label>
             <textarea
@@ -207,7 +207,7 @@ export default function PresetCapsules({ type, onAppend }: PresetCapsulesProps) 
               onChange={(e) => setNewContent(e.target.value)}
               placeholder={t('preset.contentPlaceholder')}
               rows={3}
-              className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-border-primary bg-gray-50 dark:bg-background-primary text-gray-700 dark:text-foreground-secondary placeholder-gray-400 dark:placeholder-foreground-tertiary/50 resize-y focus:outline-none focus:border-banana-300 dark:focus:border-banana-500/40 transition-colors"
+              className="w-full resize-y rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 text-sm text-[var(--app-text)] transition-colors placeholder:text-[var(--app-text-tertiary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--app-accent-soft)]"
             />
           </div>
           <div className="flex justify-end gap-2 pt-2">
@@ -215,7 +215,7 @@ export default function PresetCapsules({ type, onAppend }: PresetCapsulesProps) 
               type="button"
               data-testid={`${type}-preset-cancel`}
               onClick={handleCloseModal}
-              className="px-4 py-2 text-sm rounded-lg text-gray-600 dark:text-foreground-tertiary hover:bg-gray-100 dark:hover:bg-background-hover transition-colors"
+              className="rounded-[var(--app-radius-control)] px-4 py-2 text-sm text-[var(--app-text-secondary)] transition-colors hover:bg-[var(--app-surface-hover)]"
             >
               {t('preset.cancel')}
             </button>
@@ -224,7 +224,7 @@ export default function PresetCapsules({ type, onAppend }: PresetCapsulesProps) 
               data-testid={`${type}-preset-confirm`}
               onClick={handleAddPreset}
               disabled={!newName.trim() || !newContent.trim()}
-              className="px-4 py-2 text-sm rounded-lg bg-banana-500 text-white hover:bg-banana-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  className="rounded-[var(--app-radius-control)] bg-[var(--app-primary-action)] px-4 py-2 text-sm text-[var(--app-surface)] transition-colors hover:bg-[var(--app-primary-action-hover)] disabled:cursor-not-allowed disabled:opacity-40"
             >
               {t('preset.add')}
             </button>

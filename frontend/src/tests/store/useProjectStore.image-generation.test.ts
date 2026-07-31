@@ -31,6 +31,7 @@ describe('useProjectStore image generation', () => {
       currentProject: project,
       pageGeneratingTasks: {},
       activeImageTask: null,
+      imageQualityReport: null,
       error: null,
       warningMessage: null,
     } as any)
@@ -44,12 +45,31 @@ describe('useProjectStore image generation', () => {
     expect(api.generateImages).toHaveBeenCalledWith('project-images', undefined, ['page-missing'], undefined)
   })
 
+  it('treats imported PDF pages as pending until renovation output completes', async () => {
+    useProjectStore.setState({
+      currentProject: {
+        ...project,
+        creation_type: 'ppt_renovation',
+        pages: [
+          { page_id: 'pdf-source', id: 'pdf-source', order_index: 0, status: 'DESCRIPTION_GENERATED', generated_image_path: 'source.png' },
+          { page_id: 'renovated', id: 'renovated', order_index: 1, status: 'COMPLETED', generated_image_path: 'output.png' },
+        ],
+      },
+    } as any)
+
+    await useProjectStore.getState().generateImages()
+
+    expect(api.generateImages).toHaveBeenCalledWith('project-images', undefined, ['pdf-source'], undefined)
+  })
+
   it('passes image generation settings to the batch endpoint', async () => {
     await useProjectStore.getState().generateImages(undefined, {
       maxWorkers: 2,
       useTemplate: false,
       density: 'rich',
       style: 'tech',
+      composition: 'text-left',
+      restraint: 'documentary',
       customPrompt: '蓝绿色科技感',
     })
 
@@ -62,6 +82,8 @@ describe('useProjectStore image generation', () => {
         useTemplate: false,
         density: 'rich',
         style: 'tech',
+        composition: 'text-left',
+        restraint: 'documentary',
         customPrompt: '蓝绿色科技感',
       },
     )
@@ -75,6 +97,8 @@ describe('useProjectStore image generation', () => {
       useTemplate: false,
       density: 'rich',
       style: 'tech',
+      composition: 'text-left',
+      restraint: 'documentary',
       customPrompt: '蓝绿色科技感',
     })
 
@@ -87,9 +111,66 @@ describe('useProjectStore image generation', () => {
         useTemplate: false,
         density: 'rich',
         style: 'tech',
+        composition: 'text-left',
+        restraint: 'documentary',
         customPrompt: '蓝绿色科技感',
       },
     )
+  })
+
+  it('keeps the quality report after a completed image task', async () => {
+    const progress = {
+      total: 2,
+      completed: 2,
+      quality_summary: {
+        checked: 2,
+        passed: 1,
+        warnings: 1,
+        issue_counts: { resolution_mismatch: 1 },
+      },
+      pages: [
+        { page_id: 'page-ready', status: 'completed', qa: { status: 'passed', issues: [] } },
+        {
+          page_id: 'page-missing',
+          status: 'completed',
+          qa: {
+            status: 'warning',
+            width: 1024,
+            height: 1024,
+            checks: { resolution_matches: false },
+            issues: ['resolution_mismatch'],
+          },
+        },
+      ],
+    }
+    vi.mocked(api.getTaskStatus).mockResolvedValueOnce({
+      data: {
+        task_id: 'image-task-quality-report',
+        task_type: 'GENERATE_IMAGES',
+        status: 'COMPLETED',
+        progress,
+      },
+    } as any)
+    useProjectStore.setState({
+      pageGeneratingTasks: {
+        'page-ready': 'image-task-quality-report',
+        'page-missing': 'image-task-quality-report',
+      },
+    } as any)
+
+    useProjectStore.getState().pollImageTask(
+      'image-task-quality-report',
+      ['page-ready', 'page-missing'],
+    )
+
+    await vi.waitFor(() => {
+      expect(useProjectStore.getState().imageQualityReport).toEqual(progress)
+    })
+    expect(useProjectStore.getState().warningMessage).toBe(
+      '图片已生成，其中 1 页存在质量提醒，请点击底部“质量提醒”查看。',
+    )
+    expect(useProjectStore.getState().activeImageTask).toBeNull()
+    expect(useProjectStore.getState().pageGeneratingTasks).toEqual({})
   })
 
   it('does not start another batch when every selected page already has an image', async () => {

@@ -31,6 +31,7 @@ const markdownTextareaI18n = {
 };
 
 const IMAGE_REGEX = /!\[([^\]]*)\]\(([^)]+)\)/g;
+const HTML_IMAGE_BLOCK_REGEX = /<div\b[^>]*>\s*(<img\b[^>]*>)\s*<\/div>/gi;
 const CHIP_SELECTED_CLASS = 'md-chip-selected';
 const CHIP_CLASS = 'md-chip';
 
@@ -80,6 +81,25 @@ function escapeHtml(text: string) {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+function getHtmlAttribute(attributes: string, name: string): string {
+  const match = attributes.match(new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i'));
+  return match?.[1] || match?.[2] || match?.[3] || '';
+}
+
+function convertHtmlImageTag(tag: string): string {
+  const attributes = tag.match(/<img\b([^>]*)>/i)?.[1] || '';
+  const url = getHtmlAttribute(attributes, 'src');
+  if (!url) return tag;
+  const alt = getHtmlAttribute(attributes, 'alt') || 'image';
+  return `![${alt}](${url})`;
+}
+
+function normalizeImageMarkup(text: string): string {
+  return text
+    .replace(HTML_IMAGE_BLOCK_REGEX, (_match, tag: string) => convertHtmlImageTag(tag))
+    .replace(/<img\b[^>]*>/gi, (tag) => convertHtmlImageTag(tag));
+}
+
 type Segment =
   | { type: 'text'; content: string }
   | { type: 'image'; alt: string; url: string; raw: string };
@@ -88,16 +108,17 @@ function parseSegments(text: string): Segment[] {
   const segments: Segment[] = [];
   let lastIndex = 0;
   const regex = new RegExp(IMAGE_REGEX.source, 'g');
+  const normalizedText = normalizeImageMarkup(text);
   let match;
-  while ((match = regex.exec(text)) !== null) {
+  while ((match = regex.exec(normalizedText)) !== null) {
     if (match.index > lastIndex) {
-      segments.push({ type: 'text', content: text.slice(lastIndex, match.index) });
+      segments.push({ type: 'text', content: normalizedText.slice(lastIndex, match.index) });
     }
     segments.push({ type: 'image', alt: match[1] || 'image', url: match[2], raw: match[0] });
     lastIndex = regex.lastIndex;
   }
-  if (lastIndex < text.length) {
-    segments.push({ type: 'text', content: text.slice(lastIndex) });
+  if (lastIndex < normalizedText.length) {
+    segments.push({ type: 'text', content: normalizedText.slice(lastIndex) });
   }
   return segments;
 }
@@ -135,7 +156,7 @@ function getDisplayName(alt: string, url: string): string {
 }
 
 const IMAGE_ICON = '<svg class="flex-shrink-0" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>';
-const SPINNER_ICON = '<span class="inline-block w-3 h-3 border-2 border-gray-500 border-t-transparent rounded-full animate-spin flex-shrink-0 dark:border-gray-300 dark:border-t-transparent"></span>';
+const SPINNER_ICON = '<span class="inline-block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin flex-shrink-0"></span>';
 
 function applyChipContent(chip: HTMLElement, seg: { alt: string; url: string; raw: string }, tooltips?: { edit: string; uploading: string }) {
   const uploading = isUploadingUrl(seg.url);
@@ -150,8 +171,8 @@ function applyChipContent(chip: HTMLElement, seg: { alt: string; url: string; ra
     'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium',
     'cursor-default select-none align-middle mx-0.5 transition-colors',
     uploading
-      ? 'bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-700'
-      : 'bg-gray-100 text-gray-700 border border-gray-200 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-200 dark:border-gray-600 dark:hover:bg-gray-600',
+      ? 'border border-[var(--app-index-yellow)] bg-[var(--app-surface-muted)] text-[var(--app-index-yellow)]'
+      : 'border border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]',
   ].join(' ');
   const displayName = getDisplayName(seg.alt, seg.url);
   chip.innerHTML = `${uploading ? SPINNER_ICON : IMAGE_ICON}<span style="max-width:150px" class="truncate">${escapeHtml(displayName)}</span>`;
@@ -245,12 +266,12 @@ function getChipAfterCursor(): HTMLElement | null {
 
 function clearChipSelection(container: HTMLElement) {
   container.querySelectorAll('.' + CHIP_SELECTED_CLASS).forEach(el => {
-    el.classList.remove(CHIP_SELECTED_CLASS, 'ring-2', 'ring-red-400', 'bg-red-50', 'dark:bg-red-900/30');
+    el.classList.remove(CHIP_SELECTED_CLASS, 'ring-2', 'ring-[var(--app-error)]', 'bg-[color:var(--app-error-soft)]');
   });
 }
 
 function selectChip(chip: HTMLElement) {
-  chip.classList.add(CHIP_SELECTED_CLASS, 'ring-2', 'ring-red-400', 'bg-red-50', 'dark:bg-red-900/30');
+  chip.classList.add(CHIP_SELECTED_CLASS, 'ring-2', 'ring-[var(--app-error)]', 'bg-[color:var(--app-error-soft)]');
 }
 
 export const MarkdownTextarea = forwardRef<MarkdownTextareaRef, MarkdownTextareaProps>(({
@@ -624,17 +645,17 @@ export const MarkdownTextarea = forwardRef<MarkdownTextareaRef, MarkdownTextarea
   return (
     <div className="w-full">
       {label && (
-        <label className="block text-sm font-medium text-gray-700 dark:text-foreground-secondary mb-2">
+        <label className="mb-2 block text-sm font-medium text-[var(--app-text-secondary)]">
           {label}
         </label>
       )}
       {/* Outer container — owns the border, focus ring, and toolbar */}
       <div className={cn(
-        'relative rounded-lg border border-gray-200 dark:border-border-primary bg-white dark:bg-background-secondary',
-        'focus-within:border-cyan-500',
+        'relative rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)]',
+        'focus-within:border-[var(--app-accent)]',
         'transition-all',
-        isDragging && 'ring-2 ring-banana-400 border-transparent',
-        error && 'border-red-500 focus-within:ring-red-500',
+        isDragging && 'border-transparent ring-2 ring-[var(--app-index-yellow)]',
+        error && 'border-[var(--app-error)] focus-within:ring-[var(--app-error)]',
         className
       )}>
         {/* Editor area */}
@@ -659,12 +680,12 @@ export const MarkdownTextarea = forwardRef<MarkdownTextareaRef, MarkdownTextarea
             onBlur={onBlur}
             onFocus={onFocus}
             style={{ minHeight: `${minHeight}px`, ...(editorHeight ? { height: `${editorHeight}px` } : {}) }}
-            className="w-full px-4 py-3 outline-none overflow-y-auto whitespace-pre-wrap break-words text-gray-900 dark:text-foreground-primary"
+            className="w-full px-4 py-3 outline-none overflow-y-auto whitespace-pre-wrap break-words text-[var(--app-text)]"
           />
 
           {/* Placeholder */}
           {isEmpty && placeholder && !isDragging && (
-            <div className="absolute top-0 left-0 right-0 px-4 py-3 text-gray-400 dark:text-gray-500 pointer-events-none select-none">
+            <div className="absolute top-0 left-0 right-0 px-4 py-3 text-[var(--app-text-tertiary)] pointer-events-none select-none">
               {placeholder}
             </div>
           )}
@@ -672,7 +693,7 @@ export const MarkdownTextarea = forwardRef<MarkdownTextareaRef, MarkdownTextarea
           {/* Chip edit popover */}
           {editingChip && (
             <div
-              className="absolute z-20 flex items-center gap-1 bg-white dark:bg-background-secondary border border-gray-300 dark:border-border-primary rounded-lg shadow-lg p-1"
+              className="absolute z-20 flex items-center gap-1 rounded-[var(--app-radius-control)] border border-[var(--app-border-strong)] bg-[var(--app-surface)] p-1 shadow-[var(--app-shadow-soft)]"
               style={{ left: editingChip.rect.left, top: editingChip.rect.top }}
             >
               <input
@@ -685,7 +706,7 @@ export const MarkdownTextarea = forwardRef<MarkdownTextareaRef, MarkdownTextarea
                   if (e.key === 'Escape') cancelChipEdit();
                 }}
                 onBlur={commitChipEdit}
-                className="px-2 py-1 text-xs border-none outline-none bg-transparent w-36 text-gray-900 dark:text-foreground-primary"
+                className="px-2 py-1 text-xs border-none outline-none bg-transparent w-36 text-[var(--app-text)]"
                 placeholder={t('markdownTextarea.imageDescription')}
               />
             </div>
@@ -710,8 +731,9 @@ export const MarkdownTextarea = forwardRef<MarkdownTextareaRef, MarkdownTextarea
                         fileInputRef.current?.click();
                       }
                     }}
-                    className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:text-foreground-tertiary dark:hover:text-foreground-secondary dark:hover:bg-background-hover rounded transition-colors cursor-pointer"
+                    className="flex h-10 w-10 items-center justify-center rounded-[var(--app-radius-control)] text-[var(--app-text-tertiary)] transition-colors hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-secondary)]"
                     title={t('markdownTextarea.uploadImage')}
+                    aria-label={t('markdownTextarea.uploadImage')}
                   >
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/>
@@ -720,10 +742,10 @@ export const MarkdownTextarea = forwardRef<MarkdownTextareaRef, MarkdownTextarea
                   {showUploadMenu && (
                     <>
                       <div className="fixed inset-0 z-30" onClick={() => setShowUploadMenu(false)} />
-                      <div className="absolute bottom-full left-0 mb-1 py-1 bg-white dark:bg-background-secondary border border-gray-200 dark:border-border-primary rounded-lg shadow-lg z-40 min-w-[160px]">
+                      <div className="absolute bottom-full left-0 z-40 mb-1 min-w-[160px] rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)] py-1 shadow-[var(--app-shadow-soft)]">
                       <button
                         type="button"
-                        className="w-full px-3 py-1.5 text-left text-sm text-gray-700 dark:text-foreground-secondary hover:bg-gray-100 dark:hover:bg-background-hover flex items-center gap-2"
+                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]"
                         onClick={() => {
                           setShowUploadMenu(false);
                           fileInputRef.current?.click();
@@ -736,7 +758,7 @@ export const MarkdownTextarea = forwardRef<MarkdownTextareaRef, MarkdownTextarea
                       </button>
                       <button
                         type="button"
-                        className="w-full px-3 py-1.5 text-left text-sm text-gray-700 dark:text-foreground-secondary hover:bg-gray-100 dark:hover:bg-background-hover flex items-center gap-2"
+                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]"
                         onClick={() => {
                           setShowUploadMenu(false);
                           onSelectFromLibrary?.();
@@ -765,14 +787,14 @@ export const MarkdownTextarea = forwardRef<MarkdownTextareaRef, MarkdownTextarea
 
         {/* Compact image preview strip — below toolbar */}
         {showImagePreview && images.length > 0 && (
-          <div className="flex items-center gap-2 px-3 py-2 overflow-x-auto border-t border-gray-100 dark:border-border-primary">
+          <div className="flex items-center gap-2 px-3 py-2 overflow-x-auto border-t border-[var(--app-border)]">
             {images.map((img, i) => {
               const uploading = isUploadingUrl(img.url);
               const src = uploading ? getUploadingPreviewUrl(img.url) : img.url;
               return (
                 <div key={`${img.url}-${i}`} className="relative flex-shrink-0 group/thumb" title={img.alt !== 'image' ? img.alt : getDisplayName(img.alt, img.url)}>
                   <div className={cn(
-                    'w-14 h-14 rounded overflow-hidden border border-gray-200 dark:border-border-primary',
+                    'h-14 w-14 overflow-hidden rounded-[var(--app-radius-control)] border border-[var(--app-border)]',
                     uploading && 'opacity-60'
                   )}>
                     <img
@@ -783,7 +805,7 @@ export const MarkdownTextarea = forwardRef<MarkdownTextareaRef, MarkdownTextarea
                     />
                     {uploading && (
                       <div className="absolute inset-0 flex items-center justify-center">
-                        <div className="w-4 h-4 border-2 border-banana-500 border-t-transparent rounded-full animate-spin" />
+                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--app-index-yellow)] border-t-transparent" />
                       </div>
                     )}
                   </div>
@@ -791,12 +813,12 @@ export const MarkdownTextarea = forwardRef<MarkdownTextareaRef, MarkdownTextarea
                     <button
                       type="button"
                       onClick={() => removeImage(img.url)}
-                      className="absolute -top-1.5 -right-1.5 w-5 h-5 flex items-center justify-center bg-red-500 text-white rounded-full opacity-0 group-hover/thumb:opacity-100 transition-opacity hover:bg-red-600 text-xs leading-none"
+                      className="absolute -top-1.5 -right-1.5 w-5 h-5 flex items-center justify-center rounded-full bg-[var(--app-error)] text-[var(--app-surface)] opacity-0 transition-opacity hover:opacity-90 group-hover/thumb:opacity-100 text-xs leading-none"
                     >
                       &times;
                     </button>
                   )}
-                  <div className="absolute inset-x-0 bottom-0 bg-black/60 text-white text-[10px] px-1 py-0.5 truncate opacity-0 group-hover/thumb:opacity-100 transition-opacity rounded-b">
+                  <div className="absolute inset-x-0 bottom-0 bg-[color:var(--app-surface)]/85 text-[var(--app-text)] text-[10px] px-1 py-0.5 truncate opacity-0 group-hover/thumb:opacity-100 transition-opacity rounded-b">
                     {img.alt !== 'image' ? img.alt : getDisplayName(img.alt, img.url)}
                   </div>
                 </div>
@@ -808,8 +830,8 @@ export const MarkdownTextarea = forwardRef<MarkdownTextareaRef, MarkdownTextarea
         {/* Drag overlay — anchored to the outer container so the dashed frame
             wraps the entire textarea (editor + toolbar + image preview). */}
         {isDragging && (
-          <div className="absolute inset-0 flex items-center justify-center rounded-lg pointer-events-none border-2 border-dashed border-banana-400 dark:border-banana bg-white/80 dark:bg-background-secondary/80 backdrop-blur-sm z-10">
-            <div className="flex flex-col items-center gap-2 text-banana-700 dark:text-banana-300">
+          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-[var(--app-radius-card)] border-2 border-dashed border-[var(--app-index-yellow)] bg-[var(--app-surface)]/90">
+            <div className="flex flex-col items-center gap-2 text-[var(--app-index-yellow)]">
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                 <polyline points="17 8 12 3 7 8" />
@@ -836,7 +858,7 @@ export const MarkdownTextarea = forwardRef<MarkdownTextareaRef, MarkdownTextarea
       )}
 
       {error && (
-        <p className="mt-1 text-sm text-red-500">{error}</p>
+        <p className="mt-1 text-sm text-[var(--app-error)]">{error}</p>
       )}
     </div>
   );

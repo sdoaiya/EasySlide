@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import i18n from '@/i18n';
@@ -34,8 +34,7 @@ vi.mock('@/hooks/useTheme', () => ({
 }));
 
 function clickProjectCard(title: string) {
-  const heading = screen.getByText(title);
-  const card = heading.closest('h3')?.parentElement?.parentElement?.parentElement?.parentElement as HTMLElement | null;
+  const card = screen.getByRole('button', { name: new RegExp(title) });
   if (!card) throw new Error(`card not found for ${title}`);
   fireEvent.click(card);
 }
@@ -48,21 +47,30 @@ describe('History EasySlide clone', () => {
     endpointMocks.syncProject.mockResolvedValue(undefined);
   });
 
-  it('renders my-projects copy and branded empty state', async () => {
+  it('renders the compact editorial workbench and empty state', async () => {
     const { container } = render(
       <MemoryRouter>
         <History />
       </MemoryRouter>
     );
 
-    expect(container.firstElementChild?.className).toContain('bg-[#f5f9fc]');
+    expect(container.firstElementChild?.className).toContain('bg-[var(--app-background)]');
     expect(container.firstElementChild?.className).not.toContain('banana');
-    expect(await screen.findByRole('heading', { name: '我的项目' })).toBeInTheDocument();
-    expect(screen.getByText('统一查看与管理当前账户下的项目内容。')).toBeInTheDocument();
-    expect(screen.getByText('暂无项目')).toBeInTheDocument();
-    expect(screen.getByText('创建新项目')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '作品工作台' })).toBeInTheDocument();
+    expect(screen.getByText(/内容主线、PPT、视频与播客/)).toBeInTheDocument();
+    expect(screen.getByRole('searchbox', { name: '搜索项目或灵感...' })).toBeInTheDocument();
+    expect(screen.queryByText(/从想法到成稿/)).not.toBeInTheDocument();
+    expect(await screen.findByText('暂无项目')).toBeInTheDocument();
+    expect(screen.getAllByText('创建新项目').length).toBeGreaterThan(0);
+    expect(screen.getByRole('heading', { name: '灵感墙' })).toBeInTheDocument();
     expect(screen.getByAltText('EasySlide Logo')).toBeInTheDocument();
-    expect(screen.queryByText('历史项目')).not.toBeInTheDocument();
+
+    const homeButton = screen.getByRole('button', { name: '首页' });
+    expect(homeButton.parentElement).toHaveClass('lg:mt-8');
+    const footerTools = screen.getByRole('button', { name: '设置' }).parentElement;
+    expect(footerTools).toHaveClass('lg:grid', 'lg:grid-cols-3');
+    expect(Array.from(footerTools?.children || [])).toHaveLength(3);
+    expect(Array.from(footerTools?.children || []).every((item) => item.classList.contains('lg:w-full'))).toBe(true);
   });
 
   it('uses server-wide project stats instead of the current page only', async () => {
@@ -80,8 +88,8 @@ describe('History EasySlide clone', () => {
     });
 
     render(
-      <MemoryRouter>
-        <History />
+      <MemoryRouter initialEntries={['/history']}>
+        <Routes><Route path="/history" element={<History />} /></Routes>
       </MemoryRouter>
     );
 
@@ -92,7 +100,7 @@ describe('History EasySlide clone', () => {
     expect(generatingCard).toHaveTextContent('2');
   });
 
-  it('matches the ezppt-like project dashboard structure', async () => {
+  it('uses the four-column content project wall on home', async () => {
     endpointMocks.listProjects.mockResolvedValueOnce({
       data: {
         total: 16,
@@ -104,6 +112,11 @@ describe('History EasySlide clone', () => {
           status: 'COMPLETED',
           created_at: '2026-06-16T18:12:00Z',
           updated_at: '2026-06-16T18:12:00Z',
+          workspaces: [
+            { id: 'w1', project_id: 'p1', kind: 'ppt', state: 'ready', revision: 1, source_kind: 'migration', settings: {} },
+            { id: 'w2', project_id: 'p1', kind: 'video', state: 'uninitialized', revision: 0, source_kind: 'manual', settings: {} },
+            { id: 'w3', project_id: 'p1', kind: 'podcast', state: 'uninitialized', revision: 0, source_kind: 'manual', settings: {} },
+          ],
           pages: [{ page_id: 'pg1', order_index: 0, status: 'COMPLETED', generated_image_url: '/files/p1/page.png' }],
         }],
       },
@@ -115,15 +128,62 @@ describe('History EasySlide clone', () => {
       </MemoryRouter>
     );
 
-    expect(await screen.findByText('项目总数')).toBeInTheDocument();
-    expect(screen.getByText('16')).toBeInTheDocument();
+    expect(await screen.findByText('共赢出海 - 为企业搭建出海高速路')).toBeInTheDocument();
     expect(screen.getByText('项目列表')).toBeInTheDocument();
     expect(screen.getByText('支持项目编辑、重命名、删除及批量管理。')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /刷新/ })).toBeInTheDocument();
     expect(screen.getByText((content) => content.includes('16') && content.includes('1') && content.includes('4'))).toBeInTheDocument();
-    expect(screen.getByText('翻新')).toBeInTheDocument();
+    expect(screen.getByText('PPT')).toBeInTheDocument();
+    expect(screen.getByTestId('project-grid')).toHaveClass('xl:grid-cols-4');
+    const inspirationWall = screen.getByRole('heading', { name: '灵感墙' }).closest('section');
+    expect(inspirationWall).not.toBeNull();
+    expect(within(inspirationWall!).getAllByRole('img')).toHaveLength(3);
+    expect(within(inspirationWall!).getByRole('img', { name: '共赢出海 - 为企业搭建出海高速路 项目预览' })).toHaveAttribute('src', '/files/p1/page.png');
+    expect(within(inspirationWall!).getByRole('img', { name: '精选模板 2' })).toBeInTheDocument();
+    expect(endpointMocks.listProjects).toHaveBeenCalledWith(4, 0);
+    expect(screen.getByTestId('project-grid').innerHTML).not.toContain('shadow-sm');
   });
 
+  it('migrates the old five-project preference to four projects per page', async () => {
+    localStorage.setItem('history_page_size', '5');
+
+    render(
+      <MemoryRouter>
+        <History />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(endpointMocks.listProjects).toHaveBeenCalledWith(4, 0));
+  });
+
+  it('keeps the original list layout on /history', async () => {
+    endpointMocks.listProjects.mockResolvedValueOnce({
+      data: {
+        total: 1,
+        projects: [{ project_id: 'p-list', project_title: '列表项目', status: 'DRAFT', pages: [] }],
+      },
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/history']}>
+        <Routes>
+          <Route path="/history" element={<History />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: '我的项目' })).toBeInTheDocument();
+    expect(screen.getByTestId('project-list')).toHaveClass('space-y-2');
+    expect(screen.getByTestId('project-list').innerHTML).not.toContain('shadow-sm');
+    expect(screen.queryByTestId('project-grid')).not.toBeInTheDocument();
+    const editButton = screen.getByRole('button', { name: '编辑' });
+    expect(editButton.parentElement).toHaveClass(
+      'opacity-0',
+      'group-hover:opacity-100',
+      'group-focus-within:opacity-100',
+      '[@media(hover:none)]:opacity-100'
+    );
+  });
   it('routes from the latest synced project instead of the stale history item', async () => {
     endpointMocks.listProjects.mockResolvedValueOnce({
       data: {
@@ -150,7 +210,7 @@ describe('History EasySlide clone', () => {
       <MemoryRouter initialEntries={['/history']}>
         <Routes>
           <Route path="/history" element={<History />} />
-          <Route path="/project/:projectId/preview" element={<div>原生编辑器</div>} />
+          <Route path="/project/:projectId/ppt/editor" element={<div>原生编辑器</div>} />
         </Routes>
       </MemoryRouter>
     );
@@ -189,8 +249,8 @@ describe('History EasySlide clone', () => {
       <MemoryRouter initialEntries={['/history']}>
         <Routes>
           <Route path="/history" element={<History />} />
-          <Route path="/project/:projectId/preview" element={<div>native preview</div>} />
-          <Route path="/project/:projectId/detail" element={<div>detail page</div>} />
+          <Route path="/project/:projectId/ppt/editor" element={<div>native preview</div>} />
+          <Route path="/project/:projectId/ppt/detail" element={<div>detail page</div>} />
         </Routes>
       </MemoryRouter>
     );

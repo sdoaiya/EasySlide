@@ -60,6 +60,18 @@ def test_build_director_plan_is_stable_and_content_aware():
     assert first['pages'][3]['motion']['effect'] == 'zoom_out'
 
 
+def test_minimal_motion_still_moves_the_camera():
+    plan = _director.build_video_director_plan([
+        {'page_index': 0, 'title': '简洁播报'},
+    ], {'preset': 'brief'})
+
+    assert plan['pages'][0]['motion'] == {
+        'effect': 'zoom_in',
+        'intensity': 'minimal',
+        'focus_rect': None,
+    }
+
+
 def test_native_plan_preserves_element_animation_timeline():
     plan = _director.build_video_director_plan([{
         'page_index': 0,

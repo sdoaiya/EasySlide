@@ -13,7 +13,25 @@ const slide: NativeSlideSpec = {
 }
 
 describe('NativeDeckCanvas', () => {
-  afterEach(() => vi.useRealTimers())
+  it('keeps the fitted canvas footprint stable when user zoom changes', () => {
+    const { rerender } = render(<NativeDeckCanvas slide={slide} zoom={1} />)
+    const viewport = screen.getByTestId('native-canvas-viewport')
+    const footprint = screen.getByTestId('native-canvas-footprint')
+    const renderLayer = screen.getByTestId('native-canvas-render-layer')
+    const initialWidth = footprint.style.width
+    const initialHeight = footprint.style.height
+
+    expect(viewport).toHaveStyle({ background: 'var(--app-canvas)' })
+    rerender(<NativeDeckCanvas slide={slide} zoom={1.5} />)
+
+    expect(footprint.style.width).toBe(initialWidth)
+    expect(footprint.style.height).toBe(initialHeight)
+    expect(renderLayer.style.transform).toContain('scale(0.75)')
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
 
   it('waits for the click-triggered animation before starting auto advance', () => {
     vi.useFakeTimers()
@@ -72,6 +90,32 @@ describe('NativeDeckCanvas', () => {
     fireEvent.keyDown(editor, { key: 'Enter', ctrlKey: true })
 
     expect(onPropsChange).toHaveBeenCalledWith(expect.objectContaining({ title: '新的标题', subtitle: '副标题' }))
+  })
+
+  it('scales the floating text editor to the current canvas zoom', () => {
+    const getComputedStyleSpy = vi.spyOn(window, 'getComputedStyle').mockImplementation(() => ({
+      fontFamily: 'Mock Sans',
+      fontSize: '100px',
+      fontWeight: '700',
+      fontStyle: 'normal',
+      lineHeight: '120px',
+      letterSpacing: '2px',
+      textAlign: 'left',
+    } as unknown as CSSStyleDeclaration))
+
+    render(
+      <NativeDeckCanvas
+        slide={{ ...slide, layout: 'core01_cover', props: { title: '演示测试', subtitle: '副标题' } }}
+        onPropsChange={vi.fn()}
+      />,
+    )
+
+    try {
+      fireEvent.doubleClick(screen.getByText('演示测试'))
+      expect((screen.getByLabelText('画布文字编辑') as HTMLTextAreaElement).style.fontSize).toBe('50px')
+    } finally {
+      getComputedStyleSpy.mockRestore()
+    }
   })
 
   it('applies the layout copy budget while editing text on the canvas', () => {
@@ -217,6 +261,14 @@ describe('NativeDeckCanvas', () => {
     expect(screen.queryByTestId('native-page-generation-panel')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '暂停' }))
     expect(onPause).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses the primary action token for the empty canvas action', () => {
+    render(<NativeDeckCanvas slide={undefined} emptyAction={{ label: '批量生成页面', onClick: vi.fn() }} />)
+
+    const action = screen.getByRole('button', { name: '批量生成页面' })
+    expect(action).toHaveClass('bg-[var(--app-primary-action)]')
+    expect(action).not.toHaveClass('bg-[var(--app-accent)]')
   })
 
   it('applies the content-led visual system from the native page plan', () => {

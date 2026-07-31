@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from 'vitest';
-import { getProjectRoute, parseMarkdownPages } from '@/utils/projectUtils';
+import { getProjectRoute, getStatusColor, getStatusText, parseMarkdownPages } from '@/utils/projectUtils';
 
 describe('getProjectRoute', () => {
   beforeEach(() => {
@@ -30,24 +30,105 @@ describe('getProjectRoute', () => {
       }],
     });
 
-    expect(getProjectRoute(project)).toBe('/project/native-1/preview');
+    expect(getProjectRoute(project)).toBe('/project/native-1/ppt/editor');
   });
 
   test('restores generated or generating native projects to preview', () => {
-    expect(getProjectRoute(nativeProject({ status: 'NATIVE_DECK_GENERATED' }))).toBe('/project/native-1/preview');
+    expect(getProjectRoute(nativeProject({ status: 'NATIVE_DECK_GENERATED' }))).toBe('/project/native-1/ppt/editor');
     expect(getProjectRoute(nativeProject({
       pages: [{ page_id: 'page-1', order_index: 0, status: 'GENERATING' }],
-    }))).toBe('/project/native-1/preview');
+    }))).toBe('/project/native-1/ppt/editor');
   });
 
   test('keeps a native project with descriptions in detail before generation starts', () => {
-    expect(getProjectRoute(nativeProject())).toBe('/project/native-1/detail');
+    expect(getProjectRoute(nativeProject())).toBe('/project/native-1/ppt/detail');
   });
 
   test('restores a native project with a persisted generation task to preview before layouts land', () => {
     localStorage.setItem('nativeDeckGenerationTask:native-1', 'task-1');
 
-    expect(getProjectRoute(nativeProject())).toBe('/project/native-1/preview');
+    expect(getProjectRoute(nativeProject())).toBe('/project/native-1/ppt/editor');
+  });
+
+  test('restores renovation source pages to detail until image generation starts', () => {
+    const project = {
+      project_id: 'renovation-1',
+      creation_type: 'ppt_renovation',
+      status: 'COMPLETED',
+      pages: [{
+        page_id: 'page-1',
+        description_content: { text: 'Description' },
+        generated_image_path: '/files/renovation-1/pages/source.png',
+        status: 'DESCRIPTION_GENERATED',
+      }],
+    } as any;
+
+    expect(getProjectRoute(project)).toBe('/project/renovation-1/ppt/detail');
+    project.pages[0].status = 'COMPLETED';
+    expect(getProjectRoute(project)).toBe('/project/renovation-1/ppt/editor');
+  });
+});
+
+describe('getStatusColor', () => {
+  test('uses semantic UI variables instead of direct Tailwind palette colors', () => {
+    const classes = getStatusColor({ pages: [] } as any);
+
+    expect(classes).toContain('var(--app-');
+    expect(classes).not.toMatch(/\b(?:text|bg)-(?:green|yellow|blue|gray)-\d+\b/);
+  });
+});
+
+describe('media workspace status', () => {
+  const projectWithWorkspace = (workspace: Record<string, unknown>, overrides: Record<string, unknown> = {}) => ({
+    project_id: 'media-1',
+    status: 'DRAFT',
+    pages: [],
+    workspaces: [{
+      id: 'workspace-1',
+      project_id: 'media-1',
+      kind: 'video',
+      state: 'draft',
+      revision: 1,
+      source_kind: 'manual',
+      settings: {},
+      ...workspace,
+    }],
+    ...overrides,
+  } as any);
+
+  test('maps ready and completed media workspaces to completed', () => {
+    expect(getStatusText(projectWithWorkspace({ state: 'ready' }))).toBe('已完成');
+    expect(getStatusText(projectWithWorkspace({ state: 'draft', stage: 'COMPLETED' }))).toBe('已完成');
+  });
+
+  test('maps draft media workspaces to in progress', () => {
+    expect(getStatusText(projectWithWorkspace({ state: 'draft' }))).toBe('进行中');
+  });
+
+  test('maps image generation stage to pending images', () => {
+    expect(getStatusText(projectWithWorkspace({ state: 'draft', stage: 'GENERATING_IMAGES' }))).toBe('待生成图片');
+  });
+
+  test('falls back to legacy PPT pages when no media workspace is initialized', () => {
+    const project = projectWithWorkspace({ state: 'uninitialized' }, {
+      workspaces: [{
+        id: 'ppt-1',
+        project_id: 'media-1',
+        kind: 'ppt',
+        state: 'ready',
+        revision: 1,
+        source_kind: 'migration',
+        settings: {},
+      }],
+      pages: [{ page_id: 'page-1', description_content: { text: 'desc' } }],
+    });
+
+    expect(getStatusText(project)).toBe('待生成图片');
+  });
+
+  test('treats URL-only and native-completed PPT pages as completed', () => {
+    expect(getStatusText({ project_id: 'ppt-url', pages: [{ generated_image_url: '/files/page.png' }] } as any)).toBe('已完成');
+    expect(getProjectRoute({ project_id: 'ppt-native', pages: [{ status: 'NATIVE_GENERATED' }] } as any)).toBe('/project/ppt-native/ppt/editor');
   });
 });
 

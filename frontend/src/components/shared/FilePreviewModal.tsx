@@ -103,7 +103,7 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
           <Markdown>{content}</Markdown>
         </div>
       ) : (
-        <div className="text-center py-8 text-gray-500 dark:text-foreground-tertiary">
+        <div className="py-8 text-center text-[var(--app-text-tertiary)]">
           <p>{t('common.noData')}</p>
         </div>
       )}

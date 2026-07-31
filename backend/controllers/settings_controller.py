@@ -25,12 +25,41 @@ from services.task_manager import task_manager
 from services.update_check_service import check_for_update
 
 logger = logging.getLogger(__name__)
-ALLOWED_PROVIDER_FORMATS = {"openai", "gemini", "lazyllm", "codex"} | LAZYLLM_VENDORS
+ALLOWED_PROVIDER_FORMATS = {"openai", "gemini", "volcengine", "lazyllm", "codex"} | LAZYLLM_VENDORS
 MODEL_OPTION_TYPES = {"text", "image", "image_caption"}
+FISH_AUDIO_EXTENSIONS = {'.wav', '.mp3', '.m4a', '.opus', '.flac'}
+FISH_AUDIO_MAX_SAMPLE_BYTES = 25 * 1024 * 1024
 
 settings_bp = Blueprint(
     "settings", __name__, url_prefix="/api/settings"
 )
+
+
+def _fish_audio_key(explicit: str | None = None) -> str:
+    if explicit and explicit.strip():
+        return explicit.strip()
+    settings = Settings.get_settings()
+    return str(settings.fish_audio_api_key or current_app.config.get('FISH_AUDIO_API_KEY') or '').strip()
+
+
+def _fish_audio_error(exc):
+    status = getattr(exc, 'status_code', None)
+    response_status = status if status in {400, 401, 403, 404, 429} else 502
+    return error_response('FISH_AUDIO_ERROR', str(exc), response_status)
+
+
+def _looks_like_audio(content: bytes, extension: str) -> bool:
+    if extension == '.wav':
+        return content.startswith(b'RIFF') and content[8:12] == b'WAVE'
+    if extension == '.mp3':
+        return content.startswith(b'ID3') or content[:2] in {b'\xff\xfb', b'\xff\xf3', b'\xff\xf2'}
+    if extension == '.flac':
+        return content.startswith(b'fLaC')
+    if extension == '.opus':
+        return content.startswith(b'OggS')
+    if extension == '.m4a':
+        return len(content) >= 12 and content[4:8] == b'ftyp'
+    return False
 
 
 def _openai_models_url(api_base_url: str | None) -> str:
@@ -99,6 +128,8 @@ def _fallback_model_options(provider: str, model_type: str) -> list[str]:
         if model_type == "image":
             return ["imagen-4.0-generate-preview-06-06", "imagen-3.0-generate-001"]
         return ["gemini-3-flash-preview", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"]
+    if provider == "volcengine":
+        return []
     return []
 
 
@@ -299,6 +330,15 @@ def update_settings():
         if "api_key" in data:
             settings.api_key = data["api_key"]
 
+        if "fish_audio_api_key" in data:
+            settings.fish_audio_api_key = data["fish_audio_api_key"] or None
+
+        if "fish_audio_voice_assets" in data:
+            try:
+                settings.set_fish_audio_voice_assets(data["fish_audio_voice_assets"])
+            except ValueError as exc:
+                return bad_request(str(exc))
+
         # Update image generation configuration
         if "image_resolution" in data:
             resolution = data["image_resolution"]
@@ -394,17 +434,12 @@ def update_settings():
                 return bad_request("Image thinking budget must be between 1 and 8192")
             settings.image_thinking_budget = budget
 
+        if "enable_image_quality_control" in data:
+            settings.enable_image_quality_control = bool(data["enable_image_quality_control"])
+
         # Update Baidu OCR configuration
         if "baidu_api_key" in data:
             settings.baidu_api_key = data["baidu_api_key"] or None
-
-        # Update ElevenLabs TTS configuration
-        if "elevenlabs_enabled" in data:
-            settings.elevenlabs_enabled = bool(data["elevenlabs_enabled"])
-        if "elevenlabs_api_key" in data:
-            settings.elevenlabs_api_key = data["elevenlabs_api_key"] or None
-        if "elevenlabs_voice_id" in data:
-            settings.elevenlabs_voice_id = (data["elevenlabs_voice_id"] or "").strip() or None
 
         # Update per-model provider source configuration
         if "text_model_source" in data:
@@ -478,6 +513,7 @@ def reset_settings():
         settings.ai_provider_format = None
         settings.api_base_url = None
         settings.api_key = None
+        settings.fish_audio_api_key = None
         settings.text_model = None
         settings.image_model = None
         settings.mineru_api_base = None
@@ -488,13 +524,11 @@ def reset_settings():
         settings.text_thinking_budget = 1024
         settings.enable_image_reasoning = False
         settings.image_thinking_budget = 1024
+        settings.enable_image_quality_control = False
         settings.description_generation_mode = None
         settings.description_extra_fields = None
         settings.image_prompt_extra_fields = None
         settings.baidu_api_key = None
-        settings.elevenlabs_enabled = False
-        settings.elevenlabs_api_key = None
-        settings.elevenlabs_voice_id = None
         settings.text_model_source = None
         settings.image_model_source = None
         settings.image_caption_model_source = None
@@ -529,62 +563,115 @@ def reset_settings():
         )
 
 
-@settings_bp.route("/elevenlabs-voices", methods=["GET"], strict_slashes=False)
-def get_elevenlabs_voices():
-    """GET /api/settings/elevenlabs-voices - 用存储的 API Key 拉取可用声音列表"""
-    from models import Settings
-    db.session.expire_all()
-    settings = Settings.get_settings()
-    api_key = settings.elevenlabs_api_key
-    if not api_key:
-        return error_response("ELEVENLABS_KEY_MISSING", "ElevenLabs API Key 未配置", 400)
+@settings_bp.post('/fish-audio/verify')
+def verify_fish_audio():
+    """Validate a saved or newly entered Fish Audio key without exposing it."""
+    from services.fish_audio_service import FishAudioAPIError, list_voices
+
+    data = request.get_json(silent=True) or {}
+    key = _fish_audio_key(str(data.get('api_key') or ''))
+    if not key:
+        return bad_request('请先填写 Fish Audio API Key')
     try:
-        from elevenlabs.client import ElevenLabs
-        from elevenlabs.core import ApiError as ElevenLabsApiError
-        client = ElevenLabs(api_key=api_key)
+        voices = list_voices(key, page_size=1, fetch_all=False)
+        return success_response({
+            'model': current_app.config.get('FISH_AUDIO_MODEL', 's2.1-pro-free'),
+            'connected': True,
+            'voice_count_sampled': len(voices),
+        })
+    except FishAudioAPIError as exc:
+        return _fish_audio_error(exc)
+
+
+@settings_bp.get('/fish-audio/voices')
+def get_fish_audio_voices():
+    from services.fish_audio_service import FishAudioAPIError, list_voices
+
+    key = _fish_audio_key()
+    if not key:
+        return bad_request('请先在设置中保存 Fish Audio API Key')
+    try:
+        scope = str(request.args.get('scope') or 'private').lower()
+        sort_by = str(request.args.get('sort_by') or 'created_at').lower()
         try:
-            voices_response = client.voices.get_all()
-        except ElevenLabsApiError as e:
-            body = getattr(e, 'body', None) or {}
-            detail = body.get('detail', {}) if isinstance(body, dict) else {}
-            status = detail.get('status', '') if isinstance(detail, dict) else ''
-            msg = (detail.get('message') if isinstance(detail, dict) else None) or str(e)
-            if status == 'missing_permissions':
-                return error_response(
-                    "ELEVENLABS_KEY_MISSING_PERMISSION",
-                    "ElevenLabs API Key 缺少 voices_read 权限。请到 ElevenLabs Dashboard 编辑该 Key 并勾选 Voices: Read，或创建 'Has access to all' 的 Key 后重新保存。",
-                    400,
-                )
-            if status == 'invalid_api_key' or e.status_code == 401:
-                return error_response("ELEVENLABS_KEY_INVALID", f"ElevenLabs API Key 无效：{msg}", 400)
-            return error_response("ELEVENLABS_VOICES_ERROR", f"ElevenLabs 错误 (HTTP {e.status_code})：{msg}", 500)
-        voices = []
-        for v in voices_response.voices:
-            labels = getattr(v, "labels", None) or {}
-            verified = getattr(v, "verified_languages", None) or []
-            languages = []
-            seen = set()
-            primary = labels.get("language") if isinstance(labels, dict) else None
-            if primary and primary not in seen:
-                languages.append(primary)
-                seen.add(primary)
-            for entry in verified:
-                lang = entry.get("language") if isinstance(entry, dict) else getattr(entry, "language", None)
-                if lang and lang not in seen:
-                    languages.append(lang)
-                    seen.add(lang)
-            voices.append({
-                "id": v.voice_id,
-                "name": v.name,
-                "category": getattr(v, "category", "premade"),
-                "languages": languages,
-                "accent": labels.get("accent") if isinstance(labels, dict) else None,
-            })
-        voices.sort(key=lambda v: v["name"])
-        return success_response({"voices": voices})
-    except Exception as e:
-        logger.exception("[elevenlabs-voices] 获取声音列表失败")
-        return error_response("ELEVENLABS_VOICES_ERROR", f"获取 ElevenLabs 声音列表失败: {e}", 500)
+            page_size = int(request.args.get('page_size') or 100)
+        except (TypeError, ValueError):
+            page_size = 100
+        return success_response({'voices': list_voices(key, scope=scope, sort_by=sort_by, page_size=page_size)})
+    except FishAudioAPIError as exc:
+        return _fish_audio_error(exc)
+
+
+@settings_bp.get('/fish-audio/capabilities')
+def get_fish_audio_capabilities():
+    """Expose only capabilities backed by a confirmed API contract."""
+    return success_response({
+        'model': current_app.config.get('FISH_AUDIO_MODEL', 's2.1-pro-free'),
+        'tts': True,
+        'asr': True,
+        'voice_clone': True,
+        'multi_speaker': True,
+        'voice_design': {
+            'available': False,
+            'reason': 's2.1-pro-free 当前未确认 Voice Design 官方 API 契约',
+        },
+    })
+
+
+@settings_bp.post('/fish-audio/voices')
+def create_fish_audio_voice():
+    """Create a private, reusable clone from one to three authorized samples."""
+    from services.fish_audio_service import FishAudioAPIError, create_private_voice
+
+    if str(request.form.get('consent_confirmed') or '').lower() not in {'true', '1', 'on'}:
+        return bad_request('创建克隆声音前必须确认已获得声音使用授权')
+    key = _fish_audio_key()
+    if not key:
+        return bad_request('请先在设置中保存 Fish Audio API Key')
+    title = str(request.form.get('title') or '').strip()
+    if not title or len(title) > 80:
+        return bad_request('声音名称必须为 1-80 个字符')
+    uploads = request.files.getlist('voices') or request.files.getlist('voice')
+    if not 1 <= len(uploads) <= 3:
+        return bad_request('请选择 1-3 个声音样本')
+    transcripts = request.form.getlist('texts')
+    samples = []
+    for index, upload in enumerate(uploads):
+        extension = Path(upload.filename or '').suffix.lower()
+        if extension not in FISH_AUDIO_EXTENSIONS:
+            return bad_request('声音样本仅支持 WAV、MP3、M4A、OPUS 或 FLAC')
+        content = upload.read(FISH_AUDIO_MAX_SAMPLE_BYTES + 1)
+        if not content or len(content) > FISH_AUDIO_MAX_SAMPLE_BYTES:
+            return bad_request('每个声音样本必须小于 25MB')
+        if not _looks_like_audio(content, extension):
+            return bad_request('声音样本文件内容与格式不匹配')
+        samples.append({
+            'filename': Path(upload.filename).name,
+            'content': content,
+            'content_type': upload.mimetype,
+            'text': transcripts[index].strip() if index < len(transcripts) else '',
+        })
+    try:
+        voice = create_private_voice(key, title=title, samples=samples)
+        return success_response(voice, '克隆声音已创建', 201)
+    except FishAudioAPIError as exc:
+        return _fish_audio_error(exc)
+
+
+@settings_bp.delete('/fish-audio/voices/<voice_id>')
+def delete_fish_audio_voice(voice_id: str):
+    from services.fish_audio_service import FishAudioAPIError, delete_voice
+
+    if not re.fullmatch(r'[A-Za-z0-9_-]{8,128}', voice_id):
+        return bad_request('声音 ID 格式无效')
+    key = _fish_audio_key()
+    if not key:
+        return bad_request('请先在设置中保存 Fish Audio API Key')
+    try:
+        delete_voice(key, voice_id)
+        return success_response({'id': voice_id})
+    except FishAudioAPIError as exc:
+        return _fish_audio_error(exc)
 
 
 @settings_bp.route("/model-options", methods=["POST"], strict_slashes=False)
@@ -641,7 +728,7 @@ def get_model_options():
         return error_response("MODEL_OPTIONS_API_KEY_MISSING", "请先填写 API Key 后再读取模型列表", 400)
 
     try:
-        if provider == "openai":
+        if provider in {"openai", "volcengine"}:
             response = http_requests.get(
                 _openai_models_url(api_base_url),
                 headers={"Authorization": f"Bearer {api_key}"},
@@ -877,6 +964,13 @@ def _sync_settings_to_config(settings: Settings):
     current_app.config["MINERU_TOKEN"] = settings.mineru_token if settings.mineru_token is not None else Config.MINERU_TOKEN
     current_app.config["IMAGE_CAPTION_MODEL"] = settings.image_caption_model or Config.IMAGE_CAPTION_MODEL
     current_app.config["OUTPUT_LANGUAGE"] = settings.output_language or Config.OUTPUT_LANGUAGE
+    current_app.config["FISH_AUDIO_API_KEY"] = (
+        settings.fish_audio_api_key
+        if settings.fish_audio_api_key is not None
+        else Config.FISH_AUDIO_API_KEY
+    )
+    current_app.config["FISH_AUDIO_API_BASE"] = Config.FISH_AUDIO_API_BASE
+    current_app.config["FISH_AUDIO_MODEL"] = Config.FISH_AUDIO_MODEL
     
     # Sync reasoning mode settings (separate for text and image)
     # Check if reasoning configuration changed (requires AIService cache clear)
@@ -896,6 +990,7 @@ def _sync_settings_to_config(settings: Settings):
     current_app.config["TEXT_THINKING_BUDGET"] = settings.text_thinking_budget
     current_app.config["ENABLE_IMAGE_REASONING"] = settings.enable_image_reasoning
     current_app.config["IMAGE_THINKING_BUDGET"] = settings.image_thinking_budget
+    current_app.config["ENABLE_IMAGE_QUALITY_CONTROL"] = settings.enable_image_quality_control
     
     # Sync Baidu OCR settings (fall back to Config default when NULL)
     current_app.config["BAIDU_API_KEY"] = settings.baidu_api_key or Config.BAIDU_API_KEY

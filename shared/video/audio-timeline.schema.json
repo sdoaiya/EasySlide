@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cozyslide.local/schemas/audio-timeline.schema.json",
+  "title": "Page Audio Timeline",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "page_id",
+    "duration_ms",
+    "audio_duration_ms",
+    "padding",
+    "timing_quality",
+    "segments"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "page_id": {"type": "string", "minLength": 1},
+    "duration_ms": {"type": "integer", "minimum": 0},
+    "audio_duration_ms": {"type": "integer", "minimum": 0},
+    "padding": {
+      "type": "object",
+      "required": ["before_ms", "after_ms"],
+      "properties": {
+        "before_ms": {"type": "integer", "minimum": 0},
+        "after_ms": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "timing_quality": {
+      "enum": ["word_exact", "segment_exact", "aligned", "estimated"]
+    },
+    "segments": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/segment"}
+    }
+  },
+  "$defs": {
+    "word": {
+      "type": "object",
+      "required": ["text", "start_ms", "end_ms"],
+      "properties": {
+        "text": {"type": "string", "minLength": 1},
+        "start_ms": {"type": "integer", "minimum": 0},
+        "end_ms": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "segment": {
+      "type": "object",
+      "required": ["segment_id", "start_ms", "end_ms"],
+      "properties": {
+        "segment_id": {"type": "string", "minLength": 1},
+        "start_ms": {"type": "integer", "minimum": 0},
+        "end_ms": {"type": "integer", "minimum": 0},
+        "words": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/word"}
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"timing_quality": {"const": "word_exact"}},
+        "required": ["timing_quality"]
+      },
+      "then": {
+        "properties": {
+          "segments": {"items": {"required": ["words"]}}
+        }
+      },
+      "else": {
+        "properties": {
+          "segments": {"items": {"not": {"required": ["words"]}}}
+        }
+      }
+    }
+  ],
+  "additionalProperties": false
+}

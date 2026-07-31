@@ -45,23 +45,23 @@ class ProjectContext:
             project_or_dict: 项目对象（Project model）或项目字典（project.to_dict()）
             reference_files_content: 参考文件内容列表
         """
-        # 支持直接传入 Project 对象，避免 to_dict() 调用，提升性能
-        if hasattr(project_or_dict, 'idea_prompt'):
-            # 是 Project 对象
-            self.idea_prompt = project_or_dict.idea_prompt
-            self.outline_text = project_or_dict.outline_text
-            self.description_text = project_or_dict.description_text
-            self.creation_type = project_or_dict.creation_type or 'idea'
-            self.outline_requirements = project_or_dict.outline_requirements
-            self.description_requirements = project_or_dict.description_requirements
-        else:
-            # 是字典
+        if isinstance(project_or_dict, dict):
             self.idea_prompt = project_or_dict.get('idea_prompt')
             self.outline_text = project_or_dict.get('outline_text')
             self.description_text = project_or_dict.get('description_text')
             self.creation_type = project_or_dict.get('creation_type', 'idea')
             self.outline_requirements = project_or_dict.get('outline_requirements')
             self.description_requirements = project_or_dict.get('description_requirements')
+        else:
+            from services.content_spine_service import get_spine_source_fields
+
+            source_fields = get_spine_source_fields(project_or_dict)
+            self.idea_prompt = source_fields['idea_prompt']
+            self.outline_text = source_fields['outline_text']
+            self.description_text = source_fields['description_text']
+            self.creation_type = project_or_dict.creation_type or 'idea'
+            self.outline_requirements = project_or_dict.outline_requirements
+            self.description_requirements = project_or_dict.description_requirements
 
         self.reference_files_content = reference_files_content or []
 
@@ -157,9 +157,8 @@ class AIService:
         if not text:
             return []
         
-        # 匹配 markdown 图片语法: ![](url) 或 ![alt](url)
-        pattern = r'!\[.*?\]\((.*?)\)'
-        matches = re.findall(pattern, text)
+        matches = re.findall(r'!\[.*?\]\((.*?)\)', text)
+        matches += re.findall(r'<img\b[^>]*?\bsrc\s*=\s*["\']([^"\']+)["\'][^>]*>', text, re.IGNORECASE)
         
         # 过滤掉空字符串，支持 http/https URL 和 /files/ 开头的本地路径（包括 mineru、materials 等）
         urls = []
@@ -193,6 +192,8 @@ class AIService:
         
         pattern = r'!\[(.*?)\]\([^\)]+\)'
         cleaned_text = re.sub(pattern, replace_image, text)
+        cleaned_text = re.sub(r'<div\b[^>]*>\s*<img\b[^>]*>\s*</div>', '', cleaned_text, flags=re.IGNORECASE)
+        cleaned_text = re.sub(r'<img\b[^>]*>', '', cleaned_text, flags=re.IGNORECASE)
         
         # 清理可能产生的多余空行
         cleaned_text = re.sub(r'\n\s*\n\s*\n', '\n\n', cleaned_text)
@@ -600,7 +601,7 @@ class AIService:
         # 找到所有字段在文本中的起始位置
         positions = []
         for name in field_names:
-            match = re.search(rf'\n{re.escape(name)}[：:]\s*', text)
+            match = re.search(rf'(?:^|\n){re.escape(name)}[：:]\s*', text)
             if match:
                 positions.append((match.start(), match.end(), name))
 
@@ -873,6 +874,57 @@ class AIService:
         )
         
         return prompt
+
+    def review_generated_slide_image(
+        self,
+        image_path: str,
+        generation_prompt: str,
+        page_desc: str,
+        page_outline: Optional[Dict] = None,
+        page_index: Optional[int] = None,
+    ) -> Dict:
+        """Review a generated slide image before it is persisted as a version."""
+        prompt = dedent(f"""
+        You are a strict quality-control reviewer for an AI-generated presentation slide.
+        Inspect the image against the generation prompt and page description.
+
+        Reject it only when a clear blocking problem exists:
+        1. Garbled, unreadable, nonsensical, or visibly corrupted text.
+        2. Obvious rendering artifacts, malformed layout, blurry key content, or unusably poor visual quality.
+        3. Visual content, layout, or key objects substantially conflict with the generation prompt.
+
+        Accept minor imperfections when the slide remains usable and broadly matches the request.
+        Return only JSON in this exact shape:
+        {{"passed": true, "issues": [], "reason": "short reason"}}
+
+        Page number: {page_index if page_index is not None else ''}
+        Page outline: {page_outline or {}}
+        Page description: {page_desc}
+        Generation prompt: {generation_prompt}
+        """).strip()
+        result = self.generate_json_with_image(prompt, image_path)
+        if isinstance(result, list) and result and isinstance(result[0], dict):
+            result = result[0]
+        if not isinstance(result, dict):
+            raise ValueError("Image quality review returned a non-object result")
+
+        raw_passed = result.get('passed')
+        if isinstance(raw_passed, bool):
+            passed = raw_passed
+        elif isinstance(raw_passed, (int, float)):
+            passed = bool(raw_passed)
+        elif isinstance(raw_passed, str):
+            passed = raw_passed.strip().lower() in ('true', 'yes', 'pass', 'passed', '1')
+        else:
+            passed = False
+        issues = result.get('issues') or []
+        if not isinstance(issues, list):
+            issues = [str(issues)]
+        return {
+            'passed': passed,
+            'issues': [str(issue).strip() for issue in issues if str(issue).strip()],
+            'reason': str(result.get('reason') or '').strip(),
+        }
     
     def generate_image(self, prompt: str, ref_image_path: Optional[str] = None, 
                       aspect_ratio: str = "16:9", resolution: str = "2K",

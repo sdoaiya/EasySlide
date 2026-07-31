@@ -5,6 +5,7 @@ from flask import Blueprint, current_app, request
 from models import Page, Project, Task, db
 from services.ai_service_manager import get_ai_service
 from services.native_deck_service import NativeDeckService
+from services.ppt_workspace_service import get_ppt_settings, record_ppt_revision
 from services.task_manager import generate_native_deck_task, task_manager
 from utils import bad_request, not_found, success_response
 
@@ -31,7 +32,7 @@ def save_native_page(project_id, page_id):
     project = db.session.get(Project, project_id)
     if not project:
         return not_found('Project')
-    if project.render_mode != 'native':
+    if get_ppt_settings(project)['render_mode'] != 'native':
         return bad_request('只有原生可编辑项目可以保存原生页面')
 
     page = Page.query.filter_by(id=page_id, project_id=project_id).first()
@@ -49,6 +50,7 @@ def save_native_page(project_id, page_id):
     page.native_layout = slide['layout']
     page.set_native_props(slide['props'])
     page.status = 'NATIVE_GENERATED'
+    record_ppt_revision(project, 'native.save', changed_page_ids=[page.id])
     db.session.commit()
     return success_response(page.to_dict())
 
@@ -69,13 +71,14 @@ def restore_native_page_version(project_id, page_id, version_id):
     project = db.session.get(Project, project_id)
     if not project:
         return not_found('Project')
-    if project.render_mode != 'native':
+    if get_ppt_settings(project)['render_mode'] != 'native':
         return bad_request('只有原生可编辑项目可以切换页面版本')
     page = Page.query.filter_by(id=page_id, project_id=project_id).first()
     if not page:
         return not_found('Page')
     if not page.restore_native_version(version_id):
         return not_found('Native page version')
+    record_ppt_revision(project, 'native.restore', changed_page_ids=[page.id])
     db.session.commit()
     return success_response(page.to_dict())
 
@@ -85,7 +88,7 @@ def generate_native_deck(project_id):
     project = db.session.get(Project, project_id)
     if not project:
         return not_found('Project')
-    if project.render_mode != 'native':
+    if get_ppt_settings(project)['render_mode'] != 'native':
         return bad_request('只有原生可编辑项目可以生成原生页面')
 
     data = request.get_json(silent=True) or {}

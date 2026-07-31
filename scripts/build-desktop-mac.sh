@@ -48,6 +48,7 @@ iconutil -c icns "$staging_root/icon.iconset" -o "$staging_root/icon.icns"
 rm -rf "$staging_root/icon.iconset"
 
 npm --prefix desktop ci
+node scripts/stage-hyperframes-browser.mjs desktop/resources/hyperframes-browser
 npm --prefix desktop install --no-save dmg-license@^1.0.11
 npm --prefix desktop run dist:mac
 

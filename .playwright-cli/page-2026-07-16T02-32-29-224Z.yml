@@ -1,0 +1,138 @@
+- generic [ref=e4]:
+  - navigation "工作台导航" [ref=e5]:
+    - generic [ref=e6]:
+      - img "EasySlide Logo" [ref=e8]
+      - generic [ref=e9]:
+        - button "首页" [ref=e10] [cursor=pointer]
+        - button "创建项目" [ref=e16] [cursor=pointer]
+        - button "我的项目" [ref=e24] [cursor=pointer]
+        - button "素材中心" [ref=e30] [cursor=pointer]
+        - button "素材生成" [ref=e35] [cursor=pointer]
+        - button "设置" [ref=e42] [cursor=pointer]
+        - button "EN" [ref=e49] [cursor=pointer]
+        - button "主题模式" [ref=e55] [cursor=pointer]
+  - main [ref=e61]:
+    - generic [ref=e62]:
+      - generic [ref=e63]: 创建项目
+      - heading "开始新的 PPT 项目" [level=1] [ref=e67]
+      - paragraph [ref=e68]: 从一句想法、大纲、详细描述或现有文件开始，继续完成你的演示文稿创作。
+    - generic [ref=e69]:
+      - generic [ref=e70]:
+        - button "一句话生成" [ref=e71] [cursor=pointer]
+        - button "大纲生成" [ref=e76] [cursor=pointer]
+        - button "描述生成" [ref=e82] [cursor=pointer]
+        - button "PPT 翻新" [ref=e89] [cursor=pointer]
+      - radiogroup "生成模式" [ref=e98]:
+        - radio "图片生成" [checked] [ref=e99] [cursor=pointer]:
+          - generic [ref=e105]:
+            - generic [ref=e106]: 图片生成
+            - generic [ref=e109]: 生成高质量图片页面，可导出 PDF / PPTX。
+        - radio "原生可编辑" [ref=e110] [cursor=pointer]:
+          - generic [ref=e116]:
+            - generic [ref=e117]: 原生可编辑
+            - generic [ref=e118]: 生成可编辑页面，导出不依赖版面解析服务。
+      - generic [ref=e120]:
+        - generic [ref=e123]: 输入你的想法，AI 将为你生成完整的 PPT
+        - generic [ref=e124]: PDF / PPTX
+      - generic [ref=e127]:
+        - generic [ref=e128]:
+          - textbox "例如：生成一份关于 AI 发展史的演讲 PPT" [ref=e129]
+          - generic: 例如：生成一份关于 AI 发展史的演讲 PPT
+        - generic [ref=e130]:
+          - generic [ref=e131]:
+            - button "上传图片" [ref=e133] [cursor=pointer]
+            - generic [ref=e138]:
+              - button "选择参考文件" [ref=e139] [cursor=pointer]
+              - button "16:9" [ref=e143] [cursor=pointer]
+          - button "下一步" [disabled] [ref=e148]
+      - generic [ref=e149]:
+        - generic [ref=e150]:
+          - heading "选择风格模板" [level=3] [ref=e158]
+          - button "从图片提取风格" [ref=e159] [cursor=pointer]
+          - generic [ref=e164] [cursor=pointer]:
+            - generic [ref=e165]: 使用文字描述风格
+            - checkbox "使用文字描述风格" [ref=e167]
+        - generic [ref=e170]:
+          - generic [ref=e171]:
+            - generic [ref=e173]:
+              - heading "Gorden 模板" [level=4] [ref=e174]
+              - paragraph [ref=e175]: 21 套中文场景模板，按视觉风格作为图片生成参考
+            - generic [ref=e176]:
+              - button "简约商务总结汇报 简约商务总结汇报" [ref=e177] [cursor=pointer]:
+                - img "简约商务总结汇报" [ref=e178]
+                - generic [ref=e179]: 简约商务总结汇报
+              - button "新时代新青年红色教育 新时代新青年红色教育" [ref=e180] [cursor=pointer]:
+                - img "新时代新青年红色教育" [ref=e181]
+                - generic [ref=e182]: 新时代新青年红色教育
+              - button "橙色可爱卡通教学 橙色可爱卡通教学" [ref=e183] [cursor=pointer]:
+                - img "橙色可爱卡通教学" [ref=e184]
+                - generic [ref=e185]: 橙色可爱卡通教学
+              - button "蓝灰酸性插画季度总结 蓝灰酸性插画季度总结" [ref=e186] [cursor=pointer]:
+                - img "蓝灰酸性插画季度总结" [ref=e187]
+                - generic [ref=e188]: 蓝灰酸性插画季度总结
+              - button "多彩几何工作总结 多彩几何工作总结" [ref=e189] [cursor=pointer]:
+                - img "多彩几何工作总结" [ref=e190]
+                - generic [ref=e191]: 多彩几何工作总结
+              - button "红色爱国主题教育通用 红色爱国主题教育通用" [ref=e192] [cursor=pointer]:
+                - img "红色爱国主题教育通用" [ref=e193]
+                - generic [ref=e194]: 红色爱国主题教育通用
+              - button "高级红色教学实施框架 高级红色教学实施框架" [ref=e195] [cursor=pointer]:
+                - img "高级红色教学实施框架" [ref=e196]
+                - generic [ref=e197]: 高级红色教学实施框架
+              - button "高级红色数智教学图解 高级红色数智教学图解" [ref=e198] [cursor=pointer]:
+                - img "高级红色数智教学图解" [ref=e199]
+                - generic [ref=e200]: 高级红色数智教学图解
+              - button "多专业开题方法论库 多专业开题方法论库" [ref=e201] [cursor=pointer]:
+                - img "多专业开题方法论库" [ref=e202]
+                - generic [ref=e203]: 多专业开题方法论库
+              - button "高级感大厂 PPT 合辑 高级感大厂 PPT 合辑" [ref=e204] [cursor=pointer]:
+                - img "高级感大厂 PPT 合辑" [ref=e205]
+                - generic [ref=e206]: 高级感大厂 PPT 合辑
+              - button "领导爱的架构图合辑 领导爱的架构图合辑" [ref=e207] [cursor=pointer]:
+                - img "领导爱的架构图合辑" [ref=e208]
+                - generic [ref=e209]: 领导爱的架构图合辑
+              - button "麦肯锡风专业模板 麦肯锡风专业模板" [ref=e210] [cursor=pointer]:
+                - img "麦肯锡风专业模板" [ref=e211]
+                - generic [ref=e212]: 麦肯锡风专业模板
+              - button "汇报合辑·思维模型与复盘 汇报合辑·思维模型与复盘" [ref=e213] [cursor=pointer]:
+                - img "汇报合辑·思维模型与复盘" [ref=e214]
+                - generic [ref=e215]: 汇报合辑·思维模型与复盘
+              - button "汇报合辑·数据图表与业绩 汇报合辑·数据图表与业绩" [ref=e216] [cursor=pointer]:
+                - img "汇报合辑·数据图表与业绩" [ref=e217]
+                - generic [ref=e218]: 汇报合辑·数据图表与业绩
+              - button "开题报告万能公式 开题报告万能公式" [ref=e219] [cursor=pointer]:
+                - img "开题报告万能公式" [ref=e220]
+                - generic [ref=e221]: 开题报告万能公式
+              - button "名校开题报告合辑 名校开题报告合辑" [ref=e222] [cursor=pointer]:
+                - img "名校开题报告合辑" [ref=e223]
+                - generic [ref=e224]: 名校开题报告合辑
+              - button "数据可视化合辑 数据可视化合辑" [ref=e225] [cursor=pointer]:
+                - img "数据可视化合辑" [ref=e226]
+                - generic [ref=e227]: 数据可视化合辑
+              - button "汇报合辑·工作汇报与竞聘 汇报合辑·工作汇报与竞聘" [ref=e228] [cursor=pointer]:
+                - img "汇报合辑·工作汇报与竞聘" [ref=e229]
+                - generic [ref=e230]: 汇报合辑·工作汇报与竞聘
+              - button "汇报救命合辑 汇报救命合辑" [ref=e231] [cursor=pointer]:
+                - img "汇报救命合辑" [ref=e232]
+                - generic [ref=e233]: 汇报救命合辑
+              - button "运营 PPT 合辑 运营 PPT 合辑" [ref=e234] [cursor=pointer]:
+                - img "运营 PPT 合辑" [ref=e235]
+                - generic [ref=e236]: 运营 PPT 合辑
+              - button "竞聘述职合辑 竞聘述职合辑" [ref=e237] [cursor=pointer]:
+                - img "竞聘述职合辑" [ref=e238]
+                - generic [ref=e239]: 竞聘述职合辑
+          - generic [ref=e240]:
+            - heading "预设模板" [level=4] [ref=e241]
+            - button [ref=e242] [cursor=pointer]
+          - generic [ref=e248]:
+            - generic [ref=e249] [cursor=pointer]:
+              - generic [ref=e250]: +
+              - generic [ref=e251]: 上传模板
+            - img "仓库作业安全培训" [ref=e253] [cursor=pointer]
+            - img "仓库6S管理培训" [ref=e255] [cursor=pointer]
+            - img "仓库年终工作总结" [ref=e257] [cursor=pointer]
+            - img "智能物流仓储方案" [ref=e259] [cursor=pointer]
+            - img "库存管理流程汇报" [ref=e261] [cursor=pointer]
+            - img "收货检验入库流程" [ref=e263] [cursor=pointer]
+            - img "危化品仓储安全管理" [ref=e265] [cursor=pointer]
+            - img "仓库消防安全培训" [ref=e267] [cursor=pointer]

@@ -1,6 +1,7 @@
 import pytest
 
 from services.native_deck_service import NativeDeckService
+from services.prompts import get_native_slide_prompt
 
 
 def test_lists_layouts_by_role_and_media_need():
@@ -39,6 +40,29 @@ def test_rejects_unknown_props_and_over_budget_copy():
 
     with pytest.raises(ValueError, match='title'):
         service.validate_props('core01_cover', {'title': '超' * 25})
+
+
+def test_validates_flint_chart_specs_before_saving_native_slides():
+    service = NativeDeckService()
+    valid = '{"data":{"values":[{"quarter":"Q1","revenue":120}]},"chart_spec":{"chartType":"Bar Chart","encodings":{"x":{"field":"quarter"},"y":{"field":"revenue"}}}}'
+
+    assert service.validate_props('core01_chart', {'title': '季度营收', 'spec': valid})
+    with pytest.raises(ValueError, match='spec 不是有效 JSON'):
+        service.validate_props('core01_chart', {'spec': 'not-json'})
+    with pytest.raises(ValueError, match='chart_spec.encodings'):
+        service.validate_props('core01_chart', {'spec': '{"data":{"values":[]},"chart_spec":{"chartType":"Bar Chart"}}'})
+
+
+def test_native_design_intent_keeps_template_visual_settings_out():
+    service = NativeDeckService()
+
+    intent = service.build_design_intent(
+        outline={'title': '增长复盘', 'points': ['渠道效率提升', '续费率稳定']},
+        theme='core01',
+    )
+
+    assert 'visual_preferences' not in intent
+    assert intent['page_plan']['needs_media'] is False
 
 
 def test_allows_only_controlled_native_metadata():
@@ -240,6 +264,20 @@ def test_deck_plan_and_recent_layout_penalty_keep_the_deck_coherent_without_cons
     assert candidates[0]['layout'] != 'core01_statement'
 
 
+def test_recent_layout_is_excluded_when_other_candidates_exist():
+    service = NativeDeckService()
+
+    candidates = service.select_layout_candidates(
+        theme='core01',
+        outline={'title': '下一步行动', 'points': ['启动试点']},
+        role='end',
+        recent_layouts=['core01_actions'],
+    )
+
+    assert candidates
+    assert all(candidate['layout'] != 'core01_actions' for candidate in candidates)
+
+
 def test_native_quality_report_tracks_outline_coverage_and_layout_repetition():
     service = NativeDeckService()
 
@@ -258,6 +296,20 @@ def test_native_quality_report_tracks_outline_coverage_and_layout_repetition():
     assert report['status'] == 'warning'
     assert report['outline_coverage'] == 1.0
     assert report['issues'] == ['consecutive_layout_repeat']
+
+
+def test_native_slide_prompt_includes_quality_warning_thresholds():
+    prompt = get_native_slide_prompt(
+        {'title': '区域合作判断', 'points': ['聚焦链主企业', '形成区域共识']},
+        [{'layout': 'core01_statement', 'propShapes': {}, 'copyBudgets': {}, 'arrayLimits': {}, 'mediaSlots': []}],
+        design_intent={'deck_position': {'recent_layouts': ['core01_narrative']}},
+    )
+
+    assert 'recent_layouts 中最后一个布局' in prompt
+    assert 'points 至少一半' in prompt
+    assert '不得超过 650 个字符' in prompt
+    assert '可见列表项不得重复' in prompt
+    assert 'required: true' in prompt
 
 
 @pytest.mark.parametrize(
@@ -281,7 +333,7 @@ def test_classic_native_selects_specialized_huashu_layouts(outline, role, expect
     assert candidates[0]['layout'] == expected
 
 
-def test_outline_fallback_pads_required_array_items_for_contract_safe_generation():
+def test_outline_fallback_uses_unique_array_items_to_reach_layout_minimum():
     service = NativeDeckService()
 
     props = service.fill_outline_props(
@@ -291,13 +343,18 @@ def test_outline_fallback_pads_required_array_items_for_contract_safe_generation
     )
 
     assert len(props['actions']) == 3
-    assert service.validate_props('core01_actions', service.fit_copy_budgets('core01_actions', props))
+    assert len(set(props['actions'])) == 3
+    assert 'duplicated_list_content' not in service.evaluate_slide_quality(
+        layout='core01_actions',
+        props=service.fit_copy_budgets('core01_actions', props),
+        outline={'title': '下一步', 'points': ['启动试点']},
+    )['issues']
 
 
-def test_classic_native_exposes_twenty_five_editable_layouts():
+def test_classic_native_exposes_twenty_six_editable_layouts():
     service = NativeDeckService()
 
-    assert len(service.list_layouts(theme='core01')) == 25
+    assert len(service.list_layouts(theme='core01')) == 26
 
 
 def test_resolves_native_theme_from_existing_layout_when_project_theme_is_missing():

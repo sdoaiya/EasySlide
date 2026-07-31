@@ -1,0 +1,49 @@
+- generic [ref=f2e4]:
+  - banner [ref=f2e5]:
+    - generic [ref=f2e7]:
+      - generic [ref=f2e8]:
+        - button "返回" [ref=f2e9] [cursor=pointer]
+        - img "EasySlide Logo" [ref=f2e14]
+        - generic [ref=f2e15]:
+          - generic [ref=f2e16]:
+            - generic [ref=f2e17]: 编辑大纲
+            - generic [ref=f2e18]: Step 1 · 内容结构
+          - paragraph [ref=f2e19]: 整理想法、素材和页面顺序
+      - generic [ref=f2e20]:
+        - button [ref=f2e21] [cursor=pointer]
+        - button "重新生成大纲" [ref=f2e24] [cursor=pointer]
+        - button [ref=f2e26] [cursor=pointer]
+    - generic [ref=f2e35]:
+      - textbox "例如：增加一页关于XXX的内容、删除第3页、合并前两页... · Ctrl+Enter提交" [ref=f2e39]
+      - button "提交 (Ctrl+Enter)" [disabled] [ref=f2e40]
+  - main [ref=f2e44]:
+    - button "展开构想与要求" [ref=f2e46] [cursor=pointer]
+    - generic [ref=f2e49]:
+      - complementary [ref=f2e50]:
+        - generic [ref=f2e51]:
+          - generic [ref=f2e52]:
+            - heading "页面导航" [level=3] [ref=f2e53]
+            - paragraph [ref=f2e55]: 点击页面可快速定位并修改。
+          - generic [ref=f2e56]: 共 1 页
+        - button "第 1 页 经营摘要 收入增长" [ref=f2e58] [cursor=pointer]:
+          - text: 第 1 页
+          - generic [ref=f2e59]: 经营摘要
+          - generic [ref=f2e60]: 收入增长
+      - generic [ref=f2e61]:
+        - button "第 1 页 封面 经营摘要 收入增长 编辑 删除" [ref=f2e64] [cursor=pointer]:
+          - generic [ref=f2e66]:
+            - generic [ref=f2e75]:
+              - generic [ref=f2e76]:
+                - generic [ref=f2e77]: 第 1 页
+                - generic "第一页为封面页，通常包含标题和副标题" [ref=f2e78]: 封面
+              - generic [ref=f2e79]:
+                - heading "经营摘要" [level=4] [ref=f2e80]
+                - paragraph [ref=f2e83]: 收入增长
+            - generic [ref=f2e84]:
+              - button "编辑" [ref=f2e85]
+              - button "删除" [ref=f2e88]
+        - status [ref=f2e92]
+  - contentinfo:
+    - generic [ref=f2e93]:
+      - button [ref=f2e94] [cursor=pointer]
+      - button [ref=f2e98] [cursor=pointer]

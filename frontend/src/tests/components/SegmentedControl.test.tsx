@@ -21,6 +21,8 @@ describe('SegmentedControl', () => {
 
     expect(screen.getByRole('radiogroup', { name: '项目模式' })).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: '图片生成' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('radio', { name: '图片生成' })).toHaveClass('bg-[var(--app-surface)]');
+    expect(screen.getByRole('radio', { name: '图片生成' })).toHaveClass('shadow-[var(--app-shadow-control)]');
     expect(screen.getByRole('radio', { name: '原生可编辑' })).toHaveAttribute('aria-checked', 'false');
   });
 

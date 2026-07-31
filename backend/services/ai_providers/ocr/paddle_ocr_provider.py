@@ -1,5 +1,6 @@
 """PaddleOCR-VL provider used by settings OCR test."""
 
+import base64
 import json
 import os
 import time
@@ -20,7 +21,13 @@ class PaddleOCRProvider:
         self.job_url = job_url
         self.model = model
 
-    def recognize(self, file_path: str, max_wait_time: int = 120) -> dict[str, Any]:
+    def recognize(
+        self,
+        file_path: str,
+        max_wait_time: int = 120,
+        image_dir: Optional[Path] = None,
+        image_url_prefix: str = "",
+    ) -> dict[str, Any]:
         headers = {"Authorization": f"bearer {self.token}"}
         optional_payload = {
             "useDocOrientationClassify": False,
@@ -58,14 +65,19 @@ class PaddleOCRProvider:
             data = result_response.json()["data"]
             state = data["state"]
             if state == "done":
-                return self._load_jsonl_result(data["resultUrl"]["jsonUrl"])
+                return self._load_jsonl_result(data["resultUrl"]["jsonUrl"], image_dir, image_url_prefix)
             if state == "failed":
                 raise RuntimeError(data.get("errorMsg") or "PaddleOCR job failed")
             time.sleep(5)
 
         raise TimeoutError("PaddleOCR job timed out")
 
-    def _load_jsonl_result(self, jsonl_url: str) -> dict[str, Any]:
+    def _load_jsonl_result(
+        self,
+        jsonl_url: str,
+        image_dir: Optional[Path] = None,
+        image_url_prefix: str = "",
+    ) -> dict[str, Any]:
         response = requests.get(jsonl_url, timeout=60)
         response.raise_for_status()
         markdown_parts: list[str] = []
@@ -76,7 +88,21 @@ class PaddleOCRProvider:
                 continue
             result = json.loads(line)["result"]
             for item in result.get("layoutParsingResults", []):
-                markdown_parts.append(item.get("markdown", {}).get("text", ""))
+                markdown = item.get("markdown", {})
+                text = markdown.get("text", "")
+                for image_path, image_data in (markdown.get("images") or {}).items():
+                    if image_dir:
+                        target = (image_dir / image_path).resolve()
+                        target.relative_to(image_dir.resolve())
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        if image_data.startswith(("http://", "https://")):
+                            image_response = requests.get(image_data, timeout=60)
+                            image_response.raise_for_status()
+                            target.write_bytes(image_response.content)
+                        else:
+                            target.write_bytes(base64.b64decode(image_data.split(",", 1)[-1]))
+                        text = text.replace(image_path, f"{image_url_prefix}/{image_path}")
+                markdown_parts.append(text)
                 page_count += 1
 
         text = "\n\n".join(part for part in markdown_parts if part).strip()

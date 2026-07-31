@@ -32,6 +32,13 @@ const nativeApiMocks = vi.hoisted(() => ({
   deletePage: vi.fn(),
   updatePagesOrder: vi.fn(),
   exportNativeVideo: vi.fn(),
+  handoffVideoWorkspaceFrames: vi.fn(),
+  createNativeSceneManifestRefs: vi.fn(),
+  preflightExportVideo: vi.fn(),
+  getFishAudioVoices: vi.fn(),
+  getProjectNarrations: vi.fn(),
+  getFishAudioCapabilities: vi.fn(),
+  previewFishNarration: vi.fn(),
   generateMaterialImage: vi.fn(),
   updateProject: vi.fn(),
   getNativePageVersions: vi.fn(),
@@ -44,7 +51,8 @@ const exportTaskMocks = vi.hoisted(() => ({
   pollTask: vi.fn(),
 }))
 
-const frameMocks = vi.hoisted(() => ({ capture: vi.fn() }))
+const frameMocks = vi.hoisted(() => ({ capture: vi.fn(), captureManifests: vi.fn() }))
+const sceneBundleMocks = vi.hoisted(() => ({ capture: vi.fn() }))
 const exportMocks = vi.hoisted(() => ({
   exportNativeDeck: vi.fn(),
 }))
@@ -67,6 +75,11 @@ vi.mock('@/store/useExportTasksStore', () => ({
 
 vi.mock('@/native-deck/exportNativeDeckFrames', () => ({
   captureNativeDeckFrameSequences: frameMocks.capture,
+  captureNativeSceneManifests: frameMocks.captureManifests,
+}))
+
+vi.mock('@/native-deck/exportNativeMotionBundle', () => ({
+  captureNativeMotionBundles: sceneBundleMocks.capture,
 }))
 
 vi.mock('@/native-deck/exportNativeDeck', () => ({
@@ -83,7 +96,6 @@ vi.mock('@/api/endpoints', () => ({
   generateMaterialImage: nativeApiMocks.generateMaterialImage,
   updateNativePptxProgress: vi.fn(),
   getSettings: vi.fn(() => new Promise(() => {})),
-  getElevenLabsVoices: vi.fn(() => new Promise(() => {})),
   listUserTemplates: vi.fn(() => new Promise(() => {})),
   getPageImageVersions: vi.fn(() => new Promise(() => {})),
   setCurrentImageVersion: vi.fn(),
@@ -95,6 +107,13 @@ vi.mock('@/api/endpoints', () => ({
   exportEditablePPTX: vi.fn(),
   exportVideo: vi.fn(),
   exportNativeVideo: nativeApiMocks.exportNativeVideo,
+  handoffVideoWorkspaceFrames: nativeApiMocks.handoffVideoWorkspaceFrames,
+  createNativeSceneManifestRefs: nativeApiMocks.createNativeSceneManifestRefs,
+  preflightExportVideo: nativeApiMocks.preflightExportVideo,
+  getFishAudioVoices: nativeApiMocks.getFishAudioVoices,
+  getProjectNarrations: nativeApiMocks.getProjectNarrations,
+  getFishAudioCapabilities: nativeApiMocks.getFishAudioCapabilities,
+  previewFishNarration: nativeApiMocks.previewFishNarration,
   getNativePageVersions: nativeApiMocks.getNativePageVersions,
   restoreNativePageVersion: nativeApiMocks.restoreNativePageVersion,
 }))
@@ -140,6 +159,42 @@ describe('NativeDeckWorkspace', () => {
     nativeApiMocks.deletePage.mockReset().mockResolvedValue({ data: {} })
     nativeApiMocks.updatePagesOrder.mockReset().mockResolvedValue({ data: {} })
     nativeApiMocks.exportNativeVideo.mockReset().mockResolvedValue({ data: { task_id: 'video-task-1' } })
+    nativeApiMocks.handoffVideoWorkspaceFrames.mockReset().mockResolvedValue({ data: { attached: true } })
+    frameMocks.captureManifests.mockReset().mockImplementation((items: NativeSlideSpec[]) => items.map((slide) => ({ page_id: slide.pageId })))
+    nativeApiMocks.createNativeSceneManifestRefs.mockReset().mockImplementation(async (items: Array<{ page_id: string }>) => items.map((item) => ({ page_id: item.page_id, sha256: item.page_id.padEnd(64, '0') })))
+    sceneBundleMocks.capture.mockReset().mockImplementation(async (_items: NativeSlideSpec[], refs: Array<{ page_id: string; sha256: string }>) => refs.map((ref) => ({ page_id: ref.page_id, scene_manifest_sha256: ref.sha256 })))
+    nativeApiMocks.preflightExportVideo.mockReset().mockResolvedValue({ data: { can_export: true, errors: [], warnings: [] } })
+    nativeApiMocks.getFishAudioVoices.mockReset().mockResolvedValue({
+      data: {
+        voices: [
+          { id: 'fish-host', title: '品牌主讲人', state: 'trained', languages: ['zh'], visibility: 'private' },
+          { id: 'fish-expert', title: '产品专家', state: 'trained', languages: ['zh'], visibility: 'private' },
+          { id: 'fish-guest', title: '客户嘉宾', state: 'trained', languages: ['zh'], visibility: 'private' },
+        ],
+      },
+    })
+    nativeApiMocks.getProjectNarrations.mockReset().mockResolvedValue({
+      data: {
+        pages: slides.map((slide, index) => ({
+          page_id: slide.pageId,
+          order_index: index,
+          current_version_id: `narration-${index + 1}`,
+          locked: false,
+          revision: 1,
+          word_count: 20,
+          estimated_seconds: 8,
+          candidate_count: 0,
+        })),
+        total_pages: slides.length,
+        confirmed_pages: slides.length,
+        missing_pages: 0,
+        candidate_pages: 0,
+      },
+    })
+    nativeApiMocks.getFishAudioCapabilities.mockReset().mockResolvedValue({
+      data: { voice_design: { supported: false, reason: '当前免费模型未确认 Voice Design 官方 API 契约' } },
+    })
+    nativeApiMocks.previewFishNarration.mockReset().mockResolvedValue(new Blob(['preview'], { type: 'audio/mpeg' }))
     nativeApiMocks.generateMaterialImage.mockReset()
     nativeApiMocks.updateProject.mockReset().mockResolvedValue({ data: undefined })
     nativeApiMocks.getNativePageVersions.mockReset().mockResolvedValue({ data: { versions: [] } })
@@ -180,16 +235,27 @@ describe('NativeDeckWorkspace', () => {
   it('switches pages while rendering the same native HTML in the rail and canvas', () => {
     renderWorkspace()
 
-    expect(screen.getByRole('complementary', { name: '页面栏' })).toBeInTheDocument()
+    const pageRail = screen.getByRole('complementary', { name: '页面栏' })
+    expect(pageRail).toBeInTheDocument()
+    expect(pageRail.innerHTML).not.toContain('shadow-sm')
+    expect(screen.getByText('Step 3 · 视觉成稿')).not.toHaveClass('rounded-full')
+    expect(screen.getByText('Step 3 · 视觉成稿')).toHaveClass('rounded-[var(--app-radius-control)]')
     expect(screen.getByRole('main')).toHaveTextContent('议程')
     expect(screen.getByRole('complementary', { name: '属性栏' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '收起页面栏' })).not.toBeInTheDocument()
+    expect(screen.getByRole('contentinfo')).toHaveTextContent('已保存')
+    expect(screen.getByRole('contentinfo')).toHaveTextContent('原生可编辑模式')
+    const sidebarToggle = screen.getByRole('button', { name: '收起页面栏' })
+    expect(sidebarToggle).toBeInTheDocument()
+    expect(screen.getByRole('complementary', { name: '页面栏' })).toHaveAttribute('data-collapsed', 'false')
+    fireEvent.click(sidebarToggle)
+    expect(screen.getByRole('complementary', { name: '页面栏' })).toHaveAttribute('data-collapsed', 'true')
+    fireEvent.click(screen.getByRole('button', { name: '展开页面栏' }))
     expect(screen.getByRole('button', { name: '收起属性栏' })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '第 2 页：客户案例' }))
 
     expect(useNativeDeckStore.getState().selectedPageId).toBe('page-2')
-    fireEvent.click(screen.getByRole('tab', { name: '媒体' }))
+    fireEvent.click(screen.getByRole('tab', { name: '图片' }))
     expect(screen.getByAltText('image 1')).toHaveAttribute('src', '/files/old.png')
   })
 
@@ -217,17 +283,45 @@ describe('NativeDeckWorkspace', () => {
 
   it('opens an in-app full-screen presentation overlay', () => {
     const requestFullscreen = vi.fn().mockResolvedValue(undefined)
-    const originalRequestFullscreen = document.documentElement.requestFullscreen
+    const originalRequestFullscreen = Object.getOwnPropertyDescriptor(document.documentElement, 'requestFullscreen')
     Object.defineProperty(document.documentElement, 'requestFullscreen', { configurable: true, value: requestFullscreen })
-    renderWorkspace()
 
-    fireEvent.click(screen.getByRole('button', { name: '演示模式' }))
+    try {
+      renderWorkspace()
 
-    const presentation = screen.getByRole('dialog', { name: '演示模式' })
-    expect(presentation).toHaveClass('fixed', 'inset-0')
-    expect(presentation.querySelector('button[aria-label="退出演示模式"]')).toBeInTheDocument()
-    expect(requestFullscreen).toHaveBeenCalledOnce()
-    Object.defineProperty(document.documentElement, 'requestFullscreen', { configurable: true, value: originalRequestFullscreen })
+      fireEvent.click(screen.getByRole('button', { name: '演示模式' }))
+
+      const presentation = screen.getByRole('dialog', { name: '演示模式' })
+      expect(presentation).toHaveClass('fixed', 'inset-0')
+      const closeButton = presentation.querySelector('button[aria-label="退出演示模式"]')
+      expect(closeButton).toBeInTheDocument()
+      expect(closeButton).not.toHaveClass('bg-black/50')
+      expect(closeButton).toHaveClass('bg-[color:var(--app-surface)]/85')
+      expect(presentation.closest('.workspace-shell')).toHaveAttribute('data-presenting', 'true')
+      expect(requestFullscreen).toHaveBeenCalledOnce()
+    } finally {
+      if (originalRequestFullscreen) Object.defineProperty(document.documentElement, 'requestFullscreen', originalRequestFullscreen)
+      else Reflect.deleteProperty(document.documentElement, 'requestFullscreen')
+    }
+  })
+
+  it('closes the presentation overlay when browser fullscreen is exited externally', () => {
+    const originalFullscreenElement = Object.getOwnPropertyDescriptor(document, 'fullscreenElement')
+    Object.defineProperty(document, 'fullscreenElement', { configurable: true, value: document.documentElement })
+
+    try {
+      renderWorkspace()
+      fireEvent.click(screen.getByRole('button', { name: '演示模式' }))
+      expect(screen.getByRole('dialog', { name: '演示模式' })).toBeInTheDocument()
+
+      Object.defineProperty(document, 'fullscreenElement', { configurable: true, value: null })
+      fireEvent(document, new Event('fullscreenchange'))
+
+      expect(screen.queryByRole('dialog', { name: '演示模式' })).not.toBeInTheDocument()
+    } finally {
+      if (originalFullscreenElement) Object.defineProperty(document, 'fullscreenElement', originalFullscreenElement)
+      else Reflect.deleteProperty(document, 'fullscreenElement')
+    }
   })
 
   it('edits text and array fields from the selected layout contract', () => {
@@ -290,7 +384,7 @@ describe('NativeDeckWorkspace', () => {
   it('clears a media slot and autosaves the current layout and props', async () => {
     renderWorkspace()
     fireEvent.click(screen.getByRole('button', { name: '第 2 页：客户案例' }))
-    fireEvent.click(screen.getByRole('tab', { name: '媒体' }))
+    fireEvent.click(screen.getByRole('tab', { name: '图片' }))
 
     fireEvent.click(screen.getByRole('button', { name: '清除 image 1' }))
     expect(screen.queryByAltText('image 1')).not.toBeInTheDocument()
@@ -379,7 +473,7 @@ describe('NativeDeckWorkspace', () => {
     renderWorkspace()
 
     expect(screen.getByRole('button', { name: '演示模式' })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('tab', { name: '页面' }))
+    fireEvent.click(screen.getByRole('tab', { name: '内容' }))
     fireEvent.change(screen.getByLabelText('页面布局'), { target: { value: 'core01_process' } })
     expect(screen.getByLabelText('页面布局')).toHaveValue('core01_process')
     fireEvent.click(screen.getByRole('tab', { name: '内容' }))
@@ -403,7 +497,7 @@ describe('NativeDeckWorkspace', () => {
   it('copies only animation settings to every page', () => {
     renderWorkspace()
 
-    fireEvent.click(screen.getByRole('tab', { name: '动效' }))
+    fireEvent.click(screen.getByRole('tab', { name: '设计' }))
     fireEvent.click(screen.getByText('页面动效'))
     fireEvent.change(screen.getByLabelText('进入效果'), { target: { value: 'fade' } })
     fireEvent.change(screen.getByLabelText('页面切换'), { target: { value: 'cover' } })
@@ -501,7 +595,7 @@ describe('NativeDeckWorkspace', () => {
   it('keeps click-triggered element animation visible while editing', () => {
     renderWorkspace()
 
-    fireEvent.click(screen.getByRole('tab', { name: '动效' }))
+    fireEvent.click(screen.getByRole('tab', { name: '设计' }))
     fireEvent.click(screen.getByText('页面动效'))
     fireEvent.change(screen.getByLabelText('元素逐项进入'), { target: { value: 'fade' } })
     fireEvent.change(screen.getByLabelText('元素触发方式'), { target: { value: 'click' } })
@@ -525,7 +619,9 @@ describe('NativeDeckWorkspace', () => {
     expect(toolbar).toBeInTheDocument()
     expect(toolbar).not.toHaveTextContent('批量生成页面')
     expect(toolbar).toHaveTextContent('批量生成')
-    expect(screen.getByRole('button', { name: '批量生成页面' })).toBeInTheDocument()
+    const pageAction = screen.getByRole('button', { name: '批量生成页面' })
+    expect(pageAction).toBeInTheDocument()
+    expect(pageAction).toHaveClass('bg-[var(--app-primary-action)]')
   })
 
   it('uses the compact native toolbar and tracks PPTX export as a task', async () => {
@@ -545,7 +641,9 @@ describe('NativeDeckWorkspace', () => {
     expect(screen.queryByRole('button', { name: '上一步' })).not.toBeInTheDocument()
 
     const exportButton = screen.getByRole('button', { name: '导出PPTX' })
-    expect(exportButton).toHaveClass('bg-gradient-to-r')
+    expect(exportButton).toHaveClass('bg-[var(--app-primary-action)]')
+    expect(exportButton).not.toHaveClass('bg-[var(--app-accent)]')
+    expect(exportButton).not.toHaveClass('bg-gradient-to-r')
 
     fireEvent.click(exportButton)
 
@@ -567,6 +665,13 @@ describe('NativeDeckWorkspace', () => {
       expect.any(Object),
       '议程.pptx',
     ))
+  })
+
+  it('shows the native export task list above the workspace', () => {
+    renderWorkspace()
+
+    fireEvent.click(screen.getByRole('button', { name: '导出任务' }))
+    expect(screen.getByTestId('native-export-task-popover')).toHaveClass('fixed', 'z-[120]')
   })
 
   it('extracts the document topic for native export filenames when slide titles are empty', async () => {
@@ -607,7 +712,10 @@ describe('NativeDeckWorkspace', () => {
     fireEvent.change(screen.getByLabelText('导出格式'), { target: { value: '讲解视频' } })
     const exportButton = screen.getByRole('button', { name: '导出讲解视频' })
     fireEvent.click(exportButton)
-    expect(await screen.findByRole('dialog', { name: '讲解视频设置' })).toBeInTheDocument()
+    const dialog = await screen.findByRole('dialog', { name: '讲解视频设置' })
+    expect(dialog).toBeInTheDocument()
+    expect(dialog.parentElement).not.toHaveClass('bg-black/35')
+    expect(dialog.parentElement).toHaveClass('bg-[color:var(--app-surface)]/80')
     fireEvent.click(screen.getByRole('button', { name: '培训课程' }))
     fireEvent.click(screen.getByRole('button', { name: '开始导出视频' }))
 
@@ -617,9 +725,80 @@ describe('NativeDeckWorkspace', () => {
       ['page-1'],
       '议程.mp4',
       { preset: 'training', motion_intensity: 'standard', subtitle_mode: 'highlight', transition: 'fade', page_pause_ms: 340 },
+      expect.objectContaining({
+        ttsProvider: 'edge',
+        voice: 'zh-CN-XiaoxiaoNeural',
+        rate: '+0%',
+        speed: 1,
+        language: 'zh',
+        generateNarration: false,
+        narrationPolicy: 'confirmed_only',
+        narrationVersionMap: { 'page-1': 'narration-1' },
+        narrationMode: 'single',
+        speakers: undefined,
+        autoEmotion: true,
+      }),
+      [expect.objectContaining({ page_id: 'page-1' })],
+      [expect.objectContaining({ page_id: 'page-1', scene_manifest_sha256: expect.any(String) })],
     ))
+    expect(frameMocks.captureManifests.mock.invocationCallOrder[0]).toBeLessThan(sceneBundleMocks.capture.mock.invocationCallOrder[0])
+    expect(sceneBundleMocks.capture).toHaveBeenCalledWith(
+      [expect.objectContaining({ pageId: 'page-1' })],
+      [expect.objectContaining({ page_id: 'page-1', sha256: expect.any(String) })],
+    )
+    expect(nativeApiMocks.handoffVideoWorkspaceFrames).toHaveBeenCalledWith(
+      'project-1',
+      expect.any(Array),
+      ['page-1'],
+    )
     expect(exportTaskMocks.addTask).toHaveBeenCalledWith(expect.objectContaining({ type: 'video', taskId: 'video-task-1' }))
     expect(exportTaskMocks.pollTask).toHaveBeenCalledWith(expect.stringMatching(/^export-/), 'project-1', 'video-task-1')
     await waitFor(() => expect(exportButton).toBeEnabled())
+  })
+
+  it('loads Fish voices and exports a three-person expressive narration', async () => {
+    vi.useRealTimers()
+    renderWorkspace(slides.slice(0, 1))
+    fireEvent.change(screen.getByLabelText('导出格式'), { target: { value: '讲解视频' } })
+    fireEvent.click(screen.getByRole('button', { name: '导出讲解视频' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Fish Audio s2.1-pro-free' }))
+
+    await waitFor(() => expect(screen.getByLabelText('语音音色')).toHaveValue('fish-host'))
+    fireEvent.click(screen.getByRole('button', { name: '多人对话' }))
+    fireEvent.click(screen.getByRole('button', { name: '添加角色' }))
+    fireEvent.click(screen.getByLabelText('场景自动匹配语气'))
+    fireEvent.click(screen.getByRole('button', { name: '开始导出视频' }))
+
+    await waitFor(() => expect(nativeApiMocks.exportNativeVideo).toHaveBeenCalledWith(
+      'project-1',
+      expect.any(Array),
+      ['page-1'],
+      '议程.mp4',
+      { preset: 'business', motion_intensity: 'subtle', subtitle_mode: 'highlight', transition: 'fade', page_pause_ms: 260 },
+      expect.objectContaining({
+        ttsProvider: 'fish_audio',
+        voice: 'fish-host',
+        rate: '+0%',
+        speed: 1,
+        language: 'zh',
+        generateNarration: false,
+        narrationPolicy: 'confirmed_only',
+        narrationVersionMap: { 'page-1': 'narration-1' },
+        narrationMode: 'dialogue',
+        speakers: [
+          { id: 'host', name: '主持人', voice: 'fish-host', rate: '+0%' },
+          { id: 'expert', name: '专家', voice: 'fish-expert', rate: '+0%' },
+          { id: 'guest_3', name: '嘉宾 3', voice: 'fish-guest', rate: '+0%' },
+        ],
+        autoEmotion: false,
+      }),
+      [expect.objectContaining({ page_id: 'page-1' })],
+      [expect.objectContaining({ page_id: 'page-1', scene_manifest_sha256: expect.any(String) })],
+    ))
+    expect(nativeApiMocks.preflightExportVideo).toHaveBeenCalledWith('project-1', expect.objectContaining({
+      ttsProvider: 'fish_audio',
+      narrationMode: 'dialogue',
+      speakers: expect.arrayContaining([expect.objectContaining({ voice: 'fish-host' })]),
+    }))
   })
 })

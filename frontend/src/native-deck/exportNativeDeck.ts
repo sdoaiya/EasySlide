@@ -161,6 +161,8 @@ export function resolveNativeElementEnter(animation: Record<string, unknown>, la
 export async function waitForNativeLayouts(root: ParentNode = document, timeoutMs = 15000) {
   const pending = () => Array.from(root.querySelectorAll<HTMLElement>('#deck .native-slide'))
     .some((slide) => slide.dataset.nativeLayoutReady !== 'true')
+    || Array.from(root.querySelectorAll<HTMLElement>('#deck [data-flint-chart]'))
+      .some((chart) => chart.dataset.flintChartReady === 'false')
   if (!pending()) return
 
   await new Promise<void>((resolve, reject) => {
@@ -176,7 +178,7 @@ export async function waitForNativeLayouts(root: ParentNode = document, timeoutM
       observer.disconnect()
       resolve()
     })
-    observer.observe(deck, { attributes: true, childList: true, subtree: true, attributeFilter: ['data-native-layout-ready'] })
+    observer.observe(deck, { attributes: true, childList: true, subtree: true, attributeFilter: ['data-native-layout-ready', 'data-flint-chart-ready'] })
   })
 }
 

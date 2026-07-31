@@ -1,11 +1,11 @@
-from unittest.mock import patch
+﻿from unittest.mock import patch
 
 from conftest import assert_success_response
 from models import db, Page, Project, Task
 
 
 def test_export_editable_pptx_endpoint_reports_recursive_analysis_method(client):
-    project = Project(id="project-source-editable", creation_type="idea")
+    project = Project(id="project-source-editable", creation_type="idea", idea_prompt="project-source-editable")
     page = Page(
         project_id=project.id,
         order_index=0,

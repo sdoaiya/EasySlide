@@ -26,7 +26,31 @@ class Page(db.Model):
     description_content = db.Column(db.Text, nullable=True)  # JSON string
     generated_image_path = db.Column(db.String(500), nullable=True)  # Original PNG image path
     cached_image_path = db.Column(db.String(500), nullable=True)  # Compressed JPG thumbnail path
+    template_image_path = db.Column(db.String(500), nullable=True)
+    template_style_text = db.Column(db.Text, nullable=True)
+    template_selection_role = db.Column(db.String(40), nullable=True)
+    template_selection_layout = db.Column(db.String(40), nullable=True)
+    template_selection_source = db.Column(db.String(40), nullable=True)
+    template_match_reason = db.Column(db.Text, nullable=True)
     narration_text = db.Column(db.Text, nullable=True)  # Plain text narration for TTS video export
+    narration_segments = db.Column(db.Text, nullable=True)  # JSON segments for multi-speaker narration
+    narration_source_hash = db.Column(db.String(64), nullable=True)
+    narration_config_hash = db.Column(db.String(64), nullable=True)
+    narration_status = db.Column(db.String(32), nullable=True)
+    narration_audio_manifest = db.Column(db.Text, nullable=True)
+    narration_error = db.Column(db.Text, nullable=True)
+    current_narration_version_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            'narration_versions.id',
+            name='fk_pages_current_narration_version_id',
+            ondelete='SET NULL',
+            use_alter=True,
+        ),
+        nullable=True,
+    )
+    narration_locked = db.Column(db.Boolean, nullable=False, default=False)
+    narration_revision = db.Column(db.Integer, nullable=False, default=0)
     native_layout = db.Column(db.String(100), nullable=True)
     native_props = db.Column(db.Text, nullable=True)
     native_versions = db.Column(db.Text, nullable=True)
@@ -39,6 +63,19 @@ class Page(db.Model):
     image_versions = db.relationship('PageImageVersion', back_populates='page', 
                                      lazy='dynamic', cascade='all, delete-orphan',
                                      order_by='PageImageVersion.version_number.desc()')
+    narration_versions = db.relationship(
+        'NarrationVersion',
+        back_populates='page',
+        foreign_keys='NarrationVersion.page_id',
+        lazy='dynamic',
+        cascade='all, delete-orphan',
+        order_by='NarrationVersion.version_number.desc()',
+    )
+    current_narration_version = db.relationship(
+        'NarrationVersion',
+        foreign_keys=[current_narration_version_id],
+        post_update=True,
+    )
     
     def get_outline_content(self):
         """Parse outline_content from JSON string"""
@@ -79,6 +116,19 @@ class Page(db.Model):
     def set_narration_text(self, text):
         """Set narration text for TTS"""
         self.narration_text = text if text else None
+
+    def get_narration_segments(self):
+        if not self.narration_segments:
+            return []
+        try:
+            data = json.loads(self.narration_segments)
+            return data if isinstance(data, list) else []
+        except (TypeError, json.JSONDecodeError):
+            logger.warning('Invalid narration_segments on page %s', self.id)
+            return []
+
+    def set_narration_segments(self, segments):
+        self.narration_segments = json.dumps(segments, ensure_ascii=False) if segments else None
 
     def get_native_props(self):
         """Parse native slide properties without breaking legacy projects."""
@@ -165,6 +215,10 @@ class Page(db.Model):
         if display_image_path:
             filename = Path(display_image_path).name
             display_image_url = f'/files/{self.project_id}/pages/{filename}'
+        template_image_url = None
+        if self.template_image_path:
+            filename = Path(self.template_image_path).name
+            template_image_url = f'/files/{self.project_id}/template/{filename}'
 
         data = {
             'page_id': self.id,
@@ -173,9 +227,20 @@ class Page(db.Model):
             'outline_content': self.get_outline_content(),
             'description_content': self.get_description_content(),
             'narration_text': self.narration_text,
+            'narration_segments': self.get_narration_segments(),
+            'narration_status': self.narration_status,
+            'current_narration_version_id': self.current_narration_version_id,
+            'narration_locked': self.narration_locked,
+            'narration_revision': self.narration_revision,
             'native_layout': self.native_layout,
             'native_props': self.get_native_props(),
             'generated_image_url': display_image_url,
+            'template_image_url': template_image_url,
+            'template_style_text': self.template_style_text,
+            'template_selection_role': self.template_selection_role,
+            'template_selection_layout': self.template_selection_layout,
+            'template_selection_source': self.template_selection_source,
+            'template_match_reason': self.template_match_reason,
             'status': self.status,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
@@ -183,6 +248,7 @@ class Page(db.Model):
 
         if include_versions:
             data['image_versions'] = [v.to_dict() for v in self.image_versions.all()]
+            data['narration_versions'] = [v.to_dict() for v in self.narration_versions.all()]
 
         return data
     

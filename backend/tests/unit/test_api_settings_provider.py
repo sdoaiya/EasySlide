@@ -53,6 +53,60 @@ def test_update_settings_accepts_lazyllm_provider():
     assert data['data']['ai_provider_format'] == 'lazyllm'
 
 
+def test_update_settings_accepts_volcengine_provider():
+    app = Flask(__name__)
+    settings = _build_settings()
+    with app.app_context():
+        with app.test_request_context('/api/settings/', method='PUT', json={'ai_provider_format': 'volcengine'}):
+            with patch('controllers.settings_controller.Settings.get_settings', return_value=settings):
+                with patch('controllers.settings_controller.db.session.commit'):
+                    with patch('controllers.settings_controller._sync_settings_to_config'):
+                        response, status_code = update_settings()
+    assert status_code == 200
+    assert response.get_json()['data']['ai_provider_format'] == 'volcengine'
+
+
+def test_volcengine_provider_uses_ark_openai_compatible_endpoint(app, monkeypatch):
+    from services.ai_providers import _build_provider_config
+
+    app.config['AI_PROVIDER_FORMAT'] = 'volcengine'
+    app.config.pop('OPENAI_API_KEY', None)
+    monkeypatch.setenv('ARK_API_KEY', 'ark-test-key')
+    with app.app_context():
+        config = _build_provider_config()
+    assert config == {
+        'format': 'openai',
+        'api_key': 'ark-test-key',
+        'api_base': 'https://ark.cn-beijing.volces.com/api/v3',
+    }
+
+
+def test_image_quality_control_setting_round_trip_and_reset(client):
+    with client.application.app_context():
+        from models import Settings, db
+
+        settings = Settings.get_settings()
+        original = settings.enable_image_quality_control
+
+    try:
+        response = client.put('/api/settings/', json={'enable_image_quality_control': True})
+        assert response.status_code == 200
+        assert response.get_json()['data']['enable_image_quality_control'] is True
+
+        response = client.get('/api/settings/')
+        assert response.status_code == 200
+        assert response.get_json()['data']['enable_image_quality_control'] is True
+
+        response = client.post('/api/settings/reset')
+        assert response.status_code == 200
+        assert response.get_json()['data']['enable_image_quality_control'] is False
+    finally:
+        with client.application.app_context():
+            settings = Settings.get_settings()
+            settings.enable_image_quality_control = original
+            db.session.commit()
+
+
 def test_verify_uses_configured_text_model():
     """Verify endpoint should use configured text model, not a hardcoded gemini model."""
     app = Flask(__name__)

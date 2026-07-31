@@ -1,4 +1,5 @@
 import type { NativeLayoutComponentProps } from '../types'
+import { FlintChart } from '@/components/native-deck/FlintChart'
 
 function text(props: Record<string, unknown>, key: string) {
   return typeof props[key] === 'string' ? props[key] : ''
@@ -333,6 +334,19 @@ export function Core01Bars({ props }: NativeLayoutComponentProps) {
       <div className="core01-bars-body">
         <p>{text(props, 'summary')}</p>
         <ol>{metrics.map((metric, index) => <li key={`${index}-${metric}`}><span>{metric}</span><i style={{ width: `${Math.max(32, 100 - index * (56 / Math.max(1, metrics.length - 1)))}%` }} /></li>)}</ol>
+      </div>
+    </section>
+  )
+}
+
+export function Core01Chart({ props }: NativeLayoutComponentProps) {
+  const title = text(props, 'title')
+  return (
+    <section className="native-layout core01-content core01-chart">
+      <header className="core01-header"><span>DATA</span><h2>{title}</h2></header>
+      <div className="core01-chart-body">
+        <p>{text(props, 'summary')}</p>
+        <FlintChart spec={props.spec} label={title || '数据图表'} />
       </div>
     </section>
   )

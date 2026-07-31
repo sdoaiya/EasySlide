@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://easyslide.local/schemas/content/sync-diff.schema.json",
+  "title": "EasySlide Content Sync Diff",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "items"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "items": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/diffItem" } }
+  },
+  "$defs": {
+    "diffItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["item_id", "path", "operation", "change_type", "before", "after"],
+      "properties": {
+        "item_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+        "path": { "type": "string", "pattern": "^/" },
+        "operation": { "enum": ["add", "remove", "replace"] },
+        "change_type": { "enum": ["fact", "structure", "content"] },
+        "before": {},
+        "after": {},
+        "source_ref": { "type": ["string", "null"] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "operation": { "const": "add" } }, "required": ["operation"] },
+          "then": { "properties": { "before": { "type": "null" } } }
+        },
+        {
+          "if": { "properties": { "operation": { "const": "remove" } }, "required": ["operation"] },
+          "then": { "properties": { "after": { "type": "null" } } }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EasySlide · 编辑台（图片模式 / 原生模式）</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --p50:#eff6ff;--p100:#dbeafe;--p200:#bfdbfe;--p300:#93c5fd;--p400:#60a5fa;--p500:#3b82f6;--p600:#2563eb;--p700:#1d4ed8;
+  --n0:#fff;--n50:#f8fafc;--n100:#f1f5f9;--n200:#e2e8f0;--n300:#cbd5e1;--n400:#94a3b8;--n500:#64748b;--n600:#475569;--n700:#334155;--n800:#1e293b;--n900:#0f172a;
+  --ok:#16a34a;--ok-bg:#f0fdf4;--ok-tx:#15803d;
+  --warn:#d97706;--warn-bg:#fffbeb;--warn-tx:#b45309;
+  --err:#dc2626;--err-bg:#fef2f2;--err-tx:#b91c1c;
+  --info:#0284c7;--info-bg:#f0f9ff;--info-tx:#0369a1;
+  --sh-sm:0 1px 2px rgba(15,23,42,.04);--sh-md:0 4px 12px rgba(15,23,42,.06);--sh-lg:0 8px 24px rgba(15,23,42,.08);--sh-xl:0 16px 40px rgba(15,23,42,.12);
+  --r-sm:6px;--r-md:10px;--r-lg:14px;--r-xl:18px;--r-pill:99px;
+  --ff:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  --t2:150ms ease-out;--t3:250ms ease-out;
+  --tb:40px;--nb:56px;
+}
+html{font-size:14px;-webkit-font-smoothing:antialiased}
+body{font-family:var(--ff);color:var(--n900);background:var(--n100);overflow:hidden;height:100vh}
+button{cursor:pointer;font-family:var(--ff);border:none;background:none;color:inherit}
+::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--n300);border-radius:4px}::-webkit-scrollbar-thumb:hover{background:var(--n400)}
+.i{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.i-s{width:14px;height:14px;stroke-width:2.2}.i-l{width:20px;height:20px;stroke-width:1.8}.i-xs{width:12px;height:12px;stroke-width:2.4}
+
+/* 顶部标题栏 + 导航 (复用) */
+.titlebar{position:fixed;top:0;left:0;right:0;z-index:100;height:var(--tb);display:flex;align-items:center;padding:0 0 0 12px;background:rgba(255,255,255,.85);backdrop-filter:blur(20px) saturate(180%);border-bottom:1px solid var(--n200);font-size:13px;color:var(--n500)}
+.tb-brand{display:flex;align-items:center;gap:8px}
+.tb-logo{width:20px;height:20px;border-radius:6px;background:linear-gradient(135deg,var(--p600),var(--p400));display:flex;align-items:center;justify-content:center;color:#fff}
+.tb-name{font-weight:600;color:var(--n900);font-size:13px}
+.tb-center{flex:1;text-align:center;font-size:12px;color:var(--n400);font-weight:500}
+.win-btn{width:44px;height:var(--tb);display:flex;align-items:center;justify-content:center;color:var(--n400);transition:all var(--t2)}
+.win-btn:hover{background:var(--n100);color:var(--n700)}
+.win-btn.close:hover{background:var(--err);color:#fff}
+
+/* 统一应用导航栏 (公共，与主应用一致) */
+.appnav{position:fixed;top:var(--tb);left:0;right:0;z-index:95;height:var(--nb);display:flex;align-items:center;padding:0 16px;gap:4px;background:rgba(255,255,255,.9);backdrop-filter:blur(20px) saturate(180%);border-bottom:1px solid var(--n200)}
+.nav-brand{display:flex;align-items:center;gap:8px;margin-right:16px}
+.nav-brand .tb-logo{width:24px;height:24px}
+.nav-brand-name{font-size:15px;font-weight:600;color:var(--n900)}
+.nav-tabs{display:flex;align-items:center;gap:2px}
+.nav-tab{display:flex;align-items:center;gap:6px;height:36px;padding:0 12px;border-radius:var(--r-md);font-size:13px;font-weight:500;color:var(--n600);transition:all var(--t2)}
+.nav-tab:hover{background:var(--n100);color:var(--n900)}
+.nav-tab .i{color:var(--n400)}
+.nav-r{margin-left:auto;display:flex;align-items:center;gap:2px}
+.nav-div{width:1px;height:20px;background:var(--n200);margin:0 6px}
+.icbtn{width:36px;height:36px;display:flex;align-items:center;justify-content:center;border-radius:var(--r-md);color:var(--n500);transition:all var(--t2);position:relative}
+.icbtn:hover{background:var(--n100);color:var(--n900)}
+.icbtn .dot{position:absolute;top:7px;right:7px;width:6px;height:6px;border-radius:50%;background:var(--p600)}
+
+/* 页面容器 */
+.page{margin-top:calc(var(--tb) + var(--nb));height:calc(100vh - var(--tb) - var(--nb));overflow:hidden}
+.screen{display:none;height:100%;width:100%}.screen.on{display:flex}
+
+/* 模式切换 (嵌入工具栏) */
+.mode-switch{display:inline-flex;align-items:center;background:var(--n100);border-radius:var(--r-md);padding:3px;gap:2px}
+.mode-switch-btn{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;border-radius:7px;font-size:12px;font-weight:600;color:var(--n600);transition:all var(--t2)}
+.mode-switch-btn:hover{color:var(--n900)}
+.mode-switch-btn.on{background:var(--n0);color:var(--p600);box-shadow:var(--sh-sm)}
+
+/* 按钮 */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;font-weight:600;border-radius:var(--r-md);transition:all var(--t2);font-family:var(--ff);border:1px solid transparent;white-space:nowrap}
+.btn:active{transform:scale(.97)}
+.btn-p{background:var(--p600);color:#fff;box-shadow:0 2px 6px rgba(37,99,235,.25)}.btn-p:hover{background:var(--p700)}
+.btn-s{background:var(--n0);color:var(--n700);border-color:var(--n200);box-shadow:var(--sh-sm)}.btn-s:hover{border-color:var(--n300)}
+.btn-g{background:transparent;color:var(--n600)}.btn-g:hover{background:var(--n100);color:var(--n900)}
+.btn-sm{height:32px;padding:0 12px;font-size:13px}.btn-md{height:38px;padding:0 16px;font-size:14px}
+
+/* 工具栏 (编辑器头部) */
+.ws-tb{flex-shrink:0;height:52px;background:rgba(255,255,255,.92);backdrop-filter:blur(20px);border-bottom:1px solid var(--n200);display:flex;align-items:center;padding:0 12px;gap:4px}
+.ws-tg{display:flex;align-items:center;gap:2px}
+.ws-div{width:1px;height:24px;background:var(--n200);margin:0 4px}
+.ws-title{flex:1;text-align:center;font-size:14px;font-weight:600;color:var(--n900);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 12px}
+.ws-stage{font-size:11px;font-weight:600;padding:2px 10px;border-radius:var(--r-pill);background:var(--p50);color:var(--p600);border:1px solid var(--p100);margin-right:8px}
+.ws-btn{width:34px;height:34px;display:flex;align-items:center;justify-content:center;border-radius:var(--r-md);color:var(--n600);transition:all var(--t2);position:relative}
+.ws-btn:hover{background:var(--n100);color:var(--n900)}
+.ws-btn .dot{position:absolute;top:6px;right:6px;width:6px;height:6px;border-radius:50%;background:var(--p600)}
+
+/* 工作区三栏 */
+.ws-body{flex:1;display:grid;grid-template-columns:216px minmax(0,1fr) 320px;grid-template-rows:minmax(0,1fr) 32px;grid-template-areas:"sidebar canvas inspector" "status status status";overflow:hidden;min-height:0}
+.ws-sb{grid-area:sidebar;background:var(--n0);border-right:1px solid var(--n200);overflow:hidden;display:flex;flex-direction:column}
+.ws-sb-head{padding:10px 12px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--n100)}
+.ws-sb-head h3{font-size:11px;font-weight:700;color:var(--n400);text-transform:uppercase;letter-spacing:.05em}
+.ws-sb-add{width:24px;height:24px;border-radius:var(--r-sm);border:1px dashed var(--n300);display:flex;align-items:center;justify-content:center;color:var(--n400);transition:all var(--t2)}
+.ws-sb-add:hover{border-color:var(--p500);color:var(--p600);background:var(--p50)}
+.ws-sb-list{flex:1;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:6px}
+.ws-page{border:1px solid var(--n200);background:var(--n0);border-radius:var(--r-md);overflow:hidden;cursor:pointer;transition:all var(--t2)}
+.ws-page:hover{border-color:var(--n300)}
+.ws-page.on{border-color:var(--p500);box-shadow:0 0 0 2px var(--p100)}
+.ws-thumb{aspect-ratio:16/9;background:var(--n100);display:flex;align-items:center;justify-content:center;padding:5px}
+.ws-thumb-inner{width:100%;height:100%;display:flex;flex-direction:column;gap:3px}
+.ws-blk{border-radius:2px;background:rgba(15,23,42,.07)}
+.ws-page-info{padding:5px 8px;display:flex;align-items:center;justify-content:space-between}
+.ws-page-name{font-size:11px;font-weight:500;color:var(--n700);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.ws-page-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;margin-left:6px}
+.ws-page-dot.ok{background:var(--ok)}.ws-page-dot.pen{background:var(--warn)}.ws-page-dot.gen{background:var(--p500);animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* 画布 */
+.ws-canvas{grid-area:canvas;background:var(--n100);display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative}
+.ws-slide{width:min(78%,calc((100vh - 96px - 32px - 80px)*16/9));aspect-ratio:16/9;background:#fff;border-radius:6px;box-shadow:var(--sh-xl);overflow:hidden;position:relative}
+.ws-slide-hd{height:14%;background:linear-gradient(135deg,#0f1729,#1e3a5f);padding:18px 36px;display:flex;align-items:center;position:relative}
+.ws-slide-hd h2{color:#fff;font-size:18px;font-weight:700}
+.ws-slide-deco{position:absolute;right:30px;top:50%;transform:translateY(-50%);width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,var(--p400),#06b6d4,#10b981);opacity:.25}
+.ws-slide-bd{padding:22px 32px;height:86%;display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;align-content:start}
+.ws-slide-item{background:var(--n50);border-radius:8px;padding:12px;border:1px solid var(--n100)}
+.ws-slide-item h4{font-size:10px;font-weight:700;color:var(--n900);margin-bottom:6px}
+.ws-bar{height:5px;border-radius:3px;background:var(--p100)}.ws-bar-f{height:100%;border-radius:3px;background:linear-gradient(to right,var(--p600),var(--p400))}
+/* 图片模式画布底部控制栏 (避开状态栏) */
+.ws-cnav{position:absolute;bottom:48px;left:50%;transform:translateX(-50%);background:rgba(255,255,255,.95);backdrop-filter:blur(12px);border:1px solid var(--n200);border-radius:var(--r-lg);padding:4px 8px;display:flex;align-items:center;gap:4px;box-shadow:var(--sh-md)}
+.ws-cnav button{width:28px;height:28px;border-radius:var(--r-sm);display:flex;align-items:center;justify-content:center;color:var(--n600);transition:all var(--t2)}
+.ws-cnav button:hover{background:var(--n100);color:var(--n900)}
+.ws-cnav button:disabled{opacity:.3;cursor:not-allowed}
+.ws-cnav .info{font-size:12px;color:var(--n500);padding:0 8px;font-weight:500}
+.ws-cnav .divider{width:1px;height:16px;background:var(--n200);margin:0 2px}
+
+/* 右侧属性面板 */
+.ws-insp{grid-area:inspector;background:var(--n0);border-left:1px solid var(--n200);overflow:hidden;display:flex;flex-direction:column}
+.ws-itabs{display:flex;border-bottom:1px solid var(--n200)}
+.ws-itab{flex:1;height:42px;font-size:13px;font-weight:600;color:var(--n400);transition:all var(--t2);border-bottom:2px solid transparent}
+.ws-itab:hover{color:var(--n900)}
+.ws-itab.on{color:var(--p600);border-bottom-color:var(--p600)}
+.ws-icont{flex:1;overflow-y:auto;padding:14px}
+.insp-sec{margin-bottom:18px}
+.insp-sec h4{font-size:11px;font-weight:700;color:var(--n400);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+.insp-row{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--n100);font-size:13px}
+.insp-row:last-child{border:none}
+.insp-row .l{color:var(--n600)}.insp-row .v{color:var(--n900);font-weight:500}
+.insp-sel{height:30px;padding:0 10px;border:1px solid var(--n200);border-radius:var(--r-sm);font-size:12px;color:var(--n900);background:var(--n0);outline:none;font-family:var(--ff)}
+.insp-sel:focus{border-color:var(--p500)}
+/* 图片模式属性面板 section 样式 */
+.insp-section{padding:14px 0;border-bottom:1px solid var(--n100)}
+.insp-section:last-child{border:none}
+.insp-section h4{font-size:11px;font-weight:700;color:var(--n400);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px}
+.insp-desc{font-size:12px;color:var(--n500);line-height:1.5;margin-bottom:10px}
+
+/* 状态栏 */
+.ws-sbar{grid-area:status;background:rgba(255,255,255,.95);backdrop-filter:blur(20px);border-top:1px solid var(--n200);display:flex;align-items:center;padding:0 16px;gap:14px;font-size:12px;color:var(--n500)}
+.ws-sbar-dot{width:6px;height:6px;border-radius:50%;background:var(--ok)}
+.ws-sbar-r{margin-left:auto;display:flex;align-items:center;gap:14px}
+.ws-sbar-sep{color:var(--n300)}
+
+/* 切换开关 */
+.tog{width:40px;height:24px;border-radius:var(--r-pill);background:var(--n300);position:relative;transition:background var(--t2);flex-shrink:0;cursor:pointer}
+.tog.on{background:var(--p600)}
+.tog::after{content:'';position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#fff;transition:transform var(--t2);box-shadow:var(--sh-sm)}
+.tog.on::after{transform:translateX(16px)}
+
+/* 媒体槽编辑器 (原生模式图片Tab) */
+.media-slot{border:1px solid var(--n200);border-radius:var(--r-md);padding:10px;margin-bottom:10px}
+.media-slot-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.media-slot-name{font-size:12px;font-weight:600;color:var(--n700)}
+.media-slot-preview{width:100%;aspect-ratio:16/9;background:var(--n100);border-radius:var(--r-sm);display:flex;align-items:center;justify-content:center;color:var(--n400);margin-bottom:8px;border:1px dashed var(--n300)}
+.media-slot-actions{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}
+.media-slot-btn{height:28px;border-radius:var(--r-sm);background:var(--n50);border:1px solid var(--n200);color:var(--n600);font-size:11px;font-weight:500;transition:all var(--t2);display:flex;align-items:center;justify-content:center;gap:3px}
+.media-slot-btn:hover{background:var(--n100);color:var(--n900)}
+.media-slot-btn.gen:hover{color:var(--p600);border-color:var(--p300)}
+.media-slot-btn.del:hover{color:var(--err);border-color:var(--err)}
+.media-prompt{width:100%;min-height:40px;padding:6px 8px;border:1px solid var(--n200);border-radius:var(--r-sm);font-size:11px;color:var(--n600);outline:none;resize:vertical;font-family:var(--ff);margin-top:6px}
+.media-prompt:focus{border-color:var(--p500)}
+
+/* 动效配置 (原生模式设计Tab) */
+.anim-row{display:flex;align-items:center;justify-content:space-between;padding:6px 0;font-size:12px}
+.anim-row .l{color:var(--n600)}
+</style>
+</head>
+<body>
+
+<!-- 桌面标题栏 -->
+<div class="titlebar">
+  <div class="tb-brand"><div class="tb-logo"><svg class="i-s" viewBox="0 0 24 24" style="color:#fff"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div><span class="tb-name">EasySlide</span></div>
+  <div class="tb-center">人工智能行业发展趋势分析 — EasySlide</div>
+  <div style="display:flex;align-items:center;height:100%"><button class="win-btn"><svg class="i-s" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/></svg></button><button class="win-btn"><svg class="i-xs" viewBox="0 0 24 24" style="fill:none;stroke:currentColor;stroke-width:2"><rect x="5" y="5" width="14" height="14" rx="1"/></svg></button><button class="win-btn close"><svg class="i-s" viewBox="0 0 24 24"><line x1="6" y1="6" x2="18" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/></svg></button></div>
+</div>
+
+<!-- 统一应用导航栏 (公共，含模式切换) -->
+<nav class="appnav">
+  <div class="nav-brand"><div class="tb-logo"><svg class="i" viewBox="0 0 24 24" style="color:#fff"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div><span class="nav-brand-name">EasySlide</span></div>
+  <div class="nav-tabs">
+    <button class="nav-tab"><svg class="i" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>主页</button>
+    <button class="nav-tab"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>创建项目</button>
+    <button class="nav-tab"><svg class="i" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>我的项目</button>
+    <button class="nav-tab"><svg class="i" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>素材中心</button>
+    <button class="nav-tab"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>素材生成</button>
+  </div>
+  <div class="nav-r">
+    <button class="icbtn" title="导出任务"><svg class="i" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span class="dot"></span></button>
+    <div class="nav-div"></div>
+    <button class="nav-tab"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9V12c.26.604.852.997 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>设置</button>
+    <div class="nav-div"></div>
+    <button class="icbtn" title="语言"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></button>
+    <button class="icbtn" title="主题"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>
+  </div>
+</nav>
+
+<div class="page">
+
+<!-- ============ 图片模式编辑台 ============ -->
+<div class="screen on" id="m-image" style="flex-direction:column">
+  <div class="ws-tb">
+    <div class="ws-tg"><button class="ws-btn" title="返回"><svg class="i" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg></button></div>
+    <div class="ws-div"></div>
+    <div class="mode-switch"><button class="mode-switch-btn on" data-m="image"><svg class="i-s" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>图片模式</button><button class="mode-switch-btn" data-m="native"><svg class="i-s" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>原生可编辑</button></div>
+    <div class="ws-div"></div>
+    <button class="btn btn-s btn-sm" title="项目设置"><svg class="i-s" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4"/></svg>项目设置</button>
+    <button class="btn btn-s btn-sm" title="更换模板"><svg class="i-s" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>更换模板</button>
+    <button class="btn btn-s btn-sm" title="素材生成"><svg class="i-s" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>素材生成</button>
+    <span class="ws-stage">Step 3 · 视觉成稿</span>
+    <div class="ws-title">人工智能行业发展趋势分析</div>
+    <div class="ws-tg">
+      <button class="ws-btn" title="刷新"><svg class="i" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.13-9.36L23 10"/></svg></button>
+      <button class="ws-btn" title="导出任务"><svg class="i" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span class="dot"></span></button>
+      <div class="ws-div"></div>
+      <select class="insp-sel" style="height:32px;width:96px"><option>导出 PPTX</option><option>导出可编辑 PPTX</option><option>导出 PDF</option><option>导出图片</option><option>导出讲解视频</option></select>
+      <button class="btn btn-p btn-sm" title="导出"><svg class="i-s" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>导出</button>
+    </div>
+  </div>
+
+  <div class="ws-body">
+    <!-- 左侧页面栏 (图片模式: 含批量生成+图片生成设置+多选) -->
+    <div class="ws-sb">
+      <div class="ws-sb-head"><h3>页面 (8)</h3></div>
+      <div style="padding:8px 8px 4px;display:flex;flex-direction:column;gap:6px">
+        <button class="btn btn-p btn-sm" style="width:100%;justify-content:center"><svg class="i-s" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>开始生成 (5)</button>
+        <button class="btn btn-s btn-sm" style="width:100%;justify-content:center"><svg class="i-s" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4"/></svg>图片生成设置</button>
+        <button class="btn btn-g btn-sm" style="width:100%;justify-content:center;font-size:12px"><svg class="i-s" viewBox="0 0 24 24"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>多选模式</button>
+      </div>
+      <div class="ws-sb-list">
+        <div class="ws-page on"><div class="ws-thumb"><div class="ws-thumb-inner"><div class="ws-blk" style="height:24%;background:linear-gradient(135deg,#0f1729,#1e3a5f)"></div><div class="ws-blk" style="height:12%"></div><div class="ws-blk" style="height:38%"></div></div></div><div class="ws-page-info"><span class="ws-page-name">封面与引言</span><span class="ws-page-dot ok"></span></div></div>
+        <div class="ws-page"><div class="ws-thumb"><div class="ws-thumb-inner"><div class="ws-blk" style="height:18%"></div><div style="display:flex;gap:3px"><div class="ws-blk" style="flex:1;height:42%"></div><div class="ws-blk" style="flex:1;height:42%"></div></div></div></div><div class="ws-page-info"><span class="ws-page-name">目录概览</span><span class="ws-page-dot ok"></span></div></div>
+        <div class="ws-page"><div class="ws-thumb"><div class="ws-thumb-inner"><div class="ws-blk" style="height:22%"></div><div style="display:flex;gap:3px"><div class="ws-blk" style="flex:1;height:45%"></div><div class="ws-blk" style="flex:1;height:45%"></div></div></div></div><div class="ws-page-info"><span class="ws-page-name">行业现状</span><span class="ws-page-dot ok"></span></div></div>
+        <div class="ws-page"><div class="ws-thumb"><div class="ws-thumb-inner"><div class="ws-blk" style="height:20%"></div><div class="ws-blk" style="height:48%"></div></div></div><div class="ws-page-info"><span class="ws-page-name">技术演进</span><span class="ws-page-dot gen"></span></div></div>
+        <div class="ws-page"><div class="ws-thumb"><div class="ws-thumb-inner"><div class="ws-blk" style="height:24%"></div><div class="ws-blk" style="height:48%"></div></div></div><div class="ws-page-info"><span class="ws-page-name">竞争格局</span><span class="ws-page-dot pen"></span></div></div>
+        <div class="ws-page"><div class="ws-thumb"><div class="ws-thumb-inner"><div class="ws-blk" style="height:16%"></div><div style="display:flex;gap:3px"><div class="ws-blk" style="flex:1;height:30%"></div><div class="ws-blk" style="flex:1;height:30%"></div><div class="ws-blk" style="flex:1;height:30%"></div></div></div></div><div class="ws-page-info"><span class="ws-page-name">投资建议</span><span class="ws-page-dot pen"></span></div></div>
+      </div>
+    </div>
+
+    <!-- 中央画布 (图片模式: 纯图片预览 + 底部翻页/编辑/重新生成/历史版本) -->
+    <div class="ws-canvas">
+      <div class="ws-slide">
+        <div class="ws-slide-hd"><h2>行业现状与市场规模</h2><div class="ws-slide-deco"></div></div>
+        <div class="ws-slide-bd">
+          <div class="ws-slide-item"><h4>市场规模</h4><div style="display:flex;flex-direction:column;gap:6px"><div><div style="font-size:9px;color:var(--n500);display:flex;justify-content:space-between"><span>全球市场</span><span>$5000亿</span></div><div class="ws-bar"><div class="ws-bar-f" style="width:85%"></div></div></div><div><div style="font-size:9px;color:var(--n500);display:flex;justify-content:space-between"><span>中国市场</span><span>$1800亿</span></div><div class="ws-bar"><div class="ws-bar-f" style="width:60%"></div></div></div></div></div>
+          <div class="ws-slide-item"><h4>技术趋势</h4><div style="display:flex;flex-direction:column;gap:4px;font-size:9px;color:var(--n600)"><span>• 大模型参数指数增长</span><span>• 多模态融合成主流</span><span>• Agent 自主决策提升</span></div></div>
+          <div class="ws-slide-item"><h4>应用领域</h4><div style="display:grid;grid-template-columns:1fr 1fr;gap:3px;font-size:8px"><div style="padding:3px 5px;background:var(--p100);border-radius:4px;color:var(--p700);text-align:center;font-weight:600">医疗健康</div><div style="padding:3px 5px;background:var(--ok-bg);border-radius:4px;color:var(--ok-tx);text-align:center;font-weight:600">自动驾驶</div><div style="padding:3px 5px;background:var(--warn-bg);border-radius:4px;color:var(--warn-tx);text-align:center;font-weight:600">金融科技</div><div style="padding:3px 5px;background:#ede9fe;border-radius:4px;color:#7c3aed;text-align:center;font-weight:600">智能制造</div></div></div>
+          <div class="ws-slide-item" style="grid-column:span 2"><h4>竞争格局 TOP5</h4><div style="display:flex;align-items:flex-end;gap:10px;height:36px;padding-top:6px"><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px"><div style="width:100%;height:32px;background:linear-gradient(to top,var(--p600),var(--p400));border-radius:4px 4px 0 0"></div><span style="font-size:7px;color:var(--n400)">OpenAI</span></div><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px"><div style="width:100%;height:26px;background:linear-gradient(to top,var(--p600),var(--p400));opacity:.8;border-radius:4px 4px 0 0"></div><span style="font-size:7px;color:var(--n400)">Google</span></div><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px"><div style="width:100%;height:22px;background:linear-gradient(to top,var(--p600),var(--p400));opacity:.6;border-radius:4px 4px 0 0"></div><span style="font-size:7px;color:var(--n400)">Anthropic</span></div><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px"><div style="width:100%;height:18px;background:linear-gradient(to top,var(--p600),var(--p400));opacity:.4;border-radius:4px 4px 0 0"></div><span style="font-size:7px;color:var(--n400)">Meta</span></div><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px"><div style="width:100%;height:14px;background:linear-gradient(to top,var(--p600),var(--p400));opacity:.3;border-radius:4px 4px 0 0"></div><span style="font-size:7px;color:var(--n400)">百度</span></div></div></div>
+          <div class="ws-slide-item"><h4>投资建议</h4><div style="display:flex;flex-direction:column;gap:3px;font-size:9px;color:var(--n600)"><div style="display:flex;align-items:center;gap:3px"><span style="color:var(--ok)">▲</span>大模型基础设施</div><div style="display:flex;align-items:center;gap:3px"><span style="color:var(--ok)">▲</span>AI 应用层</div><div style="display:flex;align-items:center;gap:3px"><span style="color:var(--warn)">◆</span>算力芯片</div></div></div>
+        </div>
+      </div>
+      <!-- 图片模式画布底部控制栏 (翻页 + 编辑 + 重新生成 + 历史版本) -->
+      <div class="ws-cnav">
+        <button disabled><svg class="i-s" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg></button>
+        <span class="info">3 / 8</span>
+        <button><svg class="i-s" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></button>
+        <div class="divider"></div>
+        <button class="btn btn-s btn-sm"><svg class="i-s" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>编辑</button>
+        <button class="btn btn-g btn-sm"><svg class="i-s" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.13-9.36L23 10"/></svg>重新生成</button>
+        <button class="btn btn-g btn-sm"><svg class="i-s" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>历史版本 (3)</button>
+      </div>
+    </div>
+
+    <!-- 右侧属性面板 (图片模式: 无Tab, 只读信息: 当前页面/大纲摘要/页面描述，操作入口在左栏/画布底部/工具栏) -->
+    <div class="ws-insp">
+      <div class="ws-icont" style="padding:0 14px">
+        <!-- 当前页面 (只读信息) -->
+        <div class="insp-section">
+          <h4>当前页面</h4>
+          <div class="insp-row"><span class="l">页码</span><span class="v">3 / 8</span></div>
+          <div class="insp-row"><span class="l">章节</span><span class="v" style="font-size:12px">行业概览</span></div>
+          <div class="insp-row"><span class="l">标题</span><span class="v" style="font-size:12px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">行业现状与市场规模</span></div>
+          <div class="insp-row"><span class="l">图片状态</span><span style="color:var(--ok-tx);font-size:12px;font-weight:600">✓ 已生成</span></div>
+          <div class="insp-row"><span class="l">画面比例</span><span class="v" style="font-size:12px">16:9</span></div>
+          <div class="insp-row"><span class="l">分辨率</span><span class="v" style="font-size:12px">2K (2048px)</span></div>
+        </div>
+        <!-- 大纲摘要 (只读) -->
+        <div class="insp-section">
+          <h4>大纲摘要</h4>
+          <div style="font-size:12px;color:var(--n600);line-height:1.7">
+            <div style="margin-bottom:6px"><span style="color:var(--n400);font-weight:500">标题：</span>行业现状与市场规模</div>
+            <div style="margin-bottom:6px"><span style="color:var(--n400);font-weight:500">要点：</span></div>
+            <ul style="padding-left:0;margin:0;list-style:none">
+              <li style="position:relative;padding-left:12px;margin-bottom:3px"><span style="position:absolute;left:0;top:8px;width:4px;height:4px;border-radius:50%;background:var(--p500)"></span>全球 AI 市场规模：2024 年突破 5000 亿美元</li>
+              <li style="position:relative;padding-left:12px;margin-bottom:3px"><span style="position:absolute;left:0;top:8px;width:4px;height:4px;border-radius:50%;background:var(--p500)"></span>中国 AI 市场增速：年复合增长率 38%</li>
+              <li style="position:relative;padding-left:12px"><span style="position:absolute;left:0;top:8px;width:4px;height:4px;border-radius:50%;background:var(--p500)"></span>主要细分领域：NLP、计算机视觉、自动驾驶</li>
+            </ul>
+          </div>
+        </div>
+        <!-- 页面描述 (只读) -->
+        <div class="insp-section">
+          <h4>页面描述</h4>
+          <div style="font-size:12px;color:var(--n600);line-height:1.7;max-height:200px;overflow-y:auto;padding-right:4px">
+            <p style="margin-bottom:8px">展示行业现状与市场规模数据。</p>
+            <p style="margin-bottom:8px"><strong style="color:var(--n900)">视觉方向：</strong>数据可视化为主，含柱状图和饼图。</p>
+            <p style="margin-bottom:8px"><strong style="color:var(--n900)">关键数据：</strong>全球 5000 亿美元、中国 1800 亿美元、年增速 38%。</p>
+            <p><strong style="color:var(--n900)">布局：</strong>三栏数据展示，左侧市场规模，中间技术趋势，右侧应用领域。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="ws-sbar"><div class="ws-sbar-dot"></div><span>已保存</span><span class="ws-sbar-sep">|</span><span>8 页</span><span class="ws-sbar-sep">|</span><span>第 3 页</span><div class="ws-sbar-r"><span>1920 × 1080</span><span class="ws-sbar-sep">|</span><span>图片模式</span></div></div>
+  </div>
+</div>
+
+<!-- ============ 原生可编辑模式编辑台 ============ -->
+<div class="screen" id="m-native" style="flex-direction:column">
+  <div class="ws-tb">
+    <div class="ws-tg"><button class="ws-btn" title="返回"><svg class="i" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg></button></div>
+    <div class="ws-div"></div>
+    <div class="mode-switch"><button class="mode-switch-btn" data-m="image"><svg class="i-s" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>图片模式</button><button class="mode-switch-btn on" data-m="native"><svg class="i-s" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>原生可编辑</button></div>
+    <div class="ws-div"></div>
+    <div class="ws-tg"><button class="ws-btn" title="撤销"><svg class="i" viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></button><button class="ws-btn" title="重做" style="opacity:.4"><svg class="i" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.13-9.36L23 10"/></svg></button></div>
+    <div class="ws-div"></div>
+    <button class="btn btn-s btn-sm" title="配图设置"><svg class="i-s" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4"/></svg>配图设置</button>
+    <button class="btn btn-s btn-sm" title="批量生成"><svg class="i-s" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>批量生成</button>
+    <span class="ws-stage">Step 3 · 视觉成稿</span>
+    <div class="ws-title">人工智能行业发展趋势分析</div>
+    <div class="ws-tg">
+      <button class="ws-btn" title="演示"><svg class="i" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg></button>
+      <button class="ws-btn" title="导出任务"><svg class="i" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span class="dot"></span></button>
+      <div class="ws-div"></div>
+      <button class="ws-btn" title="缩小"><svg class="i-s" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+      <span style="font-size:12px;font-weight:600;color:var(--n900);min-width:36px;text-align:center">100%</span>
+      <button class="ws-btn" title="放大"><svg class="i-s" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+      <div class="ws-div"></div>
+      <select class="insp-sel" style="height:32px;width:96px"><option>导出 PPTX</option><option>导出 PDF</option><option>导出离线 HTML</option><option>导出讲解视频</option></select>
+      <button class="btn btn-p btn-sm" title="导出"><svg class="i-s" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>导出</button>
+    </div>
+  </div>
+
+  <div class="ws-body">
+    <!-- 左侧页面栏 (原生模式: 含批量生成页面+添加页面+页面CRUD) -->
+    <div class="ws-sb">
+      <div class="ws-sb-head"><h3>页面 (8)</h3><button class="ws-sb-add" title="添加页面"><svg class="i-xs" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button></div>
+      <div style="padding:8px 8px 4px"><button class="btn btn-p btn-sm" style="width:100%;justify-content:center"><svg class="i-s" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>批量生成页面</button></div>
+      <div class="ws-sb-list">
+        <div class="ws-page on">
+          <div class="ws-thumb"><div class="ws-thumb-inner"><div class="ws-blk" style="height:24%;background:linear-gradient(135deg,#0f1729,#1e3a5f)"></div><div class="ws-blk" style="height:12%"></div><div class="ws-blk" style="height:38%"></div></div></div>
+          <div class="ws-page-info"><span class="ws-page-name">封面与引言</span><span class="ws-page-dot ok"></span></div>
+          <!-- 选中页展开操作网格 (复制/上移/下移/删除/生成本页) -->
+          <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:2px;padding:4px 4px 6px;border-top:1px solid var(--n100)">
+            <button class="ws-btn" style="width:100%;height:26px" title="复制"><svg class="i-xs" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+            <button class="ws-btn" style="width:100%;height:26px" title="上移"><svg class="i-xs" viewBox="0 0 24 24"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg></button>
+            <button class="ws-btn" style="width:100%;height:26px" title="下移"><svg class="i-xs" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg></button>
+            <button class="ws-btn" style="width:100%;height:26px" title="生成本页"><svg class="i-xs" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></button>
+            <button class="ws-btn" style="width:100%;height:26px" title="删除"><svg class="i-xs" viewBox="0 0 24 24" style="color:var(--err)"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+          </div>
+        </div>
+        <div class="ws-page"><div class="ws-thumb"><div class="ws-thumb-inner"><div class="ws-blk" style="height:18%"></div><div style="display:flex;gap:3px"><div class="ws-blk" style="flex:1;height:42%"></div><div class="ws-blk" style="flex:1;height:42%"></div></div></div></div><div class="ws-page-info"><span class="ws-page-name">目录概览</span><span class="ws-page-dot ok"></span></div></div>
+        <div class="ws-page"><div class="ws-thumb"><div class="ws-thumb-inner"><div class="ws-blk" style="height:22%"></div><div style="display:flex;gap:3px"><div class="ws-blk" style="flex:1;height:45%"></div><div class="ws-blk" style="flex:1;height:45%"></div></div></div></div><div class="ws-page-info"><span class="ws-page-name">行业现状</span><span class="ws-page-dot ok"></span></div></div>
+        <div class="ws-page"><div class="ws-thumb"><div class="ws-thumb-inner"><div class="ws-blk" style="height:20%"></div><div class="ws-blk" style="height:48%"></div></div></div><div class="ws-page-info"><span class="ws-page-name">技术演进</span><span class="ws-page-dot gen"></span></div></div>
+        <div class="ws-page" style="border-color:var(--warn)"><div class="ws-thumb"><div class="ws-thumb-inner"><div class="ws-blk" style="height:24%"></div><div class="ws-blk" style="height:48%"></div></div></div><div class="ws-page-info"><span class="ws-page-name">竞争格局</span><svg class="i-xs" viewBox="0 0 24 24" style="color:var(--warn)"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div></div>
+        <div class="ws-page"><div class="ws-thumb"><div class="ws-thumb-inner"><div class="ws-blk" style="height:16%"></div><div style="display:flex;gap:3px"><div class="ws-blk" style="flex:1;height:30%"></div><div class="ws-blk" style="flex:1;height:30%"></div><div class="ws-blk" style="flex:1;height:30%"></div></div></div></div><div class="ws-page-info"><span class="ws-page-name">投资建议</span><span class="ws-page-dot pen"></span></div></div>
+      </div>
+    </div>
+
+    <!-- 中央画布 (原生模式: 可编辑画布 + 双击编辑文字 + 底部翻页) -->
+    <div class="ws-canvas">
+      <div class="ws-slide">
+        <div class="ws-slide-hd"><h2>行业现状与市场规模</h2><div class="ws-slide-deco"></div></div>
+        <div class="ws-slide-bd">
+          <div class="ws-slide-item" style="outline:2px solid var(--p500);outline-offset:2px;cursor:text"><h4>市场规模</h4><div style="display:flex;flex-direction:column;gap:6px"><div><div style="font-size:9px;color:var(--n500);display:flex;justify-content:space-between"><span>全球市场</span><span>$5000亿</span></div><div class="ws-bar"><div class="ws-bar-f" style="width:85%"></div></div></div><div><div style="font-size:9px;color:var(--n500);display:flex;justify-content:space-between"><span>中国市场</span><span>$1800亿</span></div><div class="ws-bar"><div class="ws-bar-f" style="width:60%"></div></div></div></div></div>
+          <div class="ws-slide-item"><h4>技术趋势</h4><div style="display:flex;flex-direction:column;gap:4px;font-size:9px;color:var(--n600)"><span>• 大模型参数指数增长</span><span>• 多模态融合成主流</span><span>• Agent 自主决策提升</span></div></div>
+          <div class="ws-slide-item" style="cursor:pointer"><h4>应用领域</h4><div style="display:grid;grid-template-columns:1fr 1fr;gap:3px;font-size:8px"><div style="padding:3px 5px;background:var(--p100);border-radius:4px;color:var(--p700);text-align:center;font-weight:600">医疗健康</div><div style="padding:3px 5px;background:var(--ok-bg);border-radius:4px;color:var(--ok-tx);text-align:center;font-weight:600">自动驾驶</div><div style="padding:3px 5px;background:var(--warn-bg);border-radius:4px;color:var(--warn-tx);text-align:center;font-weight:600">金融科技</div><div style="padding:3px 5px;background:#ede9fe;border-radius:4px;color:#7c3aed;text-align:center;font-weight:600">智能制造</div></div></div>
+          <div class="ws-slide-item" style="grid-column:span 2"><h4>竞争格局 TOP5</h4><div style="display:flex;align-items:flex-end;gap:10px;height:36px;padding-top:6px"><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px"><div style="width:100%;height:32px;background:linear-gradient(to top,var(--p600),var(--p400));border-radius:4px 4px 0 0"></div><span style="font-size:7px;color:var(--n400)">OpenAI</span></div><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px"><div style="width:100%;height:26px;background:linear-gradient(to top,var(--p600),var(--p400));opacity:.8;border-radius:4px 4px 0 0"></div><span style="font-size:7px;color:var(--n400)">Google</span></div><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px"><div style="width:100%;height:22px;background:linear-gradient(to top,var(--p600),var(--p400));opacity:.6;border-radius:4px 4px 0 0"></div><span style="font-size:7px;color:var(--n400)">Anthropic</span></div><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px"><div style="width:100%;height:18px;background:linear-gradient(to top,var(--p600),var(--p400));opacity:.4;border-radius:4px 4px 0 0"></div><span style="font-size:7px;color:var(--n400)">Meta</span></div><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px"><div style="width:100%;height:14px;background:linear-gradient(to top,var(--p600),var(--p400));opacity:.3;border-radius:4px 4px 0 0"></div><span style="font-size:7px;color:var(--n400)">百度</span></div></div></div>
+          <div class="ws-slide-item"><h4>投资建议</h4><div style="display:flex;flex-direction:column;gap:3px;font-size:9px;color:var(--n600)"><div style="display:flex;align-items:center;gap:3px"><span style="color:var(--ok)">▲</span>大模型基础设施</div><div style="display:flex;align-items:center;gap:3px"><span style="color:var(--ok)">▲</span>AI 应用层</div><div style="display:flex;align-items:center;gap:3px"><span style="color:var(--warn)">◆</span>算力芯片</div></div></div>
+        </div>
+      </div>
+      <!-- 原生模式画布底部: 仅翻页 -->
+      <div class="ws-cnav">
+        <button disabled><svg class="i-s" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg></button>
+        <span class="info">3 / 8</span>
+        <button><svg class="i-s" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></button>
+      </div>
+    </div>
+
+    <!-- 右侧属性面板 (原生模式: 3个Tab: 内容/设计/图片) -->
+    <div class="ws-insp">
+      <div class="ws-itabs">
+        <button class="ws-itab on" data-itab="content">内容</button>
+        <button class="ws-itab" data-itab="design">设计</button>
+        <button class="ws-itab" data-itab="image">图片</button>
+      </div>
+      <div class="ws-icont">
+        <!-- ===== 内容 Tab ===== -->
+        <div class="itab-content" data-itab-content="content">
+          <div class="insp-sec"><h4><svg class="i-s" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>页面设置</h4>
+            <div class="insp-row"><span class="l">页面主题</span><select class="insp-sel"><option>深蓝科技</option><option>经典白</option></select></div>
+            <div class="insp-row"><span class="l">页面布局</span><select class="insp-sel"><option>三栏数据</option><option>左右分栏</option></select></div>
+            <div class="insp-row"><span class="l">页面角色</span><select class="insp-sel"><option>数据展示</option><option>封面</option></select></div>
+            <div class="insp-row"><span class="l">页面状态</span><span style="color:var(--ok-tx);font-size:12px;font-weight:600">✓ 已生成</span></div>
+            <div style="display:flex;gap:6px;margin-top:8px"><button class="btn btn-s btn-sm" style="flex:1;justify-content:center;font-size:11px">重新生成</button><button class="btn btn-g btn-sm" style="flex:1;justify-content:center;font-size:11px">修复并重生成</button></div>
+          </div>
+          <div class="insp-sec"><h4><svg class="i-s" viewBox="0 0 24 24"><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5z"/></svg>页面摘要</h4>
+            <div style="font-size:12px;color:var(--n600);line-height:1.6"><div style="margin-bottom:4px"><span style="color:var(--n400)">视觉方向：</span>深色科技感，数据可视化为主</div><div style="margin-bottom:4px"><span style="color:var(--n400)">叙事角色：</span>数据展示页</div><div style="margin-bottom:4px"><span style="color:var(--n400)">媒体策略：</span>柱状图+饼图</div><div><span style="color:var(--n400)">质量评分：</span><span style="color:var(--warn-tx);font-weight:600">⚠ 警告</span></div></div>
+          </div>
+          <div class="insp-sec"><h4><svg class="i-s" viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/></svg>结构</h4>
+            <div class="insp-row"><span class="l">显示标题</span><button class="tog on"></button></div>
+            <div class="insp-row"><span class="l">显示数据图表</span><button class="tog on"></button></div>
+            <div class="insp-row"><span class="l">图表数量</span><select class="insp-sel"><option>2 个</option><option>3 个</option></select></div>
+          </div>
+          <div class="insp-sec"><h4><svg class="i-s" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>文字与数据</h4>
+            <div class="insp-row"><span class="l">主标题</span><span class="v" style="font-size:12px;color:var(--n400);cursor:pointer">点击编辑</span></div>
+            <div class="insp-row"><span class="l">副标题</span><span class="v" style="font-size:12px;color:var(--n400);cursor:pointer">点击编辑</span></div>
+            <div class="insp-row"><span class="l">正文要点</span><span class="v" style="font-size:12px;color:var(--n400);cursor:pointer">点击编辑</span></div>
+            <div class="insp-row"><span class="l">数据项</span><span class="v" style="font-size:12px;color:var(--n400);cursor:pointer">点击编辑</span></div>
+          </div>
+          <div class="insp-sec"><h4><svg class="i-s" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>版本历史</h4>
+            <div style="display:flex;flex-direction:column;gap:4px">
+              <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:var(--r-md);background:var(--p50);font-size:12px"><span style="color:var(--p600);font-weight:600;flex:1">v3 · 2分钟前</span><span style="font-size:10px;font-weight:700;color:var(--p600)">当前</span></div>
+              <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:var(--r-md);font-size:12px;color:var(--n600);cursor:pointer"><span style="flex:1">v2 · 1小时前</span><button class="btn btn-g" style="height:22px;font-size:10px;padding:0 8px">恢复</button></div>
+              <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:var(--r-md);font-size:12px;color:var(--n600);cursor:pointer"><span style="flex:1">v1 · 昨天</span><button class="btn btn-g" style="height:22px;font-size:10px;padding:0 8px">恢复</button></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== 设计 Tab ===== -->
+        <div class="itab-content" data-itab-content="design" style="display:none">
+          <div class="insp-sec"><h4><svg class="i-s" viewBox="0 0 24 24"><circle cx="13.5" cy="6.5" r=".5"/><circle cx="17.5" cy="10.5" r=".5"/><circle cx="8.5" cy="7.5" r=".5"/><circle cx="6.5" cy="12.5" r=".5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>视觉</h4>
+            <div class="insp-row"><span class="l">主色调</span><select class="insp-sel"><option>深蓝</option><option>科技蓝</option><option>商务黑</option></select></div>
+            <div class="insp-row"><span class="l">背景风格</span><select class="insp-sel"><option>深色渐变</option><option>纯色</option><option>图片</option></select></div>
+            <div class="insp-row"><span class="l">强调色</span><select class="insp-sel"><option>科技蓝</option><option>翠绿</option><option>暖橙</option></select></div>
+          </div>
+          <div class="insp-sec"><h4><svg class="i-s" viewBox="0 0 24 24"><line x1="21" y1="4" x2="14" y2="4"/><line x1="10" y1="4" x2="3" y2="4"/><line x1="21" y1="12" x2="12" y2="12"/><line x1="8" y1="12" x2="3" y2="12"/><line x1="21" y1="20" x2="16" y2="20"/><line x1="12" y1="20" x2="3" y2="20"/><line x1="14" y1="2" x2="14" y2="6"/><line x1="8" y1="10" x2="8" y2="14"/><line x1="16" y1="18" x2="16" y2="22"/></svg>设计调节</h4>
+            <div class="insp-row"><span class="l">字体大小</span><select class="insp-sel"><option>标准</option><option>大</option><option>小</option></select></div>
+            <div class="insp-row"><span class="l">间距密度</span><select class="insp-sel"><option>标准</option><option>紧凑</option><option>宽松</option></select></div>
+            <div class="insp-row"><span class="l">圆角风格</span><select class="insp-sel"><option>标准</option><option>圆润</option><option>锐利</option></select></div>
+          </div>
+          <div class="insp-sec"><h4><svg class="i-s" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>页面动效</h4>
+            <div style="display:flex;gap:6px;margin-bottom:12px">
+              <button class="btn btn-s btn-sm" style="flex:1;justify-content:center;font-size:11px"><svg class="i-xs" viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>重播</button>
+              <button class="btn btn-s btn-sm" style="flex:1;justify-content:center;font-size:11px"><svg class="i-xs" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>应用到全部</button>
+            </div>
+            <div style="font-size:11px;font-weight:700;color:var(--n400);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">页面入场</div>
+            <div class="insp-row"><span class="l">进入效果</span><select class="insp-sel"><option>淡入</option><option>推入</option><option>擦除</option><option>缩放</option></select></div>
+            <div class="insp-row"><span class="l">持续时间</span><select class="insp-sel"><option>400ms</option><option>600ms</option><option>800ms</option></select></div>
+            <div class="insp-row"><span class="l">入场延迟</span><select class="insp-sel"><option>0ms</option><option>100ms</option><option>200ms</option></select></div>
+            <div class="insp-row"><span class="l">缓动曲线</span><select class="insp-sel"><option>ease-out</option><option>ease-in-out</option><option>spring</option></select></div>
+            <div style="font-size:11px;font-weight:700;color:var(--n400);text-transform:uppercase;letter-spacing:.05em;margin:14px 0 8px">元素动效</div>
+            <div class="insp-row"><span class="l">元素逐项进入</span><button class="tog on"></button></div>
+            <div class="insp-row"><span class="l">触发方式</span><select class="insp-sel"><option>自动</option><option>点击</option></select></div>
+            <div class="insp-row"><span class="l">时长</span><select class="insp-sel"><option>300ms</option><option>500ms</option><option>800ms</option></select></div>
+            <div class="insp-row"><span class="l">间隔</span><select class="insp-sel"><option>50ms</option><option>100ms</option><option>150ms</option></select></div>
+            <div style="font-size:11px;font-weight:700;color:var(--n400);text-transform:uppercase;letter-spacing:.05em;margin:14px 0 8px">翻页播放</div>
+            <div class="insp-row"><span class="l">页面切换</span><select class="insp-sel"><option>推入</option><option>淡入</option><option>覆盖</option><option>无</option></select></div>
+            <div class="insp-row"><span class="l">切换速度</span><select class="insp-sel"><option>400ms</option><option>600ms</option><option>800ms</option></select></div>
+            <div class="insp-row"><span class="l">切换方向</span><select class="insp-sel"><option>从左向右</option><option>从右向左</option><option>从上向下</option></select></div>
+            <div class="insp-row"><span class="l">自动翻页</span><select class="insp-sel"><option>关闭</option><option>3 秒</option><option>5 秒</option><option>10 秒</option></select></div>
+            <div class="insp-row"><span class="l">主题内部动效</span><button class="tog on"></button></div>
+          </div>
+        </div>
+
+        <!-- ===== 图片 Tab ===== -->
+        <div class="itab-content" data-itab-content="image" style="display:none">
+          <div class="insp-sec"><h4><svg class="i-s" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>图片内容</h4>
+            <p style="font-size:12px;color:var(--n500);margin-bottom:12px;line-height:1.5">当前页面有 3 个图片槽位，可单独生成或替换</p>
+            <!-- 媒体槽 1 -->
+            <div class="media-slot">
+              <div class="media-slot-head"><span class="media-slot-name">主视觉图</span><span style="font-size:10px;color:var(--ok-tx);font-weight:600">已生成</span></div>
+              <div class="media-slot-preview"><svg class="i-l" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></div>
+              <div class="media-slot-actions">
+                <button class="media-slot-btn gen"><svg class="i-xs" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>生成</button>
+                <button class="media-slot-btn"><svg class="i-xs" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>上传</button>
+                <button class="media-slot-btn"><svg class="i-xs" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>素材库</button>
+                <button class="media-slot-btn del"><svg class="i-xs" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>清除</button>
+              </div>
+              <textarea class="media-prompt" placeholder="图片生成要求（可选）">一张现代科技感的数据可视化插图，深蓝色调，包含柱状图和趋势线</textarea>
+            </div>
+            <!-- 媒体槽 2 -->
+            <div class="media-slot">
+              <div class="media-slot-head"><span class="media-slot-name">辅助装饰图</span><span style="font-size:10px;color:var(--n400)">空槽</span></div>
+              <div class="media-slot-preview"><svg class="i-l" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></div>
+              <div class="media-slot-actions">
+                <button class="media-slot-btn gen"><svg class="i-xs" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>生成</button>
+                <button class="media-slot-btn"><svg class="i-xs" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>上传</button>
+                <button class="media-slot-btn"><svg class="i-xs" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>素材库</button>
+                <button class="media-slot-btn del"><svg class="i-xs" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>清除</button>
+              </div>
+              <textarea class="media-prompt" placeholder="图片生成要求（可选）"></textarea>
+            </div>
+            <!-- 媒体槽 3 -->
+            <div class="media-slot">
+              <div class="media-slot-head"><span class="media-slot-name">背景纹理</span><span style="font-size:10px;color:var(--warn-tx);font-weight:600">生成中</span></div>
+              <div class="media-slot-preview" style="border-color:var(--warn)"><svg class="i-l" viewBox="0 0 24 24" style="animation:pulse 1.5s infinite;color:var(--warn)"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg></div>
+              <div class="media-slot-actions">
+                <button class="media-slot-btn gen" disabled style="opacity:.5"><svg class="i-xs" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>生成中</button>
+                <button class="media-slot-btn"><svg class="i-xs" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>上传</button>
+                <button class="media-slot-btn"><svg class="i-xs" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>素材库</button>
+                <button class="media-slot-btn del"><svg class="i-xs" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>清除</button>
+              </div>
+              <textarea class="media-prompt" placeholder="图片生成要求（可选）">抽象几何纹理背景，深蓝色科技风格</textarea>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="ws-sbar"><div class="ws-sbar-dot"></div><span>已保存</span><span class="ws-sbar-sep">|</span><span>8 页</span><span class="ws-sbar-sep">|</span><span>主题：深蓝科技</span><div class="ws-sbar-r"><span>1920 × 1080</span><span class="ws-sbar-sep">|</span><span>缩放 100%</span><span class="ws-sbar-sep">|</span><span>原生可编辑模式</span></div></div>
+  </div>
+</div>
+
+</div><!-- /page -->
+
+<script>
+document.querySelectorAll('.mode-switch-btn').forEach(b=>b.addEventListener('click',()=>{
+  document.querySelectorAll('.mode-switch-btn').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on');
+  const m=b.dataset.m;
+  document.querySelectorAll('.screen').forEach(x=>x.classList.remove('on'));
+  document.getElementById('m-'+m).classList.add('on');
+}));
+// 原生模式 Tab 切换（内容/设计/图片）
+document.querySelectorAll('.ws-itab').forEach(t=>t.addEventListener('click',()=>{
+  const insp=t.closest('.ws-insp');
+  insp.querySelectorAll('.ws-itab').forEach(x=>x.classList.remove('on'));
+  t.classList.add('on');
+  const tab=t.dataset.itab;
+  insp.querySelectorAll('.itab-content').forEach(c=>{
+    c.style.display=c.dataset.itabContent===tab?'block':'none';
+  });
+}));
+document.querySelectorAll('.ws-page').forEach(p=>p.addEventListener('click',()=>{document.querySelectorAll('.ws-page').forEach(x=>x.classList.remove('on'));p.classList.add('on')}));
+document.querySelectorAll('.tog').forEach(t=>t.addEventListener('click',()=>t.classList.toggle('on')));
+</script>
+</body>
+</html>

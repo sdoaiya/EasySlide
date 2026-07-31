@@ -38,7 +38,7 @@ from controllers.material_controller import material_bp, material_global_bp
 from controllers.reference_file_controller import reference_file_bp
 from controllers.settings_controller import settings_bp
 from controllers.openai_oauth_controller import openai_oauth_bp
-from controllers import project_bp, page_bp, template_bp, user_template_bp, user_style_template_bp, export_bp, file_bp, style_bp, native_deck_bp
+from controllers import project_bp, page_bp, template_bp, user_template_bp, user_style_template_bp, export_bp, file_bp, style_bp, native_deck_bp, narration_bp, content_workspace_bp, podcast_bp
 
 
 # Enable SQLite WAL mode for all connections
@@ -135,6 +135,8 @@ def create_app():
         werkzeug_logger.setLevel(logging.INFO)
     logging.getLogger('volcenginesdkarkruntime').setLevel(logging.WARNING)
 
+    _prepare_content_project_database(app)
+
     # Initialize extensions
     db.init_app(app)
     CORS(app, origins=cors_origins)
@@ -156,6 +158,9 @@ def create_app():
     app.register_blueprint(openai_oauth_bp)
     app.register_blueprint(style_bp)
     app.register_blueprint(native_deck_bp)
+    app.register_blueprint(narration_bp)
+    app.register_blueprint(content_workspace_bp)
+    app.register_blueprint(podcast_bp)
 
     with app.app_context():
         db.create_all()
@@ -240,6 +245,18 @@ def create_app():
     return app
 
 
+def _prepare_content_project_database(app):
+    """Run the gated offline migration before SQLAlchemy opens the business DB."""
+    enabled = os.getenv('CONTENT_PROJECT_CUTOVER', '').strip().lower()
+    from services.content_project_migration import prepare_content_project_database
+
+    return prepare_content_project_database(
+        app.config['SQLALCHEMY_DATABASE_URI'],
+        app.config['UPLOAD_FOLDER'],
+        enabled=enabled in {'1', 'true', 'yes', 'on'},
+    )
+
+
 def _pause_interrupted_export_tasks():
     """In-memory tasks cannot keep running after the desktop backend exits."""
     from models import Page, Task
@@ -247,7 +264,9 @@ def _pause_interrupted_export_tasks():
     tasks = Task.query.filter(
         Task.task_type.in_([
             'EXPORT_EDITABLE_PPTX', 'EXPORT_NATIVE_PPTX', 'EXPORT_NATIVE_PDF',
-            'EXPORT_NATIVE_HTML', 'EXPORT_VIDEO', 'GENERATE_IMAGES',
+            'EXPORT_NATIVE_HTML', 'EXPORT_VIDEO', 'EXPORT_VIDEO_WORKSPACE',
+            'EXPORT_PODCAST_WORKSPACE', 'GENERATE_IMAGES',
+            'INITIALIZE_CONTENT_WORKSPACE',
         ]),
         Task.status.in_(['PENDING', 'PROCESSING', 'RUNNING']),
     ).all()
@@ -269,27 +288,48 @@ def _ensure_desktop_sqlite_schema(app):
     if not app.config['SQLALCHEMY_DATABASE_URI'].startswith('sqlite:///'):
         return
 
+    cutover_enabled = os.getenv('CONTENT_PROJECT_CUTOVER', '').strip().lower() in {
+        '1', 'true', 'yes', 'on',
+    }
+    from services.content_project_migration import desktop_legacy_project_columns
+
     columns = {
         'projects': {
             'project_title': 'TEXT',
             'extra_requirements': 'TEXT',
             'outline_requirements': 'TEXT',
             'description_requirements': 'TEXT',
-            'render_mode': "VARCHAR(20) NOT NULL DEFAULT 'image'",
-            'native_theme': 'VARCHAR(100)',
-            'native_image_settings': 'TEXT',
+            **desktop_legacy_project_columns(cutover_enabled=cutover_enabled),
             'export_extractor_method': "VARCHAR(50) DEFAULT 'hybrid'",
             'export_inpaint_method': "VARCHAR(50) DEFAULT 'hybrid'",
             'export_allow_partial': 'BOOLEAN DEFAULT 0',
             'export_high_fidelity_editable': 'BOOLEAN NOT NULL DEFAULT 0',
             'enable_icon_subject_extraction': 'BOOLEAN DEFAULT 0',
-            'image_aspect_ratio': "VARCHAR(10) DEFAULT '16:9'",
             'template_pack_id': 'VARCHAR(120)',
+            'schema_version': 'INTEGER NOT NULL DEFAULT 1',
+            'last_workspace': 'VARCHAR(20)',
+            'migration_state': 'VARCHAR(30)',
+            'project_settings_json': 'TEXT',
         },
         'pages': {
             'part': 'VARCHAR(200)',
             'cached_image_path': 'VARCHAR(500)',
+            'template_image_path': 'VARCHAR(500)',
+            'template_style_text': 'TEXT',
+            'template_selection_role': 'VARCHAR(40)',
+            'template_selection_layout': 'VARCHAR(40)',
+            'template_selection_source': 'VARCHAR(40)',
+            'template_match_reason': 'TEXT',
             'narration_text': 'TEXT',
+            'narration_segments': 'TEXT',
+            'narration_source_hash': 'VARCHAR(64)',
+            'narration_config_hash': 'VARCHAR(64)',
+            'narration_status': 'VARCHAR(32)',
+            'narration_audio_manifest': 'TEXT',
+            'narration_error': 'TEXT',
+            'current_narration_version_id': 'VARCHAR(36)',
+            'narration_locked': 'BOOLEAN NOT NULL DEFAULT 0',
+            'narration_revision': 'INTEGER NOT NULL DEFAULT 0',
             'native_layout': 'VARCHAR(100)',
             'native_props': 'TEXT',
             'native_versions': 'TEXT',
@@ -305,13 +345,11 @@ def _ensure_desktop_sqlite_schema(app):
             'text_thinking_budget': 'INTEGER DEFAULT 1024',
             'enable_image_reasoning': 'BOOLEAN DEFAULT 0',
             'image_thinking_budget': 'INTEGER DEFAULT 1024',
+            'enable_image_quality_control': 'BOOLEAN DEFAULT 0',
             'description_generation_mode': 'VARCHAR(20)',
             'description_extra_fields': 'TEXT',
             'image_prompt_extra_fields': 'TEXT',
             'baidu_api_key': 'VARCHAR(500)',
-            'elevenlabs_enabled': 'BOOLEAN DEFAULT 0',
-            'elevenlabs_api_key': 'VARCHAR(500)',
-            'elevenlabs_voice_id': 'VARCHAR(100)',
             'text_model_source': 'VARCHAR(50)',
             'image_model_source': 'VARCHAR(50)',
             'image_caption_model_source': 'VARCHAR(50)',
@@ -322,6 +360,8 @@ def _ensure_desktop_sqlite_schema(app):
             'image_api_base_url': 'VARCHAR(500)',
             'image_caption_api_key': 'VARCHAR(500)',
             'image_caption_api_base_url': 'VARCHAR(500)',
+            'fish_audio_api_key': 'TEXT',
+            'fish_audio_voice_assets': 'TEXT',
             'openai_image_api_protocol': 'VARCHAR(10)',
             'openai_oauth_access_token': 'TEXT',
             'openai_oauth_refresh_token': 'TEXT',
@@ -332,8 +372,15 @@ def _ensure_desktop_sqlite_schema(app):
             'thumb_path': 'VARCHAR(500)',
             'file_size': 'INTEGER',
         },
+        'materials': {
+            'media_kind': "VARCHAR(20) NOT NULL DEFAULT 'image'",
+            'purpose': "VARCHAR(30) NOT NULL DEFAULT 'image'",
+            'mime_type': 'VARCHAR(100)',
+            'duration_ms': 'INTEGER',
+            'source_note': 'TEXT',
+            'license_status': 'VARCHAR(30)',
+        },
     }
-
     try:
         with db.engine.begin() as conn:
             for table, table_columns in columns.items():
@@ -426,6 +473,7 @@ def _load_settings_to_config(app):
         app.config['TEXT_THINKING_BUDGET'] = settings.text_thinking_budget
         app.config['ENABLE_IMAGE_REASONING'] = settings.enable_image_reasoning
         app.config['IMAGE_THINKING_BUDGET'] = settings.image_thinking_budget
+        app.config['ENABLE_IMAGE_QUALITY_CONTROL'] = settings.enable_image_quality_control
         logging.info(f"Loaded reasoning config: text={settings.enable_text_reasoning}(budget={settings.text_thinking_budget}), image={settings.enable_image_reasoning}(budget={settings.image_thinking_budget})")
         
         # Load Baidu API settings

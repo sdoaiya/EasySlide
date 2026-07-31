@@ -7,7 +7,7 @@ type WorkspaceStatusBarProps = {
 
 export function WorkspaceStatusBar({ children, className = '' }: WorkspaceStatusBarProps) {
   return (
-    <div className={`flex h-full min-w-0 items-center px-3 text-xs text-foreground-secondary ${className}`}>
+    <div className={`flex h-full min-w-0 items-center px-3 text-xs text-[var(--app-text-secondary)] ${className}`}>
       {children}
     </div>
   );

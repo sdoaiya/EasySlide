@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { OutlineEditor } from '@/pages/OutlineEditor';
@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => {
     description_text: '',
     outline_requirements: '',
     description_requirements: '',
+    extra_requirements: '',
     updated_at: '2026-07-02T00:00:00Z',
   };
 
@@ -43,6 +44,7 @@ const mocks = vi.hoisted(() => {
     taskProgress: null,
     pageGeneratingTasks: {},
     activeImageTask: null as any,
+    imageQualityReport: null as any,
     warningMessage: null,
     setError: vi.fn(),
   };
@@ -83,7 +85,7 @@ vi.mock('@/store/useExportTasksStore', () => ({
 }));
 
 vi.mock('@/api/client', () => ({
-  getImageUrl: vi.fn(() => ''),
+  getImageUrl: vi.fn((path: string) => `http://127.0.0.1:5000${path}`),
   getStaticAssetUrl: vi.fn((path: string) => path),
 }));
 
@@ -105,7 +107,31 @@ vi.mock('@/api/endpoints', () => ({
   exportImages: vi.fn(),
   exportEditablePPTX: vi.fn(),
   exportVideo: vi.fn(),
-  getElevenLabsVoices: vi.fn().mockResolvedValue({ data: { voices: [] } }),
+  getFishAudioVoices: vi.fn(),
+  getFishAudioCapabilities: vi.fn().mockResolvedValue({
+    data: { voice_design: { supported: false, reason: '当前免费模型未确认 Voice Design 官方 API 契约' } },
+  }),
+  previewFishNarration: vi.fn(),
+  getProjectNarrations: vi.fn(() => Promise.resolve({
+    data: {
+      pages: mocks.store.currentProject.pages.map(page => ({
+        page_id: page.page_id,
+        current_version_id: `version-${page.page_id}`,
+      })),
+    },
+  })),
+  autoMatchPageTemplates: vi.fn().mockResolvedValue({ data: {} }),
+  preflightExportVideo: vi.fn().mockResolvedValue({
+    data: {
+      can_export: true,
+      errors: [],
+      warnings: [],
+      total_pages: 1,
+      pages_with_narration: 1,
+      missing_images: [],
+      missing_narration: [],
+    },
+  }),
 }));
 
 vi.mock('@/hooks/useImagePaste', () => ({
@@ -146,11 +172,11 @@ vi.mock('@/components/shared', () => ({
   ReferenceFileList: () => null,
   MaterialSelector: () => null,
   ImportMarkdownModal: () => null,
-  Modal: ({ isOpen, title, children }: any) => (isOpen ? <section><h2>{title}</h2>{children}</section> : null),
-  Textarea: ({ label, value = '', onChange, placeholder }: any) => (
+  Modal: ({ isOpen, title, children }: any) => (isOpen ? <section role="dialog" aria-label={title}><h2>{title}</h2>{children}</section> : null),
+  Textarea: ({ label, value = '', onChange, placeholder, ...props }: any) => (
     <label>
       {label}
-      <textarea value={value} onChange={onChange} placeholder={placeholder} />
+      <textarea value={value} onChange={onChange} placeholder={placeholder} {...props} />
     </label>
   ),
   ProjectSettingsModal: () => null,
@@ -228,10 +254,13 @@ describe('EasySlide internal workflow chrome', () => {
       description_text: '',
       outline_requirements: '',
       description_requirements: '',
+      extra_requirements: '',
       updated_at: '2026-07-02T00:00:00Z',
     };
     mocks.store.currentProject.pages = [];
     mocks.store.activeImageTask = null;
+    mocks.store.imageQualityReport = null;
+    mocks.store.warningMessage = null;
     mocks.store.pageGeneratingTasks = {};
     mocks.store.generateOutlineStream.mockResolvedValue({ complete: true });
     mocks.store.syncProject.mockResolvedValue(mocks.store.currentProject);
@@ -244,6 +273,8 @@ describe('EasySlide internal workflow chrome', () => {
     const { container } = renderAt('/project/project-1/outline', <OutlineEditor />);
 
     expect(screen.getByText('Step 1 · 内容结构')).toBeInTheDocument();
+    expect(screen.getByText('Step 1 · 内容结构')).not.toHaveClass('rounded-full');
+    expect(screen.getByText('Step 1 · 内容结构')).toHaveClass('rounded-[var(--app-radius-control)]');
     expect(screen.getByText('整理想法、素材和页面顺序')).toBeInTheDocument();
     expect(screen.getByText('还没有页面')).toBeInTheDocument();
     expect(container.innerHTML).not.toMatch(/banana|yellow|orange|amber/);
@@ -276,6 +307,8 @@ describe('EasySlide internal workflow chrome', () => {
     renderAt('/project/project-1/preview', <SlidePreview />);
 
     expect(screen.getByText('Step 3 · 视觉成稿')).toBeInTheDocument();
+    expect(screen.getByText('Step 3 · 视觉成稿')).not.toHaveClass('rounded-full');
+    expect(screen.getByText('Step 3 · 视觉成稿')).toHaveClass('rounded-[var(--app-radius-control)]');
     expect(screen.getByText('生成图片、预览并导出交付')).toBeInTheDocument();
     expect(screen.getByText('还没有页面')).toBeInTheDocument();
   });
@@ -293,8 +326,150 @@ describe('EasySlide internal workflow chrome', () => {
 
     renderAt('/project/project-1/preview', <SlidePreview />);
 
+    expect(screen.getByRole('main').parentElement).toHaveStyle({
+      gridTemplateColumns: 'minmax(0, 240px) minmax(0, 1fr) minmax(0, 344px)',
+    });
     expect(screen.getByTestId('slide-preview-viewport')).toHaveClass('overflow-hidden');
     expect(screen.getByTestId('slide-preview-canvas').style.width).toContain('cqh');
+  });
+
+  it('keeps the multi-select toolbar outside the thumbnail scroll area', () => {
+    mocks.store.currentProject.pages = [{
+      id: 'page-1',
+      page_id: 'page-1',
+      order_index: 0,
+      status: 'COMPLETED',
+      generated_image_path: '/files/page-1.png',
+      outline_content: { title: 'Slide 1', points: [] },
+      description_content: { text: 'Desc 1' },
+    }];
+
+    renderAt('/project/project-1/preview', <SlidePreview />);
+
+    const toolbar = screen.getByTestId('slide-multiselect-toolbar');
+    const thumbnailScroll = screen.getByTestId('slide-thumbnail-scroll');
+    expect(thumbnailScroll).not.toContainElement(toolbar);
+    expect(toolbar.parentElement).toBe(thumbnailScroll.parentElement);
+  });
+
+  it('keeps long outline and description content inside the inspector width', () => {
+    mocks.store.currentProject.pages = [{
+      id: 'page-1',
+      page_id: 'page-1',
+      order_index: 0,
+      status: 'COMPLETED',
+      outline_content: {
+        title: 'Slide 1',
+        points: ['这是一个非常长的页面大纲要点，用来验证属性栏中的文本会在固定宽度内断行而不会撑开布局'],
+      },
+      description_content: {
+        text: '这是一段很长的页面描述内容，用来验证描述区域会保持属性栏宽度并在内部换行。'.repeat(4),
+      },
+    }];
+
+    renderAt('/project/project-1/preview', <SlidePreview />);
+
+    const outline = screen.getByTestId('preview-page-outline');
+    const description = screen.getByTestId('preview-page-description');
+    expect(outline).toHaveClass('w-full', 'min-w-0', 'max-w-full', 'overflow-hidden');
+    expect(outline.querySelector('ul')).toHaveClass('min-w-0', 'max-w-full');
+    expect(outline.querySelector('li')).toHaveClass('min-w-0', 'max-w-full');
+    expect(outline.querySelector('li span:last-child')).toHaveClass('min-w-0', 'break-words');
+    expect(description).toHaveClass('w-full', 'min-w-0', 'max-w-full', 'overflow-hidden');
+    expect(description.querySelector('p')).toHaveClass('min-w-0', 'max-w-full', 'break-words');
+  });
+
+  it('edits the project AI requirements from the page inspector', async () => {
+    const endpoints = await import('@/api/endpoints');
+    mocks.store.currentProject.extra_requirements = '保持统一配色';
+    mocks.store.currentProject.pages = [{
+      id: 'page-1',
+      page_id: 'page-1',
+      order_index: 0,
+      status: 'COMPLETED',
+      outline_content: { title: 'Slide 1', points: [] },
+      description_content: { text: 'Desc 1' },
+    }];
+
+    renderAt('/project/project-1/preview', <SlidePreview />);
+
+    const requirements = screen.getByRole('textbox', { name: '项目硬性要求' });
+    expect(requirements).toHaveValue('保持统一配色');
+    fireEvent.change(requirements, { target: { value: '减少文字，突出关键数据' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存项目要求' }));
+
+    await waitFor(() => {
+      expect(endpoints.updateProject).toHaveBeenCalledWith('project-1', {
+        extra_requirements: '减少文字，突出关键数据',
+      });
+    });
+  });
+
+  it('resolves description image URLs inside the edit dialog', () => {
+    mocks.store.currentProject.pages = [{
+      id: 'page-1',
+      page_id: 'page-1',
+      order_index: 0,
+      status: 'COMPLETED',
+      generated_image_path: '/files/page-1.png',
+      outline_content: { title: 'Slide 1', points: [] },
+      description_content: {
+        text: '<div><img src="/files/mineru/demo/imgs/source.jpg" alt="Image" /></div>',
+      },
+    }];
+
+    renderAt('/project/project-1/preview', <SlidePreview />);
+    fireEvent.click(screen.getByRole('button', { name: '页面属性：编辑当前页' }));
+
+    expect(screen.getByAltText('Desc image 1')).toHaveAttribute(
+      'src',
+      'http://127.0.0.1:5000/files/mineru/demo/imgs/source.jpg',
+    );
+  });
+
+  it('edits and saves outline and description from the page inspector', () => {
+    mocks.store.currentProject.pages = [{
+      id: 'page-1',
+      page_id: 'page-1',
+      order_index: 0,
+      status: 'COMPLETED',
+      outline_content: { title: '旧标题', points: ['旧要点'] },
+      description_content: { text: '旧描述' },
+    }];
+
+    renderAt('/project/project-1/preview', <SlidePreview />);
+
+    fireEvent.click(screen.getByRole('button', { name: '编辑大纲' }));
+    fireEvent.change(screen.getByRole('textbox', { name: '页面大纲标题' }), { target: { value: '新标题' } });
+    fireEvent.change(screen.getByRole('textbox', { name: '页面大纲要点' }), { target: { value: '新要点 1\n新要点 2' } });
+    fireEvent.click(within(screen.getByTestId('preview-page-outline')).getByRole('button', { name: '保存' }));
+    expect(mocks.store.updatePageLocal).toHaveBeenCalledWith('page-1', {
+      outline_content: { title: '新标题', points: ['新要点 1', '新要点 2'] },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '编辑描述' }));
+    fireEvent.change(screen.getByRole('textbox', { name: '页面描述内容' }), { target: { value: '新描述' } });
+    fireEvent.click(within(screen.getByTestId('preview-page-description')).getByRole('button', { name: '保存' }));
+    expect(mocks.store.updatePageLocal).toHaveBeenCalledWith('page-1', {
+      description_content: { text: '新描述' },
+    });
+  });
+
+  it('keeps the image edit footer visible while the modal content scrolls', () => {
+    mocks.store.currentProject.pages = [{
+      id: 'page-1',
+      page_id: 'page-1',
+      order_index: 0,
+      status: 'COMPLETED',
+      generated_image_path: '/files/page-1.png',
+      outline_content: { title: 'Slide 1', points: [] },
+      description_content: { text: 'Desc 1' },
+    }];
+
+    renderAt('/project/project-1/preview', <SlidePreview />);
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }));
+
+    expect(screen.getByTestId('edit-page-footer')).toHaveClass('sticky', 'bottom-0');
   });
 
   it('pauses active image generation when leaving the preview page', () => {
@@ -364,10 +539,13 @@ describe('EasySlide internal workflow chrome', () => {
     renderAt('/project/project-1/preview', <SlidePreview />);
 
     fireEvent.click(screen.getByRole('button', { name: '图片生成设置' }));
+    fireEvent.click(screen.getByText('高级设置'));
     fireEvent.change(screen.getByLabelText('生成并发'), { target: { value: '2' } });
-    fireEvent.change(screen.getByLabelText('图片生成密度'), { target: { value: 'rich' } });
-    fireEvent.change(screen.getByLabelText('图片风格'), { target: { value: 'tech' } });
-    fireEvent.change(screen.getByLabelText('图片风格补充要求'), { target: { value: '蓝绿色科技感' } });
+    fireEvent.change(screen.getByLabelText('视觉密度'), { target: { value: 'rich' } });
+    fireEvent.change(screen.getByLabelText('视觉风格'), { target: { value: 'tech' } });
+    fireEvent.change(screen.getByLabelText('PPT 构图安全区'), { target: { value: 'text-left' } });
+    fireEvent.click(screen.getByRole('radio', { name: '纪实' }));
+    fireEvent.change(screen.getByLabelText('特殊视觉要求'), { target: { value: '蓝绿色科技感' } });
     fireEvent.click(screen.getByLabelText('使用模板约束'));
     fireEvent.click(screen.getByRole('button', { name: '保存图片生成设置' }));
     fireEvent.click(screen.getByRole('button', { name: '开始生成 (1)' }));
@@ -380,10 +558,31 @@ describe('EasySlide internal workflow chrome', () => {
           useTemplate: false,
           density: 'rich',
           style: 'tech',
+          composition: 'text-left',
+          restraint: 'documentary',
           customPrompt: '蓝绿色科技感',
         },
       );
     });
+  }, 15_000);
+
+  it('shows quality reminders for conflicting image prompt requirements', () => {
+    renderAt('/project/project-1/preview', <SlidePreview />);
+
+    fireEvent.click(screen.getByRole('button', { name: '图片生成设置' }));
+    fireEvent.click(screen.getByText('高级设置'));
+    fireEvent.change(screen.getByLabelText('视觉风格'), { target: { value: 'photo' } });
+    fireEvent.change(screen.getByLabelText('PPT 构图安全区'), { target: { value: 'text-left' } });
+    fireEvent.click(screen.getByRole('radio', { name: '纪实' }));
+    fireEvent.change(screen.getByLabelText('特殊视觉要求'), {
+      target: { value: 'cinematic neon ultra-detailed flat illustration，主体在左侧' },
+    });
+
+    expect(screen.getByRole('status')).toHaveTextContent('生成质量提醒');
+    expect(screen.getByRole('status')).toHaveTextContent('高渲染词');
+    expect(screen.getByRole('status')).toHaveTextContent('真实商业摄影');
+    expect(screen.getByRole('status')).toHaveTextContent('纪实');
+    expect(screen.getByRole('status')).toHaveTextContent('左文右图');
   });
 
   it('keeps image generation settings scoped to the current project', async () => {
@@ -395,7 +594,6 @@ describe('EasySlide internal workflow chrome', () => {
     mocks.store.currentProject = {
       ...mocks.store.currentProject,
       id: 'project-1',
-      project_id: 'project-1',
       pages: [{
         id: 'page-1',
         page_id: 'page-1',
@@ -409,8 +607,8 @@ describe('EasySlide internal workflow chrome', () => {
     const first = renderAt('/project/project-1/preview', <SlidePreview />);
     fireEvent.click(screen.getByRole('button', { name: '图片生成设置' }));
     fireEvent.change(screen.getByLabelText('生成并发'), { target: { value: '2' } });
-    fireEvent.change(screen.getByLabelText('图片生成密度'), { target: { value: 'rich' } });
-    fireEvent.change(screen.getByLabelText('图片风格'), { target: { value: 'tech' } });
+    fireEvent.change(screen.getByLabelText('视觉密度'), { target: { value: 'rich' } });
+    fireEvent.change(screen.getByLabelText('视觉风格'), { target: { value: 'tech' } });
     fireEvent.click(screen.getByRole('button', { name: '保存图片生成设置' }));
     first.unmount();
 
@@ -418,7 +616,6 @@ describe('EasySlide internal workflow chrome', () => {
     mocks.store.currentProject = {
       ...mocks.store.currentProject,
       id: 'project-2',
-      project_id: 'project-2',
       pages: [{
         id: 'page-2',
         page_id: 'page-2',
@@ -440,11 +637,13 @@ describe('EasySlide internal workflow chrome', () => {
           useTemplate: true,
           density: 'standard',
           style: 'theme',
+          composition: 'auto',
+          restraint: 'strong',
           customPrompt: '',
         },
       );
     });
-  });
+  }, 15_000);
 
   it('migrates legacy global image generation settings into the current project once', async () => {
     const endpoints = await import('@/api/endpoints');
@@ -462,7 +661,6 @@ describe('EasySlide internal workflow chrome', () => {
     mocks.store.currentProject = {
       ...mocks.store.currentProject,
       id: 'legacy-project',
-      project_id: 'legacy-project',
       pages: [{
         id: 'legacy-page',
         page_id: 'legacy-page',
@@ -484,6 +682,8 @@ describe('EasySlide internal workflow chrome', () => {
           useTemplate: false,
           density: 'rich',
           style: 'tech',
+          composition: 'auto',
+          restraint: 'strong',
           customPrompt: '旧版设置',
         },
       );
@@ -563,10 +763,10 @@ describe('EasySlide internal workflow chrome', () => {
     await waitFor(() => {
       expect(mocks.store.generateImages).toHaveBeenCalledWith(
         ['page-failed'],
-        { maxWorkers: 4, useTemplate: true, density: 'standard', style: 'theme', customPrompt: '' },
+        { maxWorkers: 4, useTemplate: true, density: 'standard', style: 'theme', composition: 'auto', restraint: 'strong', customPrompt: '' },
       );
     });
-  });
+  }, 15_000);
 
   it('shows image generation progress below the main preview canvas', () => {
     mocks.store.currentProject.pages = [{
@@ -587,7 +787,77 @@ describe('EasySlide internal workflow chrome', () => {
     renderAt('/project/project-1/preview', <SlidePreview />);
 
     const progress = screen.getByText('正在生成 1 / 3');
-    expect(progress.closest('main')).not.toBeNull();
+    expect(progress.closest('footer')).not.toBeNull();
+  });
+
+  it('opens image quality details and locates the affected page', async () => {
+    const endpoints = await import('@/api/endpoints');
+    vi.mocked(endpoints.getSettings).mockResolvedValueOnce({
+      data: { image_resolution: '2K' },
+    } as any);
+    mocks.store.currentProject.pages = [
+      {
+        id: 'page-1',
+        page_id: 'page-1',
+        order_index: 0,
+        status: 'COMPLETED',
+        generated_image_path: '/files/page-1.png',
+        outline_content: { title: '封面', points: [] },
+        description_content: { text: 'Desc 1' },
+      },
+      {
+        id: 'page-2',
+        page_id: 'page-2',
+        order_index: 1,
+        status: 'COMPLETED',
+        generated_image_path: '/files/page-2.png',
+        outline_content: { title: '质量问题页', points: [] },
+        description_content: { text: 'Desc 2' },
+      },
+    ];
+    mocks.store.imageQualityReport = {
+      total: 2,
+      completed: 2,
+      quality_summary: { checked: 2, passed: 1, warnings: 1 },
+      pages: [{
+        page_id: 'page-2',
+        status: 'completed',
+        qa: {
+          status: 'warning',
+          width: 1024,
+          height: 1024,
+          issues: ['resolution_mismatch'],
+        },
+      }],
+    };
+
+    renderAt('/project/project-1/preview', <SlidePreview />);
+
+    fireEvent.click(screen.getByRole('button', { name: '查看图片质量提醒，共 1 页' }));
+    const dialog = screen.getByRole('dialog', { name: '图片质量提醒' });
+    expect(dialog).toHaveTextContent('第 2 页 · 质量问题页');
+    expect(dialog).toHaveTextContent('实际尺寸：1024 × 1024 px');
+    expect(dialog).toHaveTextContent('图片分辨率与生成设置不一致');
+    expect(dialog).not.toHaveTextContent('resolution_mismatch');
+
+    fireEvent.click(within(dialog).getByRole('button', { name: '定位此页' }));
+
+    expect(within(screen.getByTestId('slide-preview-canvas')).getByRole('img')).toHaveAttribute(
+      'src',
+      expect.stringContaining('/files/page-2.png'),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '查看图片质量提醒，共 1 页' }));
+    const reopenedDialog = screen.getByRole('dialog', { name: '图片质量提醒' });
+    fireEvent.click(within(reopenedDialog).getByRole('button', { name: '重新生成' }));
+
+    await waitFor(() => {
+      expect(mocks.store.generatePageImage).toHaveBeenCalledWith(
+        'page-2',
+        true,
+        expect.objectContaining({ qualityIssues: ['resolution_mismatch'] }),
+      );
+    });
   });
 
   it('shows a retry action when the selected image page failed', async () => {
@@ -613,7 +883,7 @@ describe('EasySlide internal workflow chrome', () => {
       expect(mocks.store.generatePageImage).toHaveBeenCalledWith(
         'page-1',
         true,
-        { maxWorkers: 4, useTemplate: true, density: 'standard', style: 'theme', customPrompt: '' },
+        { maxWorkers: 4, useTemplate: true, density: 'standard', style: 'theme', composition: 'auto', restraint: 'strong', customPrompt: '' },
       );
     });
   });
@@ -656,7 +926,10 @@ describe('EasySlide internal workflow chrome', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '导出 导出' }));
     fireEvent.click(screen.getByRole('button', { name: '导出为 PPTX' }));
-    fireEvent.click(screen.getByRole('button', { name: '开始导出' }));
+    const startExportButton = screen.getByRole('button', { name: '开始导出' });
+    expect(startExportButton).toHaveClass('bg-[var(--app-primary-action)]');
+    expect(startExportButton).not.toHaveClass('bg-[var(--app-accent)]');
+    fireEvent.click(startExportButton);
 
     await waitFor(() => {
       expect(screen.getByText('导出任务面板')).toBeInTheDocument();
@@ -667,7 +940,7 @@ describe('EasySlide internal workflow chrome', () => {
       filename: '年度经营复盘.pptx',
     }));
     expect((window as any).electronAPI.saveDownload).not.toHaveBeenCalled();
-  });
+  }, 15_000);
 
   it.each([
     {
@@ -763,7 +1036,7 @@ describe('EasySlide internal workflow chrome', () => {
       description_content: { text: 'Desc 1' },
     }];
     vi.mocked(endpoints.getSettings).mockResolvedValueOnce({
-      data: { output_language: 'zh', elevenlabs_api_key_length: 0 },
+      data: { output_language: 'zh' },
     } as any);
     vi.mocked(endpoints.exportVideo).mockResolvedValueOnce({
       data: { task_id: 'video-task-1' },
@@ -774,10 +1047,16 @@ describe('EasySlide internal workflow chrome', () => {
     fireEvent.click(screen.getByRole('button', { name: '导出 导出' }));
     fireEvent.click(screen.getByRole('button', { name: '导出为讲解视频' }));
     await screen.findByText('讲解视频导出设置');
+    fireEvent.change(screen.getByLabelText('旁白模式'), { target: { value: 'dialogue' } });
+    expect(screen.queryByText('语音音色')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('option', { name: '晓晓（中文 · 女声）' })).toHaveLength(2);
+    expect(screen.getAllByRole('option', { name: 'Jenny（英文 · 女声）' })).toHaveLength(2);
     fireEvent.click(screen.getByRole('button', { name: '培训课程' }));
-    fireEvent.click(screen.getByLabelText(/启用画面动效/));
+    expect(screen.getByLabelText(/启用画面动效/)).toBeChecked();
     fireEvent.change(screen.getByLabelText('镜头动效风格'), { target: { value: 'pan' } });
-    fireEvent.click(screen.getByRole('button', { name: '开始导出' }));
+    const startVideoExportButton = screen.getByRole('button', { name: '开始导出' });
+    expect(startVideoExportButton).toHaveClass('bg-[var(--app-primary-action)]');
+    fireEvent.click(startVideoExportButton);
 
     await waitFor(() => {
       expect(endpoints.exportVideo).toHaveBeenCalledWith(
@@ -789,12 +1068,38 @@ describe('EasySlide internal workflow chrome', () => {
             preset: 'training',
             motion_intensity: 'standard',
           }),
+          narrationMode: 'dialogue',
+          speakers: expect.arrayContaining([
+            expect.objectContaining({ id: 'host' }),
+            expect.objectContaining({ id: 'expert' }),
+          ]),
         }),
       );
     });
+  }, 15_000);
+
+  it('closes narration video settings with Escape', () => {
+    mocks.store.currentProject.pages = [{
+      id: 'page-1',
+      page_id: 'page-1',
+      order_index: 0,
+      status: 'COMPLETED',
+      generated_image_path: '/files/page-1.png',
+      outline_content: { title: 'Slide 1', points: [] },
+      description_content: { text: 'Desc 1' },
+    }];
+    renderAt('/project/project-1/preview', <SlidePreview />);
+
+    fireEvent.click(screen.getByRole('button', { name: '导出 导出' }));
+    fireEvent.click(screen.getByRole('button', { name: '导出为讲解视频' }));
+    expect(screen.getByRole('dialog', { name: '讲解视频导出设置' })).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    expect(screen.queryByRole('dialog', { name: '讲解视频导出设置' })).not.toBeInTheDocument();
   });
 
-  it('shows backend ElevenLabs voice errors when enabling TTS fails', async () => {
+  it('loads Fish Audio voices and sends multi-speaker export options', async () => {
     const endpoints = await import('@/api/endpoints');
     mocks.store.currentProject.pages = [{
       id: 'page-1',
@@ -805,30 +1110,52 @@ describe('EasySlide internal workflow chrome', () => {
       outline_content: { title: 'Slide 1', points: [] },
       description_content: { text: 'Desc 1' },
     }];
-    vi.mocked(endpoints.getSettings).mockResolvedValueOnce({
-      data: { output_language: 'zh', elevenlabs_api_key_length: 1 },
-    } as any);
-    vi.mocked(endpoints.getElevenLabsVoices).mockRejectedValueOnce({
-      response: {
-        data: {
-          error: { message: 'ElevenLabs API Key 未配置' },
-        },
+    vi.mocked(endpoints.getFishAudioVoices).mockResolvedValueOnce({
+      data: {
+        voices: [
+          { id: 'fish-host', title: '主持人克隆声线', state: 'trained', languages: ['zh'], visibility: 'private' },
+          { id: 'fish-guest', title: '嘉宾克隆声线', state: 'trained', languages: ['zh'], visibility: 'private' },
+          { id: 'fish-third', title: '第三人克隆声线', state: 'trained', languages: ['zh'], visibility: 'private' },
+        ],
       },
-      message: 'Request failed with status code 400',
-    });
+    } as any);
+    vi.mocked(endpoints.exportVideo).mockResolvedValueOnce({ data: { task_id: 'fish-video-task' } } as any);
 
     renderAt('/project/project-1/preview', <SlidePreview />);
 
     fireEvent.click(screen.getByRole('button', { name: '导出 导出' }));
     fireEvent.click(screen.getByRole('button', { name: '导出为讲解视频' }));
-    fireEvent.click(await screen.findByRole('button', { name: '高级配置' }));
-    fireEvent.click(screen.getByLabelText('使用 ElevenLabs 语音合成'));
+    expect(screen.getByRole('dialog', { name: '讲解视频导出设置' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('radio', { name: 'Fish Audio s2.1-pro-free' }));
+
+    await waitFor(() => expect(screen.getByLabelText('Fish Audio 私有声线')).toHaveValue('fish-host'));
+    fireEvent.change(screen.getByLabelText('旁白模式'), { target: { value: 'dialogue' } });
+    fireEvent.click(screen.getByRole('button', { name: '添加角色' }));
+    expect(screen.getByLabelText('角色 3 私有声线')).toBeInTheDocument();
+    expect(screen.getByLabelText('自动匹配场景语气')).toBeChecked();
+    fireEvent.click(screen.getByLabelText('自动匹配场景语气'));
+    fireEvent.click(screen.getByRole('button', { name: '开始导出' }));
 
     await waitFor(() => {
-      expect(mocks.toastShow).toHaveBeenCalledWith({
-        message: 'ElevenLabs API Key 未配置',
-        type: 'error',
-      });
+      expect(endpoints.preflightExportVideo).toHaveBeenCalledWith('project-1', expect.objectContaining({
+        ttsProvider: 'fish_audio',
+        narrationMode: 'dialogue',
+        speakers: expect.arrayContaining([
+          expect.objectContaining({ voice: 'fish-host' }),
+          expect.objectContaining({ voice: 'fish-guest' }),
+          expect.objectContaining({ voice: 'fish-third' }),
+        ]),
+      }));
+      expect(endpoints.exportVideo).toHaveBeenCalledWith('project-1', expect.objectContaining({
+        ttsProvider: 'fish_audio',
+        autoEmotion: false,
+        narrationMode: 'dialogue',
+        speakers: expect.arrayContaining([
+          expect.objectContaining({ voice: 'fish-host' }),
+          expect.objectContaining({ voice: 'fish-guest' }),
+          expect.objectContaining({ voice: 'fish-third' }),
+        ]),
+      }));
     });
-  });
+  }, 15_000);
 });

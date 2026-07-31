@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cozyslide.local/schemas/scene-manifest.schema.json",
+  "title": "Scene Manifest",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "page_id",
+    "render_mode",
+    "width",
+    "height",
+    "visual_style",
+    "elements",
+    "fallback_preview_path",
+    "quality"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "page_id": {"type": "string", "minLength": 1},
+    "render_mode": {"enum": ["native", "image"]},
+    "width": {"const": 1920},
+    "height": {"const": 1080},
+    "visual_style": {
+      "type": "object",
+      "required": ["theme_id", "colors", "font_families"],
+      "properties": {
+        "theme_id": {"type": "string", "minLength": 1},
+        "colors": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "font_families": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
+      },
+      "additionalProperties": false
+    },
+    "elements": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/element"}
+    },
+    "fallback_preview_path": {"type": ["string", "null"]},
+    "quality": {
+      "type": "object",
+      "required": ["score", "warnings"],
+      "properties": {
+        "score": {"type": "number", "minimum": 0, "maximum": 1},
+        "warnings": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "element": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "role",
+        "bbox",
+        "z_index",
+        "asset_path",
+        "text",
+        "motion_capabilities"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "kind": {"enum": ["title", "body", "image", "number", "chart"]},
+        "role": {"enum": ["headline", "supporting", "visual", "evidence"]},
+        "bbox": {
+          "type": "array",
+          "prefixItems": [
+            {"type": "number", "minimum": 0},
+            {"type": "number", "minimum": 0},
+            {"type": "number", "exclusiveMinimum": 0},
+            {"type": "number", "exclusiveMinimum": 0}
+          ],
+          "minItems": 4,
+          "maxItems": 4
+        },
+        "z_index": {"type": "integer"},
+        "asset_path": {"type": ["string", "null"]},
+        "text": {"type": ["string", "null"]},
+        "motion_capabilities": {
+          "type": "array",
+          "items": {"enum": ["reveal", "highlight", "scale", "pan", "count"]},
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

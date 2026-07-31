@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 PACKAGE_CREDENTIAL_FIELDS = (
     "mineru_token",
     "baidu_api_key",
-    "elevenlabs_api_key",
 )
 
 

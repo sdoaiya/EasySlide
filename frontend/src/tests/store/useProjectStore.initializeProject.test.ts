@@ -147,6 +147,46 @@ describe('initializeProject - reference file association', () => {
     expect(localStorage.getItem('currentProjectId')).toBe('proj-001')
   })
 
+  it('should pass template visual settings when creating image projects', async () => {
+    const { result } = renderHook(() => useProjectStore())
+
+    await act(async () => {
+      await result.current.initializeProject(
+        'idea',
+        'Image visual project',
+        undefined,
+        undefined,
+        undefined,
+        '16:9',
+        'image',
+        undefined,
+        undefined,
+        {
+          density: 'standard',
+          style: 'theme',
+          composition: 'auto',
+          palette: 'enterprise_blue',
+          custom_palette: {},
+          chart_theme: 'consulting',
+          media_style: 'photo',
+          tone: 'research',
+          custom_prompt: '',
+          custom_counts: {},
+        }
+      )
+    })
+
+    expect(mockCreateProject).toHaveBeenCalledWith(expect.objectContaining({
+      render_mode: 'image',
+      native_image_settings: expect.objectContaining({
+        palette: 'enterprise_blue',
+        chart_theme: 'consulting',
+        media_style: 'photo',
+        tone: 'research',
+      }),
+    }))
+  })
+
   it('should not call associateFileToProject when no file IDs provided', async () => {
     const { result } = renderHook(() => useProjectStore())
 
@@ -155,6 +195,30 @@ describe('initializeProject - reference file association', () => {
     })
 
     expect(mockAssociateFileToProject).not.toHaveBeenCalled()
+  })
+
+  it('passes the selected initial content workspace to project creation', async () => {
+    const { result } = renderHook(() => useProjectStore())
+
+    await act(async () => {
+      await result.current.initializeProject(
+        'idea',
+        'Video-first project',
+        undefined,
+        undefined,
+        undefined,
+        '16:9',
+        'image',
+        'theme01',
+        undefined,
+        undefined,
+        'video',
+      )
+    })
+
+    expect(mockCreateProject).toHaveBeenCalledWith(expect.objectContaining({
+      initial_workspace: 'video',
+    }))
   })
 
   it('should not call associateFileToProject when empty array provided', async () => {

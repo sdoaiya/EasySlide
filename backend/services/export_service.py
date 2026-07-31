@@ -1566,6 +1566,11 @@ class ExportService:
             item.get('rendered') is True and item.get('font_size_calibrated') is True
             for item in text_attempts
         )
+        duplicate_text_regions_skipped = sum(
+            1 for item in render_results if item.get('render_decision') == 'duplicate_text_region_skipped'
+        )
+        manifest['quality_checks']['duplicate_text_regions_checked'] = True
+        manifest['duplicate_text_regions_skipped'] = duplicate_text_regions_skipped
         visual_ids = {item['id'] for item in manifest.get('visual_inventory', [])}
         manifest['quality_checks']['visual_inventory_matched'] = all(
             rendered_by_id.get(element_id, {}).get('rendered') is True
@@ -2445,6 +2450,7 @@ class ExportService:
             text_hint_font_sizes = {}
         if render_results is None:
             render_results = []
+        rendered_text_regions = set()
 
         def add_render_result(elem, decision, *, rendered, editable=False,
                               fallback_reason=None, editable_text_added=False,
@@ -2517,6 +2523,18 @@ class ExportService:
             return max(scored, key=lambda item: item[0])[1]
 
         def add_text_or_formula(elem, text, bbox_list, text_level='default', align='left'):
+            region_key = (str(text or "").strip(), tuple(round(float(value), 1) for value in bbox_list))
+            if region_key in rendered_text_regions:
+                return {
+                    'decision': 'duplicate_text_region_skipped',
+                    'rendered': False,
+                    'editable': False,
+                    'editable_text_added': False,
+                    'z_order': None,
+                    'fallback_reason': 'duplicate_text_and_bbox',
+                    'font_size_calibrated': True,
+                }
+            rendered_text_regions.add(region_key)
             text_style = text_styles_cache.get(elem.element_id)
             font_size_override = text_hint_font_sizes.get(elem.element_id)
             if text_style:

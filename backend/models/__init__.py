@@ -18,6 +18,7 @@ db = SQLAlchemy(
 
 from .project import Project
 from .page import Page
+from .narration_version import NarrationVersion
 from .task import Task
 from .user_template import UserTemplate
 from .page_image_version import PageImageVersion
@@ -25,6 +26,15 @@ from .material import Material
 from .reference_file import ReferenceFile
 from .settings import Settings
 from .user_style_template import UserStyleTemplate
+from .content_spine import ContentSpine
+from .project_workspace import ProjectWorkspace
+from .workspace_version import WorkspaceVersion
+from .content_sync_proposal import ContentSyncProposal
 
-__all__ = ['db', 'Project', 'Page', 'Task', 'UserTemplate', 'PageImageVersion', 'Material', 'ReferenceFile', 'Settings', 'UserStyleTemplate']
+__all__ = [
+    'db', 'Project', 'Page', 'NarrationVersion', 'Task', 'UserTemplate',
+    'PageImageVersion', 'Material', 'ReferenceFile', 'Settings',
+    'UserStyleTemplate', 'ContentSpine', 'ProjectWorkspace',
+    'WorkspaceVersion', 'ContentSyncProposal',
+]
 

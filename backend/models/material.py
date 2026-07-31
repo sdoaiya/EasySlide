@@ -19,6 +19,12 @@ class Material(db.Model):
     url = db.Column(db.String(500), nullable=False)  # URL accessible by the frontend
     caption = db.Column(db.String(500), nullable=True)  # AI-generated image description
     original_filename = db.Column(db.String(500), nullable=True)  # Original filename before renaming
+    media_kind = db.Column(db.String(20), nullable=False, default='image', server_default='image')
+    purpose = db.Column(db.String(30), nullable=False, default='image', server_default='image')
+    mime_type = db.Column(db.String(100), nullable=True)
+    duration_ms = db.Column(db.Integer, nullable=True)
+    source_note = db.Column(db.Text, nullable=True)
+    license_status = db.Column(db.String(30), nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -35,6 +41,12 @@ class Material(db.Model):
             'relative_path': self.relative_path,
             'caption': self.caption,
             'original_filename': self.original_filename,
+            'media_kind': self.media_kind or 'image',
+            'purpose': self.purpose or 'image',
+            'mime_type': self.mime_type,
+            'duration_ms': self.duration_ms,
+            'source_note': self.source_note,
+            'license_status': self.license_status,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }

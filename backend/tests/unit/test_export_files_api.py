@@ -3,12 +3,12 @@ import os
 from conftest import assert_error_response, assert_success_response
 
 
-def _create_project_with_export(app, filename="deck.pptx"):
+def _create_project_with_export(app, filename="deck.pptx", project_id="export-delete-project"):
     from models import db, Project
 
     with app.app_context():
         project = Project(
-            id="export-delete-project",
+            id=project_id,
             creation_type="idea",
             idea_prompt="test",
             template_style="default",
@@ -72,3 +72,44 @@ def test_export_root_rejects_project_id_escape(app):
 
     with app.app_context():
         assert _resolve_exports_root("..") is None
+
+
+def test_clear_export_cache_removes_only_internal_project_exports(client, app):
+    project_id, export_path = _create_project_with_export(app)
+    project_dir = os.path.join(app.config["UPLOAD_FOLDER"], project_id)
+    source_path = os.path.join(project_dir, "source.png")
+    user_export_path = os.path.join(app.config["UPLOAD_FOLDER"], "user-exports", "deck.pptx")
+    os.makedirs(os.path.dirname(user_export_path), exist_ok=True)
+    with open(source_path, "wb") as f:
+        f.write(b"source")
+    with open(user_export_path, "wb") as f:
+        f.write(b"downloaded copy")
+
+    response = client.delete("/api/projects/export-cache")
+
+    data = assert_success_response(response)["data"]
+    assert data == {
+        "deleted_files": 1,
+        "freed_bytes": len(b"export file"),
+        "cleared_projects": 1,
+        "skipped_active_projects": 0,
+    }
+    assert not os.path.exists(export_path)
+    assert os.path.exists(source_path)
+    assert os.path.exists(user_export_path)
+
+
+def test_clear_export_cache_skips_projects_with_active_export_tasks(client, app):
+    project_id, export_path = _create_project_with_export(app, project_id="active-export-project")
+    from models import db, Task
+
+    task = Task(project_id=project_id, task_type="EXPORT_VIDEO", status="PROCESSING")
+    db.session.add(task)
+    db.session.commit()
+
+    response = client.delete("/api/projects/export-cache")
+
+    data = assert_success_response(response)["data"]
+    assert data["deleted_files"] == 0
+    assert data["skipped_active_projects"] == 1
+    assert os.path.exists(export_path)

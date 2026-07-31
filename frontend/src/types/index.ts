@@ -34,6 +34,11 @@ export interface ImageVersion {
   image_url?: string;
   version_number: number;
   is_current: boolean;
+  scene_manifest_ref?: { page_id: string; path: string; sha256: string } | null;
+  scene_status?: 'missing' | 'building' | 'ready' | 'degraded' | 'failed';
+  scene_quality_score?: number | null;
+  scene_schema_version?: number | null;
+  scene_error?: string | null;
   created_at?: string;
 }
 
@@ -46,10 +51,22 @@ export interface Page {
   outline_content: OutlineContent | null;
   description_content?: DescriptionContent;
   narration_text?: string; // TTS 旁白文本
+  narration_segments?: NarrationSegment[];
+  narration_status?: string;
+  current_narration_version_id?: string | null;
+  narration_locked?: boolean;
+  narration_revision?: number;
   native_layout?: string;
   native_props?: Record<string, unknown>;
   generated_image_url?: string; // 后端返回 generated_image_url
   generated_image_path?: string; // 前端使用的别名
+  template_image_url?: string;
+  template_image_path?: string;
+  template_style_text?: string | null;
+  template_selection_role?: string | null;
+  template_selection_layout?: string | null;
+  template_selection_source?: string | null;
+  template_match_reason?: string | null;
   status: PageStatus;
   created_at?: string;
   updated_at?: string;
@@ -63,6 +80,222 @@ export interface NarrationConfig {
   presentation_topic: string;
   min_words: number;
   max_words: number;
+  narration_mode?: 'single' | 'dialogue';
+  speakers?: NarrationSpeaker[];
+}
+
+export interface NarrationSpeaker {
+  id: string;
+  name: string;
+  voice: string;
+  rate?: string;
+}
+
+export interface FishAudioVoice {
+  id: string;
+  title: string;
+  state: string;
+  languages: string[];
+  visibility: 'private' | 'public' | string;
+  author?: string | null;
+  like_count?: number;
+  task_count?: number;
+}
+
+export interface PronunciationEntry {
+  term: string;
+  pronunciation: string;
+}
+
+export interface NarrationPreferences {
+  quality_check: boolean;
+  strict_quality_check: boolean;
+  subtitle_timing: 'estimated' | 'asr';
+  emotion_director: {
+    intensity: 'gentle' | 'standard' | 'strong';
+    pace: 'slow' | 'normal' | 'fast';
+    pause: 'short' | 'normal' | 'long';
+    relationship: 'neutral' | 'host_guest' | 'mentor' | 'debate';
+    emotion?: 'curious' | 'emphasis' | 'confident' | 'calm' | 'warm' | 'excited';
+  };
+  page_overrides: Record<string, Partial<NarrationPreferences['emotion_director']>>;
+}
+
+export interface FishAudioVoiceAsset {
+  id: string;
+  name: string;
+  voice: string;
+  avatar: string;
+  rate: string;
+  language: string;
+  default_emotion: 'curious' | 'emphasis' | 'confident' | 'calm' | 'warm' | 'excited';
+  use_case: string;
+  synthetic: boolean;
+}
+
+export interface NarrationSegment {
+  segment_id?: string;
+  order?: number;
+  speaker_id: string;
+  text: string;
+  voice?: string;
+  rate?: string;
+  segment_index?: number;
+  delivery?: NarrationDelivery;
+}
+
+export type NarrationMode = 'single' | 'dialogue';
+export type NarrationVersionStatus = 'candidate' | 'applied' | 'archived';
+export type NarrationSourceType = 'manual' | 'ai_generated' | 'ai_polished' | 'converted' | 'legacy';
+export type NarrationPolicy = 'confirmed_only' | 'export_only_auto_fill' | 'allow_silent_pages';
+export type NarrationTimingQuality = 'word_exact' | 'segment_exact' | 'aligned' | 'estimated';
+
+export interface NarrationDelivery {
+  emotion?: string;
+  intensity?: number;
+  rate?: string;
+  pitch?: string;
+  pause_before_ms?: number;
+  pause_after_ms?: number;
+}
+
+export interface NarrationVersion {
+  id: string;
+  page_id: string;
+  version_number: number;
+  mode: NarrationMode;
+  language: string;
+  text: string;
+  segments: NarrationSegment[];
+  source_type: NarrationSourceType;
+  status: NarrationVersionStatus;
+  parent_version_id?: string | null;
+  ai_operation?: string | null;
+  ai_config?: Record<string, unknown>;
+  content_hash: string;
+  created_by: 'user' | 'ai' | 'migration' | string;
+  created_at?: string | null;
+}
+
+export interface NarrationPageSummary {
+  page_id: string;
+  order_index: number;
+  mode?: NarrationMode;
+  current_version_id?: string | null;
+  locked: boolean;
+  revision: number;
+  word_count: number;
+  estimated_seconds: number;
+  candidate_count: number;
+  narration_status?: string | null;
+  error?: string | null;
+}
+
+export interface ProjectNarrationSummary {
+  pages: NarrationPageSummary[];
+  total_pages: number;
+  confirmed_pages: number;
+  missing_pages: number;
+  candidate_pages: number;
+}
+
+export interface NarrationVersionsResponse {
+  page_id: string;
+  revision: number;
+  current_version_id?: string | null;
+  locked: boolean;
+  versions: NarrationVersion[];
+}
+
+export interface NarrationDiff {
+  changed: boolean;
+  before_text?: string;
+  after_text?: string;
+  additions?: number;
+  deletions?: number;
+}
+
+export interface NarrationCandidateResponse {
+  candidate: NarrationVersion;
+  diff: NarrationDiff;
+  quality_checks?: string[];
+  estimated_seconds?: number;
+}
+
+export interface NarrationPreviewTiming {
+  segment_id?: string;
+  start_ms: number;
+  end_ms: number;
+}
+
+export interface NarrationPreviewResult {
+  audio_url: string;
+  provider: 'edge' | 'fish_audio';
+  timing_quality: NarrationTimingQuality;
+  cache_hit: boolean;
+  duration_ms?: number;
+  timings?: NarrationPreviewTiming[];
+}
+
+export interface CreateNarrationVersionRequest {
+  baseRevision: number;
+  mode: NarrationMode;
+  language: string;
+  text: string;
+  segments?: NarrationSegment[];
+}
+
+export interface NarrationAiCandidateRequest {
+  operation: string;
+  baseVersionId?: string;
+  baseRevision: number;
+  selection?: { start: number; end: number };
+  instruction?: string;
+  generationConfig?: Record<string, unknown>;
+}
+
+export type NarrationAiJobScope = 'selected' | 'missing' | 'all_unlocked';
+export type NarrationAiJobStatus = 'PENDING' | 'PROCESSING' | 'RUNNING' | 'PAUSED' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+
+export interface NarrationAiJobRequest {
+  scope: NarrationAiJobScope;
+  pageIds?: string[];
+  operation: string;
+  instruction?: string;
+  selection?: { start: number; end: number };
+  generationConfig?: Record<string, unknown>;
+}
+
+export interface NarrationAiJobResult {
+  task_id: string;
+  status: NarrationAiJobStatus;
+  total: number;
+  completed: number;
+  failed: number;
+  skipped: number;
+  pages: Array<{
+    page_id: string;
+    status: 'candidate' | 'failed' | 'skipped';
+    candidate_id?: string;
+    reason?: string;
+  }>;
+}
+
+export interface NarrationPreviewDraft {
+  mode: NarrationMode;
+  language: string;
+  text: string;
+  segments?: NarrationSegment[];
+}
+
+export interface NarrationPreviewRequest {
+  versionId?: string;
+  draft?: NarrationPreviewDraft;
+  segmentId?: string;
+  ttsProvider: 'edge' | 'fish_audio';
+  voice?: string;
+  speakers?: NarrationSpeaker[];
+  autoEmotion?: boolean;
 }
 
 // 导出设置 - 组件提取方法
@@ -72,9 +305,105 @@ export type ExportExtractorMethod = 'mineru' | 'hybrid';
 export type ExportInpaintMethod = 'generative' | 'baidu' | 'hybrid';
 
 export type RenderMode = 'image' | 'native';
+export type ContentWorkspaceKind = 'ppt' | 'video' | 'podcast';
+export type ContentProjectEntry = 'spine' | ContentWorkspaceKind;
+export type WorkspaceState = 'uninitialized' | 'draft' | 'ready' | 'stale';
+export type PptWorkspaceStage = ProjectStatus;
+
+export interface ContentSpine {
+  id: string;
+  project_id: string;
+  revision: number;
+  status: 'draft' | 'confirmed';
+  content_hash: string;
+  document: Record<string, any>;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ProjectWorkspace {
+  id: string;
+  project_id: string;
+  kind: ContentWorkspaceKind;
+  state: WorkspaceState;
+  stage?: PptWorkspaceStage | null;
+  revision: number;
+  current_version_id?: string | null;
+  source_kind: 'spine' | 'ppt' | 'migration' | 'manual';
+  source_revision?: number | null;
+  settings: Record<string, any>;
+  document?: Record<string, any> | null;
+  cover_url?: string | null;
+}
+
+export interface ContentProject {
+  project_id: string;
+  project_title?: string | null;
+  lifecycle_state: 'active' | 'archived' | 'migration_failed';
+  last_workspace?: ContentProjectEntry | null;
+  project_settings: {
+    pronunciation_lexicon: PronunciationEntry[];
+    narration_preferences: NarrationPreferences;
+  };
+  spine: ContentSpine;
+  workspaces: ProjectWorkspace[];
+  pending_sync_count?: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface SyncDiffItem {
+  item_id: string;
+  path: string;
+  operation: 'add' | 'remove' | 'replace';
+  change_type: 'fact' | 'structure' | 'content';
+  before: unknown;
+  after: unknown;
+  source_ref?: string | null;
+}
+
+export interface ContentSyncProposal {
+  id: string;
+  project_id: string;
+  source_kind: ContentProjectEntry;
+  target_kind: ContentProjectEntry;
+  source_revision: number;
+  target_base_revision: number;
+  diff: { schema_version: 1; items: SyncDiffItem[] };
+  resolution: {
+    applied_item_ids: string[];
+    rejected_item_ids: string[];
+    target_revision: number;
+    applications: Array<{
+      item_ids: string[];
+      target_revision: number;
+      version_id?: string | null;
+    }>;
+  };
+  reason?: string | null;
+  status: 'pending' | 'partially_applied' | 'applied' | 'rejected' | 'stale';
+  created_at?: string | null;
+  resolved_at?: string | null;
+}
+
+export interface WorkspaceVersion {
+  id: string;
+  workspace_id: string;
+  revision: number;
+  document: Record<string, any>;
+  settings: Record<string, any>;
+  content_hash: string;
+  source_type: 'manual' | 'ai' | 'sync' | 'migration' | 'restore';
+  parent_version_id?: string | null;
+  created_at?: string | null;
+}
 export type NativeImageDensity = 'sparse' | 'standard' | 'rich' | 'custom';
 export type NativeImageStyle = 'theme' | 'photo' | '3d' | 'flat' | 'tech' | 'custom';
 export type NativeImageComposition = 'auto' | 'center' | 'text-left' | 'text-right' | 'full-bleed';
+export type NativeVisualPalette = 'default' | 'enterprise_blue' | 'teal' | 'black_gold' | 'orange_gray' | 'custom';
+export type NativeChartTheme = 'clean' | 'consulting' | 'contrast' | 'executive';
+export type NativeMediaStyle = 'auto' | 'photo' | 'illustration' | 'product' | 'none';
+export type NativeTone = 'strategy' | 'sales' | 'government' | 'technical' | 'research';
 export interface ProjectDashboardStats {
   total: number;
   completed: number;
@@ -86,6 +415,11 @@ export interface NativeImageSettings {
   density: NativeImageDensity;
   style: NativeImageStyle;
   composition: NativeImageComposition;
+  palette?: NativeVisualPalette;
+  custom_palette?: Partial<Record<'accent' | 'secondary' | 'surface' | 'text', string>>;
+  chart_theme?: NativeChartTheme;
+  media_style?: NativeMediaStyle;
+  tone?: NativeTone;
   custom_prompt: string;
   custom_counts: Record<string, number>;
 }
@@ -95,8 +429,11 @@ export interface ImageGenerationOptions {
   useTemplate?: boolean;
   density?: 'sparse' | 'standard' | 'rich';
   style?: 'theme' | 'business' | 'tech' | 'photo' | 'flat';
+  composition?: 'auto' | 'text-left' | 'text-right' | 'center' | 'full-bleed';
+  restraint?: 'standard' | 'strong' | 'documentary';
   customPrompt?: string;
   language?: 'zh' | 'ja' | 'en' | 'auto';
+  qualityIssues?: string[];
 }
 
 export interface ImageGenerationResponse {
@@ -157,9 +494,14 @@ export interface Project {
   native_theme?: string;
   native_image_settings?: NativeImageSettings;
   template_image_url?: string; // 后端返回 template_image_url
+  pronunciation_lexicon?: PronunciationEntry[];
+  narration_preferences?: NarrationPreferences;
   template_image_path?: string; // 前端使用的别名
   template_style?: string; // 风格描述文本（无模板图模式）
   template_pack_id?: string | null; // 内置模板包标识
+  schema_version?: number;
+  last_workspace?: ContentProjectEntry | null;
+  workspaces?: ProjectWorkspace[];
   // 导出设置
   export_extractor_method?: ExportExtractorMethod; // 组件提取方法
   export_inpaint_method?: ExportInpaintMethod; // 背景图获取方法
@@ -177,6 +519,8 @@ export interface Project {
 /**
  * 素材信息
  */
+export type MaterialMediaKind = 'image' | 'audio' | 'video' | 'transcript';
+
 export interface Material {
   id: string;
   project_id?: string | null;
@@ -190,6 +534,12 @@ export interface Material {
   source_filename?: string;
   name?: string;
   caption?: string | null;
+  media_kind?: MaterialMediaKind;
+  purpose?: string;
+  mime_type?: string | null;
+  duration_ms?: number | null;
+  source_note?: string | null;
+  license_status?: string | null;
 }
 
 // 任务状态
@@ -216,6 +566,7 @@ export interface Task {
 
 // 创建项目请求
 export interface CreateProjectRequest {
+  creation_type?: 'idea' | 'outline' | 'descriptions' | 'blank';
   idea_prompt?: string;
   outline_text?: string;
   description_text?: string;
@@ -225,6 +576,36 @@ export interface CreateProjectRequest {
   image_aspect_ratio?: string;
   render_mode?: RenderMode;
   native_theme?: string;
+  native_image_settings?: NativeImageSettings;
+  pronunciation_lexicon?: PronunciationEntry[];
+  narration_preferences?: NarrationPreferences;
+  initial_workspace?: ContentWorkspaceKind;
+}
+
+export interface NarrationQualityReport {
+  provider: 'fish_audio' | 'edge';
+  model: string;
+  characters: number;
+  requests: number;
+  duration_seconds: number;
+  elapsed_seconds: number;
+  retry_count: number;
+  quality_pages: Array<{
+    page_index: number;
+    similarity?: number;
+    matched?: boolean;
+    issues?: string[];
+    asr_duration?: number;
+    timing_quality?: NarrationTimingQuality;
+    audio_sha256?: string;
+    audio_timeline_sha256?: string;
+    motion_manifest_sha256?: string;
+    visual_renderer?: 'hyperframes' | 'browser_frames' | 'ken_burns' | 'static_frame';
+    fallback_from?: 'hyperframes' | 'browser_frames';
+    fallback_reason?: string;
+  }>;
+  warnings: string[];
+  render_snapshot?: { path: string; sha256: string } | null;
 }
 
 // API响应
@@ -242,6 +623,9 @@ export interface Settings {
   ai_provider_format: string;
   api_base_url?: string;
   api_key_length: number;
+  fish_audio_api_key_length: number;
+  fish_audio_model: 's2.1-pro-free' | string;
+  fish_audio_voice_assets?: FishAudioVoiceAsset[];
   image_resolution: string;
   image_aspect_ratio: string;
   max_description_workers: number;
@@ -262,6 +646,7 @@ export interface Settings {
   text_thinking_budget: number;
   enable_image_reasoning: boolean;
   image_thinking_budget: number;
+  enable_image_quality_control: boolean;
   baidu_api_key_length: number;
   // LazyLLM 配置
   text_model_source?: string;
@@ -280,10 +665,6 @@ export interface Settings {
   // OpenAI Codex OAuth
   openai_oauth_connected: boolean;
   openai_oauth_account_id?: string;
-  // ElevenLabs TTS
-  elevenlabs_enabled: boolean;
-  elevenlabs_api_key_length: number;
-  elevenlabs_voice_id?: string;
   created_at?: string;
   updated_at?: string;
 }

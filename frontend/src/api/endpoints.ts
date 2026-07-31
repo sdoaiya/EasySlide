@@ -1,6 +1,8 @@
 import { apiClient, getApiBaseUrl } from './client';
-import type { Project, Task, ApiResponse, CreateProjectRequest, Page, Material, NativeExportQualityReport, ProjectDashboardStats, ImageGenerationOptions, ImageGenerationResponse } from '@/types';
+import type { Project, Task, ApiResponse, CreateProjectRequest, Page, Material, NativeExportQualityReport, ProjectDashboardStats, ImageGenerationOptions, ImageGenerationResponse, FishAudioVoice, NarrationPreferences, PronunciationEntry, NarrationPolicy, NarrationVersion, ProjectNarrationSummary, NarrationVersionsResponse, NarrationCandidateResponse, NarrationPreviewResult, CreateNarrationVersionRequest, NarrationAiCandidateRequest, NarrationPreviewRequest, NarrationAiJobRequest, NarrationAiJobResult, NarrationAiJobStatus, ContentProject, ContentProjectEntry, ContentSpine, ContentSyncProposal, ContentWorkspaceKind, ProjectWorkspace, WorkspaceVersion } from '@/types';
 import type { Settings } from '../types/index';
+import type { NativeMotionSceneBundle, NativeSceneManifestRef } from '@/native-deck/exportNativeMotionBundle';
+import type { NativeSceneManifest } from '@/native-deck/nativeSceneAdapter';
 
 export type { Material };
 
@@ -23,7 +25,7 @@ export const verifyAccessCode = async (code: string): Promise<ApiResponse<{ vali
  */
 export const createProject = async (data: CreateProjectRequest): Promise<ApiResponse<Project>> => {
   // 根据输入类型确定 creation_type
-  let creation_type = 'idea';
+  let creation_type = data.creation_type || 'idea';
   if (data.description_text) {
     creation_type = 'descriptions';
   } else if (data.outline_text) {
@@ -40,6 +42,8 @@ export const createProject = async (data: CreateProjectRequest): Promise<ApiResp
     image_aspect_ratio: data.image_aspect_ratio,
     render_mode: data.render_mode,
     native_theme: data.native_theme,
+    native_image_settings: data.native_image_settings,
+    initial_workspace: data.initial_workspace,
   });
   return response.data;
 };
@@ -435,6 +439,8 @@ export const generateImages = async (
       use_template: options?.useTemplate,
       image_density: options?.density,
       image_style: options?.style,
+      image_composition: options?.composition,
+      image_restraint: options?.restraint,
       image_style_prompt: options?.customPrompt?.trim() || undefined,
     }
   );
@@ -461,7 +467,10 @@ export const generatePageImage = async (
       use_template: options?.useTemplate,
       image_density: options?.density,
       image_style: options?.style,
+      image_composition: options?.composition,
+      image_restraint: options?.restraint,
       image_style_prompt: options?.customPrompt?.trim() || undefined,
+      quality_issues: options?.qualityIssues?.length ? options.qualityIssues : undefined,
     }
   );
   return response.data;
@@ -541,6 +550,19 @@ export const setCurrentImageVersion = async (
   return response.data;
 };
 
+export const recoverPageImageScene = async (
+  projectId: string,
+  pageId: string,
+  versionId: string,
+  force = false
+): Promise<ApiResponse<{ task_id: string; status: string }>> => {
+  const response = await apiClient.post<ApiResponse<{ task_id: string; status: string }>>(
+    `/api/projects/${projectId}/pages/${pageId}/image-versions/${versionId}/recover-scene`,
+    { force }
+  );
+  return response.data;
+};
+
 // ===== 页面操作 =====
 
 /**
@@ -554,6 +576,294 @@ export const updatePage = async (
   const response = await apiClient.put<ApiResponse<Page>>(
     `/api/projects/${projectId}/pages/${pageId}`,
     data
+  );
+  return response.data;
+};
+
+export const getContentProject = async (projectId: string): Promise<ApiResponse<ContentProject>> => {
+  const response = await apiClient.get<ApiResponse<ContentProject>>(`/api/content-projects/${projectId}`);
+  return response.data;
+};
+
+export const confirmContentSpine = async (
+  projectId: string,
+  expectedRevision: number,
+): Promise<ApiResponse<ContentSpine>> => {
+  const response = await apiClient.post<ApiResponse<ContentSpine>>(
+    `/api/content-projects/${projectId}/spine/confirm`,
+    { expected_revision: expectedRevision },
+  );
+  return response.data;
+};
+
+export const initializeContentWorkspace = async (
+  projectId: string,
+  kind: ContentWorkspaceKind,
+  settings: Record<string, unknown> = {},
+): Promise<ApiResponse<{ project_id: string; workspace_kind: ContentWorkspaceKind; task_id: string; status: string }>> => {
+  const response = await apiClient.post(
+    `/api/content-projects/${projectId}/workspaces/${kind}/initialize`,
+    { settings },
+  );
+  return response.data;
+};
+
+export const setLastProjectEntry = async (
+  projectId: string,
+  entry: ContentProjectEntry,
+): Promise<ApiResponse<{ project_id: string; last_workspace: ContentProjectEntry }>> => {
+  const response = await apiClient.put(`/api/content-projects/${projectId}/last-workspace`, { entry });
+  return response.data;
+};
+
+export const initializeVideoWorkspaceFromPpt = async (
+  projectId: string,
+  settings: Record<string, unknown> = {},
+): Promise<ApiResponse<ProjectWorkspace>> => {
+  const response = await apiClient.post(
+    `/api/content-projects/${projectId}/workspaces/video/initialize-from-ppt`,
+    { settings },
+  );
+  return response.data;
+};
+
+export const handoffVideoWorkspaceFrames = async (
+  projectId: string,
+  frames: Blob[] | Blob[][],
+  pageIds: string[],
+): Promise<ApiResponse<{ attached: boolean }>> => {
+  const sequences = Array.isArray(frames[0]) ? frames as Blob[][] : (frames as Blob[]).map((frame) => [frame]);
+  const formData = new FormData();
+  formData.append('page_ids', JSON.stringify(pageIds));
+  formData.append('frame_counts', JSON.stringify(sequences.map((sequence) => sequence.length)));
+  sequences.flat().forEach((frame, index) => formData.append('frames', frame, `frame-${index + 1}.png`));
+  const response = await apiClient.post<ApiResponse<{ attached: boolean }>>(
+    `/api/content-projects/${projectId}/workspaces/video/browser-frames`,
+    formData,
+  );
+  return response.data;
+};
+
+export const updateContentWorkspace = async (
+  projectId: string,
+  kind: 'video' | 'podcast',
+  baseRevision: number,
+  document: Record<string, unknown>,
+  settings: Record<string, unknown>,
+): Promise<ApiResponse<{ workspace: ProjectWorkspace; version: WorkspaceVersion }>> => {
+  const response = await apiClient.put(
+    `/api/content-projects/${projectId}/workspaces/${kind}`,
+    { base_revision: baseRevision, document, settings },
+  );
+  return response.data;
+};
+
+export const proposeVideoToSpine = async (
+  projectId: string,
+  targetBaseRevision: number,
+): Promise<ApiResponse<ContentSyncProposal>> => {
+  const response = await apiClient.post(
+    `/api/content-projects/${projectId}/workspaces/video/propose-to-spine`,
+    { target_base_revision: targetBaseRevision },
+  );
+  return response.data;
+};
+
+export const exportVideoWorkspace = async (
+  projectId: string,
+  options: {
+    filename?: string;
+    voice?: string;
+    rate?: string;
+    enableKenBurns?: boolean;
+    renderProfile?: 'proof' | 'final';
+    sourceProofTaskId?: string;
+  } = {},
+): Promise<ApiResponse<{ task_id: string; workspace_version: number }>> => {
+  const response = await apiClient.post<ApiResponse<{ task_id: string; workspace_version: number }>>(
+    `/api/content-projects/${projectId}/workspaces/video/export`,
+    {
+      filename: options.filename,
+      voice: options.voice,
+      rate: options.rate,
+      enable_ken_burns: options.enableKenBurns,
+      render_profile: options.renderProfile,
+      source_proof_task_id: options.sourceProofTaskId,
+    },
+  );
+  return response.data;
+};
+
+export const proposePodcastToSpine = async (
+  projectId: string,
+  targetBaseRevision: number,
+): Promise<ApiResponse<ContentSyncProposal>> => {
+  const response = await apiClient.post(
+    `/api/content-projects/${projectId}/workspaces/podcast/propose-to-spine`,
+    { target_base_revision: targetBaseRevision },
+  );
+  return response.data;
+};
+
+export const exportPodcastWorkspace = async (
+  projectId: string,
+  options?: { filename?: string; format?: 'mp3' | 'wav' },
+): Promise<ApiResponse<{ task_id: string }>> => {
+  const response = await apiClient.post(`/api/content-projects/${projectId}/workspaces/podcast/export`, {
+    filename: options?.filename,
+    format: options?.format ?? 'mp3',
+  });
+  return response.data;
+};
+
+export const previewPodcastWorkspace = async (
+  projectId: string,
+  options: {
+    provider: 'edge' | 'fish_audio';
+    segmentId?: string;
+    voice?: string;
+    speed?: number;
+  },
+): Promise<ApiResponse<{
+  audio_url: string;
+  provider: 'edge' | 'fish_audio';
+  timing_quality: string;
+  cache_hit: boolean;
+}>> => {
+  let response;
+  try {
+    response = await apiClient.post<Blob>(
+      `/api/content-projects/${projectId}/workspaces/podcast/preview`,
+      {
+        provider: options.provider,
+        segment_id: options.segmentId,
+        voice: options.voice,
+        speed: options.speed,
+      },
+      { responseType: 'blob' },
+    );
+  } catch (error) {
+    const blob = (error as { response?: { data?: unknown } }).response?.data;
+    if (blob instanceof Blob && blob.type.includes('application/json')) {
+      const text = typeof blob.text === 'function' ? await blob.text() : await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsText(blob);
+      });
+      const payload = JSON.parse(text);
+      const message = payload?.error?.message || payload?.message;
+      if (message) throw new Error(message);
+    }
+    throw error;
+  }
+  return {
+    success: true,
+    message: '',
+    data: {
+      audio_url: URL.createObjectURL(response.data),
+      provider: (response.headers['x-tts-provider'] || options.provider) as 'edge' | 'fish_audio',
+      timing_quality: response.headers['x-timing-quality'] || 'estimated',
+      cache_hit: response.headers['x-cache-hit'] === 'true',
+    },
+  };
+};
+
+export const listContentSyncProposals = async (
+  projectId: string,
+): Promise<ApiResponse<{ proposals: ContentSyncProposal[] }>> => {
+  const response = await apiClient.get(`/api/content-projects/${projectId}/sync-proposals`);
+  return response.data;
+};
+
+export const applyContentSyncProposal = async (
+  projectId: string,
+  proposalId: string,
+  baseRevision: number,
+  selectedItemIds: string[],
+): Promise<ApiResponse<{ proposal: ContentSyncProposal }>> => {
+  const response = await apiClient.post(
+    `/api/content-projects/${projectId}/sync-proposals/${proposalId}/apply`,
+    { base_revision: baseRevision, selected_item_ids: selectedItemIds },
+  );
+  return response.data;
+};
+
+export const rejectContentSyncProposal = async (
+  projectId: string,
+  proposalId: string,
+  selectedItemIds: string[],
+): Promise<ApiResponse<ContentSyncProposal>> => {
+  const response = await apiClient.post(
+    `/api/content-projects/${projectId}/sync-proposals/${proposalId}/reject`,
+    { selected_item_ids: selectedItemIds },
+  );
+  return response.data;
+};
+
+export const listWorkspaceVersions = async (
+  projectId: string,
+  kind: ContentWorkspaceKind,
+): Promise<ApiResponse<{ workspace: ProjectWorkspace; versions: WorkspaceVersion[] }>> => {
+  const response = await apiClient.get(
+    `/api/content-projects/${projectId}/workspaces/${kind}/versions`,
+  );
+  return response.data;
+};
+
+export const restoreWorkspaceVersion = async (
+  projectId: string,
+  kind: ContentWorkspaceKind,
+  versionId: string,
+  baseRevision: number,
+): Promise<ApiResponse<{ workspace: ProjectWorkspace; version: WorkspaceVersion }>> => {
+  const response = await apiClient.post(
+    `/api/content-projects/${projectId}/workspaces/${kind}/versions/${versionId}/restore`,
+    { base_revision: baseRevision },
+  );
+  return response.data;
+};
+
+export const uploadPageTemplate = async (
+  projectId: string,
+  pageId: string,
+  templateImage: File
+): Promise<ApiResponse<Page>> => {
+  const formData = new FormData();
+  formData.append('template_image', templateImage);
+  const response = await apiClient.post<ApiResponse<Page>>(
+    `/api/projects/${projectId}/pages/${pageId}/template`,
+    formData
+  );
+  return response.data;
+};
+
+export const updatePageTemplate = async (
+  projectId: string,
+  pageId: string,
+  templateStyleText: string
+): Promise<ApiResponse<Page>> => {
+  const response = await apiClient.patch<ApiResponse<Page>>(
+    `/api/projects/${projectId}/pages/${pageId}/template`,
+    { template_style_text: templateStyleText }
+  );
+  return response.data;
+};
+
+export const clearPageTemplate = async (projectId: string, pageId: string): Promise<ApiResponse<Page>> => {
+  const response = await apiClient.delete<ApiResponse<Page>>(
+    `/api/projects/${projectId}/pages/${pageId}/template`
+  );
+  return response.data;
+};
+
+export const autoMatchPageTemplates = async (
+  projectId: string,
+  overwriteExisting = true
+): Promise<ApiResponse<{ matched: number; skipped: number; pages: Array<{ page_id: string; role: string; layout: string; source: string; reason: string }> }>> => {
+  const response = await apiClient.post<ApiResponse<{ matched: number; skipped: number; pages: Array<{ page_id: string; role: string; layout: string; source: string; reason: string }> }>>(
+    `/api/projects/${projectId}/pages/templates/auto-match`,
+    { overwrite_existing: overwriteExisting }
   );
   return response.data;
 };
@@ -641,11 +951,12 @@ export const resumeTask = async (projectId: string, taskId: string): Promise<Api
 export const updatePageNarration = async (
   projectId: string,
   pageId: string,
-  narrationText: string
+  narrationText: string,
+  narrationSegments?: Array<{ speaker_id: string; text: string; voice?: string; rate?: string }>
 ): Promise<ApiResponse<Page>> => {
   const response = await apiClient.put<ApiResponse<Page>>(
     `/api/projects/${projectId}/pages/${pageId}/narration`,
-    { narration_text: narrationText }
+    { narration_text: narrationText, narration_segments: narrationSegments }
   );
   return response.data;
 };
@@ -680,6 +991,184 @@ export const generateAllNarrations = async (
     { language: lang, force_regenerate: forceRegenerate || false }
   );
   return response.data;
+};
+
+export const getProjectNarrations = async (
+  projectId: string,
+): Promise<ApiResponse<ProjectNarrationSummary>> => {
+  const response = await apiClient.get<ApiResponse<ProjectNarrationSummary>>(
+    `/api/projects/${projectId}/narrations`,
+  );
+  return response.data;
+};
+
+export const getPageNarrationVersions = async (
+  projectId: string,
+  pageId: string,
+): Promise<ApiResponse<NarrationVersionsResponse>> => {
+  const response = await apiClient.get<ApiResponse<NarrationVersionsResponse>>(
+    `/api/projects/${projectId}/pages/${pageId}/narration/versions`,
+  );
+  return response.data;
+};
+
+export const createPageNarrationVersion = async (
+  projectId: string,
+  pageId: string,
+  data: CreateNarrationVersionRequest,
+): Promise<ApiResponse<{ version: NarrationVersion; revision: number }>> => {
+  const response = await apiClient.post<ApiResponse<{ version: NarrationVersion; revision: number }>>(
+    `/api/projects/${projectId}/pages/${pageId}/narration/versions`,
+    {
+      base_revision: data.baseRevision,
+      mode: data.mode,
+      language: data.language,
+      text: data.text,
+      segments: data.segments,
+    },
+  );
+  return response.data;
+};
+
+export const applyNarrationVersion = async (
+  projectId: string,
+  pageId: string,
+  versionId: string,
+  baseRevision: number,
+): Promise<ApiResponse<{ version: NarrationVersion; revision: number }>> => {
+  const response = await apiClient.post<ApiResponse<{ version: NarrationVersion; revision: number }>>(
+    `/api/projects/${projectId}/pages/${pageId}/narration/versions/${versionId}/apply`,
+    { base_revision: baseRevision },
+  );
+  return response.data;
+};
+
+export const discardNarrationCandidate = async (
+  projectId: string,
+  pageId: string,
+  versionId: string,
+): Promise<ApiResponse<{ version_id: string }>> => {
+  const response = await apiClient.delete<ApiResponse<{ version_id: string }>>(
+    `/api/projects/${projectId}/pages/${pageId}/narration/candidates/${versionId}`,
+  );
+  return response.data;
+};
+
+export const setPageNarrationLock = async (
+  projectId: string,
+  pageId: string,
+  locked: boolean,
+  baseRevision: number,
+): Promise<ApiResponse<{ locked: boolean; revision: number }>> => {
+  const response = await apiClient.put<ApiResponse<{ locked: boolean; revision: number }>>(
+    `/api/projects/${projectId}/pages/${pageId}/narration/lock`,
+    { locked, base_revision: baseRevision },
+  );
+  return response.data;
+};
+
+export const createNarrationAiCandidate = async (
+  projectId: string,
+  pageId: string,
+  data: NarrationAiCandidateRequest,
+): Promise<ApiResponse<NarrationCandidateResponse>> => {
+  const response = await apiClient.post<ApiResponse<NarrationCandidateResponse>>(
+    `/api/projects/${projectId}/pages/${pageId}/narration/ai-candidates`,
+    {
+      operation: data.operation,
+      base_version_id: data.baseVersionId,
+      base_revision: data.baseRevision,
+      selection: data.selection,
+      instruction: data.instruction,
+      generation_config: data.generationConfig,
+    },
+  );
+  return response.data;
+};
+
+export const createNarrationAiJob = async (
+  projectId: string,
+  data: NarrationAiJobRequest,
+): Promise<ApiResponse<{ task_id: string; status: NarrationAiJobStatus; total: number }>> => {
+  const response = await apiClient.post<ApiResponse<{ task_id: string; status: NarrationAiJobStatus; total: number }>>(
+    `/api/projects/${projectId}/narrations/ai-jobs`,
+    {
+      scope: data.scope,
+      page_ids: data.pageIds,
+      operation: data.operation,
+      instruction: data.instruction,
+      selection: data.selection,
+      generation_config: data.generationConfig,
+    },
+  );
+  return response.data;
+};
+
+export const getNarrationAiJobResult = async (
+  projectId: string,
+  taskId: string,
+): Promise<ApiResponse<NarrationAiJobResult>> => {
+  const response = await apiClient.get<ApiResponse<NarrationAiJobResult>>(
+    `/api/projects/${projectId}/narrations/ai-jobs/${taskId}/result`,
+  );
+  return response.data;
+};
+
+const controlNarrationAiJob = async (projectId: string, taskId: string, action: 'pause' | 'resume' | 'cancel') => {
+  const response = await apiClient.post<ApiResponse<{ status: NarrationAiJobStatus }>>(
+    `/api/projects/${projectId}/narrations/ai-jobs/${taskId}/${action}`,
+  );
+  return response.data;
+};
+
+export const pauseNarrationAiJob = (projectId: string, taskId: string) => controlNarrationAiJob(projectId, taskId, 'pause');
+export const resumeNarrationAiJob = (projectId: string, taskId: string) => controlNarrationAiJob(projectId, taskId, 'resume');
+export const cancelNarrationAiJob = (projectId: string, taskId: string) => controlNarrationAiJob(projectId, taskId, 'cancel');
+
+export const previewPageNarration = async (
+  projectId: string,
+  pageId: string,
+  options: NarrationPreviewRequest,
+): Promise<ApiResponse<NarrationPreviewResult>> => {
+  let response;
+  try {
+    response = await apiClient.post<Blob>(
+      `/api/projects/${projectId}/pages/${pageId}/narration/preview`,
+      {
+        version_id: options.versionId,
+        draft: options.draft,
+        segment_id: options.segmentId,
+        tts_provider: options.ttsProvider,
+        voice: options.voice,
+        speakers: options.speakers,
+        auto_emotion: options.autoEmotion,
+      },
+      { responseType: 'blob' },
+    );
+  } catch (error) {
+    const blob = (error as { response?: { data?: unknown } }).response?.data;
+    if (blob instanceof Blob && blob.type.includes('application/json')) {
+      const text = typeof blob.text === 'function' ? await blob.text() : await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsText(blob);
+      });
+      const payload = JSON.parse(text);
+      const message = payload?.error?.message || payload?.message;
+      if (message) throw new Error(message);
+    }
+    throw error;
+  }
+  return {
+    success: true,
+    data: {
+      audio_url: URL.createObjectURL(response.data),
+      provider: (response.headers['x-tts-provider'] || options.ttsProvider) as NarrationPreviewResult['provider'],
+      timing_quality: (response.headers['x-timing-quality'] || 'estimated') as NarrationPreviewResult['timing_quality'],
+      cache_hit: response.headers['x-cache-hit'] === 'true',
+    },
+  };
 };
 
 // ===== 导出 =====
@@ -811,6 +1300,16 @@ export const deleteExport = async (
   return response.data;
 };
 
+export const clearExportCache = async (): Promise<ApiResponse<{
+  deleted_files: number;
+  freed_bytes: number;
+  cleared_projects: number;
+  skipped_active_projects: number;
+}>> => {
+  const response = await apiClient.delete('/api/projects/export-cache');
+  return response.data;
+};
+
 /**
  * 导出为讲解视频（异步任务）
  * @param projectId 项目ID
@@ -826,6 +1325,14 @@ export const exportVideo = async (
     speed?: number;
     language?: string;
     generateNarration?: boolean;
+    narrationMode?: 'single' | 'dialogue';
+    speakers?: Array<{ id: string; name: string; voice: string; rate?: string }>;
+    ttsProvider?: 'edge' | 'fish_audio';
+    autoEmotion?: boolean;
+    pronunciationLexicon?: PronunciationEntry[];
+    narrationPreferences?: NarrationPreferences;
+    narrationPolicy?: NarrationPolicy;
+    narrationVersionMap?: Record<string, string>;
     enableKenBurns?: boolean;
     kenBurnsStyle?: 'auto' | 'zoom' | 'pan';
     includeNoImagePages?: boolean;
@@ -862,9 +1369,134 @@ export const exportVideo = async (
     include_no_image_pages: options?.includeNoImagePages ?? false,
     presentation_topic: options?.presentationTopic,
     narration_config: options?.narrationConfig,
+    narration_mode: options?.narrationMode,
+    speakers: options?.speakers,
+    tts_provider: options?.ttsProvider ?? 'edge',
+    auto_emotion: options?.autoEmotion ?? true,
+    pronunciation_lexicon: options?.pronunciationLexicon,
+    narration_preferences: options?.narrationPreferences,
+    narration_policy: options?.narrationPolicy,
+    narration_version_map: options?.narrationVersionMap,
     director_config: options?.directorConfig,
   });
   return response.data;
+};
+
+export const addPagesBatch = async (
+  projectId: string,
+  pages: Array<Pick<Page, 'part' | 'outline_content' | 'description_content'>>,
+): Promise<ApiResponse<{ pages: Page[] }>> => {
+  const response = await apiClient.post<ApiResponse<{ pages: Page[] }>>(
+    `/api/projects/${projectId}/pages/batch`,
+    { pages },
+  );
+  return response.data;
+};
+
+export interface VideoExportPreflight {
+  can_export: boolean;
+  errors: string[];
+  warnings: string[];
+  total_pages: number;
+  pages_with_narration: number;
+  missing_images: number[];
+  missing_narration: number[];
+  scene_animation: {
+    enabled: boolean;
+    animated_pages: number[];
+    fallback_pages: Array<{
+      page: number;
+      level: 'L0' | 'L1' | 'L2' | 'L3' | 'L4';
+      reason: string;
+      strategy: 'ken_burns_or_static';
+    }>;
+    page_levels: Array<{
+      page: number;
+      level: 'L0' | 'L1' | 'L2' | 'L3' | 'L4';
+      reason: string;
+    }>;
+    errors: Array<{ page: number; reason: string }>;
+  };
+  estimate: {
+    characters: number;
+    estimated_seconds: number;
+    requests: number;
+    roles: number;
+    free_model_notice: string;
+  };
+}
+
+export const preflightExportVideo = async (
+  projectId: string,
+  options?: {
+    pageIds?: string[];
+    generateNarration?: boolean;
+    includeNoImagePages?: boolean;
+    ttsProvider?: 'edge' | 'fish_audio';
+    voice?: string;
+    narrationMode?: 'single' | 'dialogue';
+    speakers?: Array<{ id: string; name: string; voice: string; rate?: string }>;
+    speed?: number;
+    narrationPolicy?: NarrationPolicy;
+    narrationVersionMap?: Record<string, string>;
+  },
+): Promise<ApiResponse<VideoExportPreflight>> => {
+  const response = await apiClient.post<ApiResponse<VideoExportPreflight>>(`/api/projects/${projectId}/export/video/preflight`, {
+    page_ids: options?.pageIds,
+    generate_narration: options?.generateNarration ?? true,
+    include_no_image_pages: options?.includeNoImagePages ?? false,
+    tts_provider: options?.ttsProvider ?? 'edge',
+    voice: options?.voice,
+    narration_mode: options?.narrationMode,
+    speakers: options?.speakers,
+    speed: options?.speed,
+    narration_policy: options?.narrationPolicy,
+    narration_version_map: options?.narrationVersionMap,
+  });
+  return response.data;
+};
+
+export const previewFishNarration = async (
+  projectId: string,
+  options: {
+    text: string;
+    voice: string;
+    speed?: number;
+    autoEmotion?: boolean;
+    pronunciationLexicon?: PronunciationEntry[];
+  },
+): Promise<Blob> => {
+  const response = await apiClient.post(
+    `/api/projects/${projectId}/narration/preview`,
+    {
+      text: options.text,
+      voice: options.voice,
+      speed: options.speed ?? 1,
+      auto_emotion: options.autoEmotion ?? true,
+      pronunciation_lexicon: options.pronunciationLexicon,
+    },
+    { responseType: 'blob' },
+  );
+  return response.data;
+};
+
+export const createNativeSceneManifestRefs = async (
+  sceneManifests: NativeSceneManifest[],
+  pageIds: string[],
+): Promise<NativeSceneManifestRef[]> => {
+  if (sceneManifests.length !== pageIds.length || sceneManifests.some((manifest, index) => manifest.page_id !== pageIds[index])) {
+    throw new Error('场景清单顺序与导出页面不一致');
+  }
+  if (!globalThis.crypto?.subtle) throw new Error('当前环境不支持场景清单完整性校验');
+
+  return Promise.all(sceneManifests.map(async (manifest) => {
+    const content = new TextEncoder().encode(JSON.stringify(sortJsonValue(manifest)));
+    const digest = await globalThis.crypto.subtle.digest('SHA-256', content);
+    return {
+      page_id: manifest.page_id,
+      sha256: Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join(''),
+    };
+  }));
 };
 
 export const exportNativeVideo = async (
@@ -879,11 +1511,68 @@ export const exportNativeVideo = async (
     transition?: 'cut' | 'fade' | 'push';
     page_pause_ms?: number;
   },
+  narrationOptions?: {
+    ttsProvider?: 'edge' | 'fish_audio';
+    voice?: string;
+    rate?: string;
+    speed?: number;
+    language?: string;
+    generateNarration?: boolean;
+    narrationMode?: 'single' | 'dialogue';
+    speakers?: Array<{ id: string; name: string; voice: string; rate?: string }>;
+    narrationConfig?: {
+      speaker_persona?: string;
+      target_audience?: string;
+      speech_tone?: string;
+      presentation_topic?: string;
+      min_words?: number;
+      max_words?: number;
+    };
+    autoEmotion?: boolean;
+    pronunciationLexicon?: PronunciationEntry[];
+    narrationPreferences?: NarrationPreferences;
+    narrationPolicy?: NarrationPolicy;
+    narrationVersionMap?: Record<string, string>;
+  },
+  sceneManifests?: NativeSceneManifest[],
+  bundles?: NativeMotionSceneBundle[],
 ): Promise<ApiResponse<{ task_id: string }>> => {
   const formData = new FormData();
   formData.append('page_ids', JSON.stringify(pageIds));
   if (filename) formData.append('filename', filename);
   if (directorConfig) formData.append('director_config', JSON.stringify(directorConfig));
+  formData.append('tts_provider', narrationOptions?.ttsProvider ?? 'edge');
+  if (narrationOptions?.voice) formData.append('voice', narrationOptions.voice);
+  if (narrationOptions?.rate) formData.append('rate', narrationOptions.rate);
+  if (narrationOptions?.speed !== undefined) formData.append('speed', String(narrationOptions.speed));
+  if (narrationOptions?.language) formData.append('language', narrationOptions.language);
+  formData.append('generate_narration', String(narrationOptions?.generateNarration ?? true));
+  if (narrationOptions?.narrationMode) formData.append('narration_mode', narrationOptions.narrationMode);
+  if (narrationOptions?.speakers) formData.append('speakers', JSON.stringify(narrationOptions.speakers));
+  if (narrationOptions?.narrationConfig) formData.append('narration_config', JSON.stringify(narrationOptions.narrationConfig));
+  formData.append('auto_emotion', String(narrationOptions?.autoEmotion ?? true));
+  if (narrationOptions?.pronunciationLexicon) formData.append('pronunciation_lexicon', JSON.stringify(narrationOptions.pronunciationLexicon));
+  if (narrationOptions?.narrationPreferences) formData.append('narration_preferences', JSON.stringify(narrationOptions.narrationPreferences));
+  if (narrationOptions?.narrationPolicy) formData.append('narration_policy', narrationOptions.narrationPolicy);
+  if (narrationOptions?.narrationVersionMap) formData.append('narration_version_map', JSON.stringify(narrationOptions.narrationVersionMap));
+  if (sceneManifests !== undefined) {
+    if (sceneManifests.length !== pageIds.length || sceneManifests.some((manifest, index) => manifest.page_id !== pageIds[index])) {
+      throw new Error('场景清单顺序与导出页面不一致');
+    }
+    formData.append('scene_manifests', JSON.stringify(sceneManifests));
+  }
+  if (bundles !== undefined) {
+    if (sceneManifests === undefined) throw new Error('上传原生场景包时必须同时提供场景清单');
+    if (bundles.length !== pageIds.length) throw new Error('场景包数量与导出页面不一致');
+    if (bundles.some((bundle, index) => bundle.page_id !== pageIds[index])) {
+      throw new Error('场景包顺序与导出页面不一致');
+    }
+    const refs = await createNativeSceneManifestRefs(sceneManifests, pageIds);
+    if (bundles.some((bundle, index) => bundle.scene_manifest_sha256 !== refs[index].sha256)) {
+      throw new Error('场景包哈希与场景清单不一致');
+    }
+    formData.append('native_scene_bundles', JSON.stringify(bundles));
+  }
   const sequences = Array.isArray(frames[0]) ? frames as Blob[][] : (frames as Blob[]).map((frame) => [frame]);
   formData.append('frame_counts', JSON.stringify(sequences.map((sequence) => sequence.length)));
   sequences.flat().forEach((frame, index) => formData.append('frames', frame, `frame-${index + 1}.png`));
@@ -1001,7 +1690,8 @@ export const processMaterialImage = async (
  *   - If not provided: Get all materials via /api/materials
  */
 export const listMaterials = async (
-  projectId?: string
+  projectId?: string,
+  filters?: { mediaKind?: Material['media_kind'] | Material['media_kind'][]; purpose?: string }
 ): Promise<ApiResponse<{ materials: Material[]; count: number }>> => {
   let url: string;
 
@@ -1015,6 +1705,14 @@ export const listMaterials = async (
     // Get materials for specific project
     url = `/api/projects/${projectId}/materials`;
   }
+
+  const query: string[] = [];
+  if (filters?.mediaKind) {
+    const mediaKind = Array.isArray(filters.mediaKind) ? filters.mediaKind.join(',') : filters.mediaKind;
+    query.push(`media_kind=${encodeURIComponent(mediaKind)}`);
+  }
+  if (filters?.purpose) query.push(`purpose=${encodeURIComponent(filters.purpose)}`);
+  if (query.length) url += `${url.includes('?') ? '&' : '?'}${query.join('&')}`;
 
   const response = await apiClient.get<ApiResponse<{ materials: Material[]; count: number }>>(url);
   return response.data;
@@ -1363,20 +2061,15 @@ export const getSettings = async (): Promise<ApiResponse<Settings>> => {
   return response.data;
 };
 
-export const getElevenLabsVoices = async (): Promise<ApiResponse<{ voices: { id: string; name: string; category: string; languages?: string[]; accent?: string | null }[] }>> => {
-  const response = await apiClient.get('/api/settings/elevenlabs-voices');
-  return response.data;
-};
-
 /**
  * 更新系统设置
  */
 export const updateSettings = async (
-  data: Partial<Omit<Settings, 'id' | 'api_key_length' | 'mineru_token_length' | 'baidu_api_key_length' | 'elevenlabs_api_key_length' | 'created_at' | 'updated_at'>> & {
+  data: Partial<Omit<Settings, 'id' | 'api_key_length' | 'fish_audio_api_key_length' | 'fish_audio_model' | 'mineru_token_length' | 'baidu_api_key_length' | 'created_at' | 'updated_at'>> & {
     api_key?: string;
+    fish_audio_api_key?: string;
     mineru_token?: string;
     baidu_api_key?: string;
-    elevenlabs_api_key?: string;
     text_api_key?: string;
     image_api_key?: string;
     image_caption_api_key?: string;
@@ -1392,6 +2085,69 @@ export const updateSettings = async (
  */
 export const resetSettings = async (): Promise<ApiResponse<Settings>> => {
   const response = await apiClient.post<ApiResponse<Settings>>('/api/settings/reset');
+  return response.data;
+};
+
+export const verifyFishAudio = async (
+  apiKey?: string,
+): Promise<ApiResponse<{ connected: boolean; model: string; voice_count_sampled: number }>> => {
+  const response = await apiClient.post('/api/settings/fish-audio/verify', { api_key: apiKey || undefined });
+  return response.data;
+};
+
+function sortJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJsonValue);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => item !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => [key, sortJsonValue(item)]),
+  );
+}
+
+export const getFishAudioVoices = async (params?: { scope?: 'private' | 'public' | 'all'; sortBy?: string; pageSize?: number }): Promise<ApiResponse<{ voices: FishAudioVoice[] }>> => {
+  const response = await apiClient.get('/api/settings/fish-audio/voices', {
+    params: {
+      scope: params?.scope,
+      sort_by: params?.sortBy,
+      page_size: params?.pageSize,
+    },
+  });
+  return response.data;
+};
+
+export const getFishAudioCapabilities = async (): Promise<ApiResponse<{
+  model: string;
+  tts: boolean;
+  asr: boolean;
+  voice_clone: boolean;
+  multi_speaker: boolean;
+  voice_design: { available: boolean; reason: string };
+}>> => {
+  const response = await apiClient.get('/api/settings/fish-audio/capabilities');
+  return response.data;
+};
+
+export const createFishAudioVoice = async (data: {
+  title: string;
+  files: File[];
+  transcripts?: string[];
+  consentConfirmed: boolean;
+}): Promise<ApiResponse<FishAudioVoice>> => {
+  const form = new FormData();
+  form.append('title', data.title);
+  form.append('consent_confirmed', String(data.consentConfirmed));
+  data.files.forEach((file, index) => {
+    form.append('voices', file);
+    form.append('texts', data.transcripts?.[index] || '');
+  });
+  const response = await apiClient.post('/api/settings/fish-audio/voices', form);
+  return response.data;
+};
+
+export const deleteFishAudioVoice = async (voiceId: string): Promise<ApiResponse<{ id: string }>> => {
+  const response = await apiClient.delete(`/api/settings/fish-audio/voices/${encodeURIComponent(voiceId)}`);
   return response.data;
 };
 

@@ -12,6 +12,7 @@ const utilsI18n = {
       completed: '已完成',
       pendingImages: '待生成图片',
       pendingDesc: '待生成描述',
+      inProgress: '进行中',
       pageNum: '第 {{num}} 页',
       pageHeading: '## 第 {{num}} 页: {{title}}',
       chapter: '章节',
@@ -32,6 +33,7 @@ const utilsI18n = {
       completed: 'Completed',
       pendingImages: 'Pending Images',
       pendingDesc: 'Pending Descriptions',
+      inProgress: 'In Progress',
       pageNum: 'Page {{num}}',
       pageHeading: '## Page {{num}}: {{title}}',
       chapter: 'Chapter',
@@ -83,6 +85,11 @@ export const getProjectTitle = (project: Project): string => {
  * 获取第一页图片URL
  */
 export const getFirstPageImage = (project: Project): string | null => {
+  const preferredWorkspace = project.workspaces?.find((workspace) => workspace.kind === project.last_workspace);
+  const workspaceCover = preferredWorkspace?.cover_url
+    || project.workspaces?.find((workspace) => workspace.cover_url)?.cover_url;
+  if (workspaceCover) return getImageUrl(workspaceCover, project.updated_at);
+
   if (!project.pages || project.pages.length === 0) {
     return null;
   }
@@ -111,11 +118,33 @@ export const formatDate = (dateString: string): string => {
   });
 };
 
-type StatusKey = 'notStarted' | 'completed' | 'pendingImages' | 'pendingDesc';
+type StatusKey = 'notStarted' | 'completed' | 'pendingImages' | 'pendingDesc' | 'inProgress';
+
+const getMediaWorkspaceStatusKey = (project: Project): StatusKey | null => {
+  const mediaKinds = new Set(['video', 'podcast']);
+  const mediaWorkspaces = project.workspaces?.filter((workspace) => (
+    mediaKinds.has(workspace.kind) && workspace.state !== 'uninitialized'
+  )) || [];
+  if (mediaWorkspaces.length === 0) return null;
+
+  const workspace = mediaWorkspaces.find((item) => item.kind === project.last_workspace) || mediaWorkspaces[0];
+  if (workspace.state === 'ready' || workspace.stage === 'COMPLETED' || workspace.stage === 'NATIVE_DECK_GENERATED') {
+    return 'completed';
+  }
+  if (workspace.stage === 'DESCRIPTIONS_GENERATED' || workspace.stage === 'GENERATING_IMAGES') {
+    return 'pendingImages';
+  }
+  if (workspace.stage === 'OUTLINE_GENERATED' || workspace.stage === 'GENERATING_DESCRIPTIONS') {
+    return 'pendingDesc';
+  }
+  return 'inProgress';
+};
 
 const getStatusKey = (project: Project): StatusKey => {
+  const mediaStatus = getMediaWorkspaceStatusKey(project);
+  if (mediaStatus) return mediaStatus;
   if (!project.pages || project.pages.length === 0) return 'notStarted';
-  if (project.pages.some(p => p.generated_image_path)) return 'completed';
+  if (project.pages.some(p => p.generated_image_path || p.generated_image_url || p.status === 'COMPLETED' || p.status === 'NATIVE_GENERATED')) return 'completed';
   if (project.pages.some(p => p.description_content)) return 'pendingImages';
   return 'pendingDesc';
 };
@@ -128,10 +157,11 @@ export const getStatusText = (project: Project): string => {
 };
 
 const statusColorMap: Record<StatusKey, string> = {
-  completed: 'text-green-600 bg-green-50',
-  pendingImages: 'text-yellow-600 bg-yellow-50',
-  pendingDesc: 'text-blue-600 bg-blue-50',
-  notStarted: 'text-gray-600 bg-gray-50',
+  completed: 'text-[var(--app-index-green)] bg-[var(--app-surface-muted)]',
+  pendingImages: 'text-[var(--app-index-yellow)] bg-[var(--app-surface-muted)]',
+  pendingDesc: 'text-[var(--app-text-secondary)] bg-[var(--app-surface-muted)]',
+  inProgress: 'text-[var(--app-text-secondary)] bg-[var(--app-surface-muted)]',
+  notStarted: 'text-[var(--app-text-tertiary)] bg-[var(--app-surface-muted)]',
 };
 
 /**
@@ -144,14 +174,35 @@ export const getStatusColor = (project: Project): string => {
 export const getNativeDeckTaskStorageKey = (projectId: string): string =>
   `nativeDeckGenerationTask:${projectId}`;
 
+const getPptWorkspace = (project: Project) =>
+  project.workspaces?.find((workspace) => workspace.kind === 'ppt');
+
 /**
  * 获取项目路由路径
  */
 export const getProjectRoute = (project: Project): string => {
   const projectId = project.id || project.project_id;
   if (!projectId) return '/';
+  if (project.last_workspace === 'spine') return `/project/${projectId}/spine`;
+  if (project.workspaces?.length) {
+    const initialized = new Set(project.workspaces
+      .filter((workspace) => workspace.state !== 'uninitialized')
+      .map((workspace) => workspace.kind));
+    const workspace = project.last_workspace && initialized.has(project.last_workspace)
+      ? project.last_workspace
+      : initialized.has('ppt') ? 'ppt'
+        : initialized.has('video') ? 'video'
+          : initialized.has('podcast') ? 'podcast'
+            : 'spine';
+    if (workspace !== 'ppt') return `/project/${projectId}/${workspace}`;
+  }
 
-  if (project.render_mode === 'native') {
+  const pptWorkspace = getPptWorkspace(project);
+  const pptSettings = pptWorkspace?.settings;
+  const renderMode = pptSettings?.render_mode || project.render_mode;
+  const pptStage = pptWorkspace?.stage || project.status;
+
+  if (renderMode === 'native') {
     const hasNativeLayout = project.pages?.some(page => page.native_layout);
     const hasNativeTask = (() => {
       try {
@@ -160,29 +211,38 @@ export const getProjectRoute = (project: Project): string => {
         return false;
       }
     })();
-    const hasNativeGenerationStatus = project.status === 'NATIVE_DECK_GENERATED'
+    const hasNativeGenerationStatus = pptStage === 'NATIVE_DECK_GENERATED'
       || project.pages?.some(page =>
         page.status === 'NATIVE_GENERATED'
         || page.status === 'GENERATING'
         || page.status === 'QUEUED'
       );
     if (hasNativeLayout || hasNativeTask || hasNativeGenerationStatus) {
-      return `/project/${projectId}/preview`;
+      return `/project/${projectId}/ppt/editor`;
+    }
+  }
+
+  if (project.creation_type === 'renovation' || project.creation_type === 'ppt_renovation') {
+    const hasGeneratedOutput = project.pages?.some(page =>
+      page.status === 'COMPLETED' || page.status === 'GENERATING' || page.status === 'QUEUED'
+    );
+    if (project.pages?.some(page => page.description_content) && !hasGeneratedOutput) {
+      return `/project/${projectId}/ppt/detail`;
     }
   }
   
   if (project.pages && project.pages.length > 0) {
-    const hasImages = project.pages.some(p => p.generated_image_path);
+    const hasImages = project.pages.some(p => p.generated_image_path || p.generated_image_url || p.status === 'COMPLETED' || p.status === 'NATIVE_GENERATED');
     if (hasImages) {
-      return `/project/${projectId}/preview`;
+      return `/project/${projectId}/ppt/editor`;
     }
     const hasDescriptions = project.pages.some(p => p.description_content);
     if (hasDescriptions) {
-      return `/project/${projectId}/detail`;
+      return `/project/${projectId}/ppt/detail`;
     }
-    return `/project/${projectId}/outline`;
+    return `/project/${projectId}/ppt/outline`;
   }
-  return `/project/${projectId}/outline`;
+  return `/project/${projectId}/ppt/outline`;
 };
 
 // ========== Markdown 导出/导入 ==========

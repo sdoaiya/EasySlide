@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { ExportTasksPanel } from '@/components/shared/ExportTasksPanel';
 import { useExportTasksStore } from '@/store/useExportTasksStore';
 
@@ -84,5 +84,56 @@ describe('ExportTasksPanel pause controls', () => {
       '/files/project-a/exports/年度经营复盘.pptx',
       '年度经营复盘.pptx',
     );
+  });
+
+  it('opens export warnings with the editorial surface backdrop', async () => {
+    act(() => useExportTasksStore.setState({
+      restoreActiveTasks: vi.fn(),
+      tasks: [{
+        id: 'warn',
+        taskId: 'task-warn',
+        projectId: 'project-a',
+        type: 'video',
+        status: 'COMPLETED',
+        createdAt: new Date().toISOString(),
+        progress: { total: 1, completed: 1, warnings: ['缺少封面页'] },
+      }],
+    }));
+
+    const { container } = render(<ExportTasksPanel projectId="project-a" />);
+
+    fireEvent.click(screen.getByRole('button', { name: /1 条警告|1 warnings/ }));
+
+    expect(await screen.findByText(/导出警告|Export Warnings/)).toBeInTheDocument();
+    expect(container.innerHTML).not.toContain('bg-black/50');
+    expect(container.innerHTML).toContain('bg-[color:var(--app-surface)]/80');
+  });
+
+  it('closes warning dialog on Escape and restores focus to its trigger', async () => {
+    act(() => useExportTasksStore.setState({
+      restoreActiveTasks: vi.fn(),
+      tasks: [{
+        id: 'warn-focus',
+        taskId: 'task-warn-focus',
+        projectId: 'project-a',
+        type: 'video',
+        status: 'COMPLETED',
+        createdAt: new Date().toISOString(),
+        progress: { total: 1, completed: 1, warnings: ['缺少封面页'] },
+      }],
+    }));
+
+    render(<ExportTasksPanel projectId="project-a" />);
+    const trigger = screen.getByRole('button', { name: /1 条警告|1 warnings/ });
+    trigger.focus();
+    fireEvent.click(trigger);
+
+    const dialog = await screen.findByRole('dialog', { name: /导出警告|Export Warnings/ });
+    const closeButton = within(dialog).getByRole('button', { name: /关闭 导出警告|Close Export Warnings/ });
+    expect(closeButton).toHaveClass('h-10', 'w-10');
+    await waitFor(() => expect(document.activeElement).toBe(closeButton));
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
+    expect(document.activeElement).toBe(trigger);
   });
 });

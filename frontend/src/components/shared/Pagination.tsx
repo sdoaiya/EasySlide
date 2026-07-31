@@ -44,15 +44,15 @@ export const Pagination: React.FC<PaginationProps> = ({
   };
 
   const buttonBase =
-    'flex items-center justify-center rounded-lg transition-all duration-200 select-none';
+    'flex items-center justify-center rounded-[var(--app-radius-control)] transition-[background-color,color,border-color,box-shadow] duration-150 select-none';
   const btnSize = 'w-9 h-9 text-sm';
 
   return (
     <nav className="flex items-center justify-center gap-1.5" aria-label="Pagination">
       {/* Previous */}
       <button
-        className={cn(buttonBase, btnSize, 'text-gray-500 dark:text-foreground-tertiary', {
-          'hover:bg-gray-100 dark:hover:bg-background-hover cursor-pointer': currentPage > 1,
+        className={cn(buttonBase, btnSize, 'text-[var(--app-text-tertiary)]', {
+          'hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text)] cursor-pointer': currentPage > 1,
           'opacity-30 cursor-not-allowed': currentPage <= 1,
         })}
         onClick={() => onPageChange(currentPage - 1)}
@@ -67,7 +67,7 @@ export const Pagination: React.FC<PaginationProps> = ({
         page === 'ellipsis' ? (
           <span
             key={`ellipsis-${idx}`}
-            className="w-9 h-9 flex items-center justify-center text-gray-400 dark:text-foreground-tertiary text-sm select-none"
+            className="flex h-9 w-9 select-none items-center justify-center text-sm text-[var(--app-text-tertiary)]"
           >
             ...
           </span>
@@ -75,8 +75,8 @@ export const Pagination: React.FC<PaginationProps> = ({
           <button
             key={page}
             className={cn(buttonBase, btnSize, 'font-medium', {
-              'bg-blue-600 text-white shadow-sm': page === currentPage,
-              'text-gray-700 dark:text-foreground-secondary hover:bg-gray-100 dark:hover:bg-background-hover':
+              'bg-[var(--app-primary-action)] text-[var(--app-surface)] shadow-[var(--app-shadow-control)]': page === currentPage,
+              'text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text)]':
                 page !== currentPage,
             })}
             onClick={() => onPageChange(page)}
@@ -89,8 +89,8 @@ export const Pagination: React.FC<PaginationProps> = ({
 
       {/* Next */}
       <button
-        className={cn(buttonBase, btnSize, 'text-gray-500 dark:text-foreground-tertiary', {
-          'hover:bg-gray-100 dark:hover:bg-background-hover cursor-pointer': currentPage < totalPages,
+        className={cn(buttonBase, btnSize, 'text-[var(--app-text-tertiary)]', {
+          'hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text)] cursor-pointer': currentPage < totalPages,
           'opacity-30 cursor-not-allowed': currentPage >= totalPages,
         })}
         onClick={() => onPageChange(currentPage + 1)}
@@ -105,7 +105,7 @@ export const Pagination: React.FC<PaginationProps> = ({
         <select
           value={pageSize}
           onChange={(e) => onPageSizeChange(Number(e.target.value))}
-          className="ml-3 h-9 px-2 text-sm rounded-lg border border-gray-200 dark:border-border-primary bg-white dark:bg-background-secondary text-gray-700 dark:text-foreground-secondary cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="ml-3 h-9 cursor-pointer rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-sm text-[var(--app-text-secondary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)]"
         >
           {pageSizeOptions.map((size) => (
             <option key={size} value={size}>{size} {pageSizeLabel}</option>

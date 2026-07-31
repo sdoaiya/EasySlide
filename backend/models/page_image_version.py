@@ -17,6 +17,12 @@ class PageImageVersion(db.Model):
     image_path = db.Column(db.String(500), nullable=False)
     version_number = db.Column(db.Integer, nullable=False)  # 版本号，从1开始递增
     is_current = db.Column(db.Boolean, nullable=False, default=False)  # 是否为当前使用的版本
+    scene_manifest_path = db.Column(db.String(500), nullable=True)
+    scene_manifest_sha256 = db.Column(db.String(64), nullable=True)
+    scene_status = db.Column(db.String(20), nullable=False, default='missing')
+    scene_quality_score = db.Column(db.Float, nullable=True)
+    scene_schema_version = db.Column(db.Integer, nullable=True)
+    scene_error = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     
     # Relationships
@@ -38,6 +44,18 @@ class PageImageVersion(db.Model):
             'image_url': f'/files/{project_id}/pages/{self.image_path.split("/")[-1]}' if self.image_path and project_id else None,
             'version_number': self.version_number,
             'is_current': self.is_current,
+            'scene_manifest_ref': (
+                {
+                    'page_id': self.page_id,
+                    'path': self.scene_manifest_path,
+                    'sha256': self.scene_manifest_sha256,
+                }
+                if self.scene_manifest_path and self.scene_manifest_sha256 else None
+            ),
+            'scene_status': self.scene_status or 'missing',
+            'scene_quality_score': self.scene_quality_score,
+            'scene_schema_version': self.scene_schema_version,
+            'scene_error': self.scene_error,
             'created_at': created_at_str,
         }
     

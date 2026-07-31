@@ -258,9 +258,19 @@ class FileParserService:
     def _parse_pdf_file(self, file_path: str, filename: str) -> tuple[Optional[str], Optional[str], Optional[str], Optional[str], int]:
         """Parse PDF files with built-in PaddleOCR-VL."""
         try:
-            result = create_paddle_ocr_provider().recognize(file_path, max_wait_time=600)
+            import uuid
+
+            extract_id = str(uuid.uuid4())[:8]
+            upload_folder = self._upload_folder or Path(__file__).resolve().parent.parent.parent / 'uploads'
+            image_dir = upload_folder / 'mineru_files' / extract_id
+            result = create_paddle_ocr_provider().recognize(
+                file_path,
+                max_wait_time=600,
+                image_dir=image_dir,
+                image_url_prefix=f'/files/mineru/{extract_id}',
+            )
             markdown_content = result.get('markdown_content') or result.get('recognized_text') or ''
-            return None, markdown_content, None, None, 0
+            return None, markdown_content, extract_id, None, 0
         except Exception as e:
             error_msg = f"Failed to parse PDF with PaddleOCR: {str(e)}"
             logger.error(error_msg, exc_info=True)

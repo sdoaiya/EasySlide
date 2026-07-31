@@ -5,7 +5,19 @@ from pathlib import Path
 
 BACKEND_DIR = Path.cwd() / 'backend'
 
-hiddenimports = []
+hiddenimports = [
+    'controllers.project_controller',
+    'controllers.page_controller',
+    'controllers.template_controller',
+    'controllers.export_controller',
+    'controllers.file_controller',
+    'controllers.material_controller',
+    'controllers.native_deck_controller',
+    'controllers.settings_controller',
+    'controllers.reference_file_controller',
+]
+for name in ['controllers']:
+    hiddenimports += collect_submodules(name)
 for name in [
     'flask',
     'flask_cors',
@@ -37,7 +49,6 @@ for name in [
     'volcengine',
     'edge_tts',
     'cv2',
-    'elevenlabs',
     'onnxruntime',
 ]:
     try:
@@ -53,6 +64,7 @@ a = Analysis(
         (str(BACKEND_DIR / 'fonts'), 'fonts'),
         (str(BACKEND_DIR / 'migrations'), 'migrations'),
         (str(BACKEND_DIR.parent / 'assets'), 'assets'),
+        (str(BACKEND_DIR.parent / 'shared' / 'content'), 'shared/content'),
         (str(BACKEND_DIR.parent / 'shared' / 'native-deck'), 'shared/native-deck'),
         (str(BACKEND_DIR.parent / 'frontend' / 'public' / 'template-packs' / 'gorden'), 'template-packs/gorden'),
     ],

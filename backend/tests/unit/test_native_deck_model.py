@@ -32,6 +32,11 @@ def test_existing_project_defaults_to_image_mode(client):
             'density': 'standard',
             'style': 'theme',
             'composition': 'auto',
+            'palette': 'default',
+            'custom_palette': {},
+            'chart_theme': 'clean',
+            'media_style': 'auto',
+            'tone': 'strategy',
             'custom_prompt': '',
             'custom_counts': {},
         }
@@ -54,6 +59,11 @@ def test_native_image_settings_round_trip(client):
             'density': 'rich',
             'style': '3d',
             'composition': 'text-left',
+            'palette': 'default',
+            'custom_palette': {},
+            'chart_theme': 'clean',
+            'media_style': 'auto',
+            'tone': 'strategy',
             'custom_prompt': '主体居中，背景简洁',
             'custom_counts': {'page-1': 2},
         }

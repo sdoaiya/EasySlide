@@ -15,9 +15,9 @@ PORTABLE_SECRET_PREFIX = "bundle:v1:"
 _PORTABLE_BUNDLE_MATERIAL = b"EasySlide internal deployment bundle v1"
 SECRET_FIELD_NAMES = (
     "api_key",
+    "fish_audio_api_key",
     "mineru_token",
     "baidu_api_key",
-    "elevenlabs_api_key",
     "lazyllm_api_keys",
     "text_api_key",
     "image_api_key",

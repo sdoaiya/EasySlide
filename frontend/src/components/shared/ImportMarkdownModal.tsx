@@ -107,12 +107,12 @@ export const ImportMarkdownModal: React.FC<ImportMarkdownModalProps> = ({
   return (
     <Modal isOpen={isOpen} onClose={handleClose} title={title} size="lg">
       <div className="space-y-4">
-        <p className="text-sm leading-6 text-gray-600 dark:text-foreground-secondary">
+        <p className="text-sm leading-6 text-[var(--app-text-secondary)]">
           {description}
         </p>
 
         <div className="space-y-2">
-          <div className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-foreground-secondary">
+          <div className="flex items-center gap-2 text-sm font-medium text-[var(--app-text-secondary)]">
             <FileText size={16} />
             {pasteLabel}
           </div>
@@ -123,20 +123,20 @@ export const ImportMarkdownModal: React.FC<ImportMarkdownModalProps> = ({
               if (error) setError('');
             }}
             placeholder={pastePlaceholder}
-            className="min-h-[200px] resize-none rounded-xl border-gray-200 bg-gray-50 font-mono text-sm dark:border-border-primary dark:bg-background-primary"
+            className="min-h-[200px] resize-none rounded-[var(--app-radius-card)] border-[var(--app-border)] bg-[var(--app-surface-muted)] font-mono text-sm"
           />
         </div>
 
         <div className="space-y-2">
-          <div className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-foreground-secondary">
+          <div className="flex items-center gap-2 text-sm font-medium text-[var(--app-text-secondary)]">
             <Upload size={16} />
             {uploadLabel}
           </div>
           <label
-            className={`flex min-h-[180px] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed px-6 py-8 text-center transition-all ${
+            className={`flex min-h-[180px] cursor-pointer flex-col items-center justify-center rounded-[var(--app-radius-card)] border-2 border-dashed px-6 py-8 text-center transition-all ${
               isDragging
-                ? 'border-banana-400 bg-banana-50/80 dark:border-banana-400 dark:bg-banana-900/20'
-                : 'border-gray-200 bg-white hover:border-banana-300 hover:bg-banana-50/40 dark:border-border-primary dark:bg-background-primary dark:hover:border-banana-500/40 dark:hover:bg-background-hover'
+                ? 'border-[var(--app-index-yellow)] bg-[var(--app-surface-muted)]'
+                : 'border-[var(--app-border)] bg-[var(--app-surface)] hover:border-[var(--app-index-yellow)] hover:bg-[var(--app-surface-hover)]'
             }`}
             onDragEnter={(e) => {
               e.preventDefault();
@@ -158,19 +158,19 @@ export const ImportMarkdownModal: React.FC<ImportMarkdownModalProps> = ({
               onChange={handleFileSelect}
             />
             <div className={`mb-4 transition-transform ${isDragging ? 'scale-110' : ''}`}>
-              <Upload size={34} className="text-gray-700 dark:text-foreground-primary" />
+              <Upload size={34} className="text-[var(--app-text)]" />
             </div>
-            <div className="text-[15px] font-semibold text-gray-800 dark:text-foreground-primary">
+            <div className="text-[15px] font-semibold text-[var(--app-text)]">
               {selectedFileName || uploadHint}
             </div>
-            <div className="mt-2 text-sm text-gray-500 dark:text-foreground-tertiary">
+            <div className="mt-2 text-sm text-[var(--app-text-tertiary)]">
               {selectedFileName ? uploadFormatsHint : null}
             </div>
           </label>
         </div>
 
         {error && (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+          <div className="rounded-[var(--app-radius-card)] border border-[var(--app-error)] bg-[var(--app-surface)] px-4 py-3 text-sm text-[var(--app-error)]">
             {error}
           </div>
         )}

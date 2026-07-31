@@ -4,23 +4,44 @@ Page Controller - handles page-related endpoints
 import logging
 from flask import Blueprint, request, current_app
 from models import db, Project, Page, PageImageVersion, Task
-from utils import success_response, error_response, not_found, bad_request
+from utils import success_response, error_response, not_found, bad_request, allowed_file
 from services import FileService, ProjectContext
 from services.ai_service_manager import get_ai_service
 from services.image_generation_manifest import (
     build_image_generation_manifest,
     persist_image_generation_manifest,
 )
-from services.image_template_profiles import has_gorden_template_pack
+from services.image_template_profiles import (
+    has_gorden_template_pack,
+    infer_image_layout_family,
+    infer_image_page_role,
+    resolve_template_reference_path,
+)
+from services.image_generation_quality import normalize_quality_issues, build_quality_repair_requirements
+from services.narration_service import (
+    NarrationRevisionConflict,
+    ensure_legacy_narration_version,
+    has_dialogue_speakers,
+    normalize_speakers,
+    narration_config_hash,
+    narration_source_hash,
+    page_narration_is_current,
+    save_manual_narration_version,
+    set_page_narration,
+)
+from services.ppt_workspace_service import get_ppt_settings, record_ppt_revision
+from services.content_spine_service import get_spine_source_fields
 from services.task_manager import (
     task_manager,
     generate_single_page_image_task,
     edit_page_image_task,
     get_image_prompt_field_names,
     prepare_page_for_image_generation,
+    recover_historical_image_scenes_task,
 )
 from controllers.project_controller import (
     _build_image_generation_settings_prompt,
+    _build_template_visual_preferences_prompt,
     _resolve_image_generation_options,
 )
 from datetime import datetime
@@ -33,6 +54,28 @@ import json
 logger = logging.getLogger(__name__)
 
 page_bp = Blueprint('pages', __name__, url_prefix='/api/projects')
+
+
+def _auto_match_page_template(page, project, total_pages):
+    page_data = page.get_outline_content() or {}
+    if page.part:
+        page_data = {**page_data, 'part': page.part}
+
+    role = infer_image_page_role(
+        page.order_index + 1,
+        total_pages,
+        page_data,
+        page.part,
+    )
+    layout = infer_image_layout_family(role, page.order_index + 1, page_data)
+    if has_gorden_template_pack(project.template_pack_id):
+        source = 'template_pack'
+    elif project.template_image_path:
+        source = 'project_template'
+    else:
+        source = 'style_only'
+    reason = f'Auto matched page {page.order_index + 1} as {role}/{layout}.'
+    return role, layout, source, reason
 
 
 @page_bp.route('/<project_id>/pages', methods=['POST'])
@@ -86,10 +129,67 @@ def create_page(project_id):
                 p.order_index += 1
         
         project.updated_at = datetime.utcnow()
+        record_ppt_revision(project, 'page.create', changed_page_ids=[page.id])
         db.session.commit()
         
         return success_response(page.to_dict(), status_code=201)
     
+    except Exception as e:
+        db.session.rollback()
+        return error_response('SERVER_ERROR', str(e), 500)
+
+
+@page_bp.route('/<project_id>/pages/batch', methods=['POST'])
+def create_pages_batch(project_id):
+    """Create imported pages in one transaction with stable contiguous ordering."""
+    try:
+        project = Project.query.get(project_id)
+        if not project:
+            return not_found('Project')
+        data = request.get_json() or {}
+        pages_data = data.get('pages')
+        if not isinstance(pages_data, list) or not pages_data:
+            return bad_request("pages must be a non-empty array")
+        if len(pages_data) > 200:
+            return bad_request("pages cannot contain more than 200 items")
+
+        validated_pages = []
+        for item in pages_data:
+            if not isinstance(item, dict):
+                return bad_request("Each page must be an object")
+            outline_content = item.get('outline_content')
+            if not isinstance(outline_content, dict):
+                return bad_request("Each page requires outline_content")
+            description_content = item.get('description_content')
+            if description_content is not None and not isinstance(description_content, dict):
+                return bad_request("description_content must be an object")
+            validated_pages.append((item, outline_content, description_content))
+
+        last_page = Page.query.filter_by(project_id=project_id).order_by(Page.order_index.desc()).first()
+        start_index = (last_page.order_index + 1) if last_page else 0
+        created = []
+        for offset, (item, outline_content, description_content) in enumerate(validated_pages):
+            page = Page(
+                project_id=project_id,
+                order_index=start_index + offset,
+                part=item.get('part'),
+                status='DRAFT',
+            )
+            page.set_outline_content(outline_content)
+            if description_content is not None:
+                page.set_description_content(description_content)
+                page.status = 'DESCRIPTION_GENERATED'
+            db.session.add(page)
+            created.append(page)
+
+        project.updated_at = datetime.utcnow()
+        record_ppt_revision(
+            project,
+            'page.batch_create',
+            changed_page_ids=[page.id for page in created],
+        )
+        db.session.commit()
+        return success_response({'pages': [page.to_dict() for page in created]}, status_code=201)
     except Exception as e:
         db.session.rollback()
         return error_response('SERVER_ERROR', str(e), 500)
@@ -117,6 +217,7 @@ def delete_page(project_id, page_id):
         project = Project.query.get(project_id)
         if project:
             project.updated_at = datetime.utcnow()
+            record_ppt_revision(project, 'page.delete', changed_page_ids=[page_id])
 
         db.session.commit()
 
@@ -157,6 +258,7 @@ def update_page(project_id, page_id):
         # Update project
         if page.project:
             page.project.updated_at = datetime.utcnow()
+            record_ppt_revision(page.project, 'page.update', changed_page_ids=[page.id])
 
         db.session.commit()
 
@@ -165,6 +267,99 @@ def update_page(project_id, page_id):
     except Exception as e:
         db.session.rollback()
         logger.error(f"Failed to update page {page_id}: {e}")
+        return error_response('SERVER_ERROR', 'An internal server error occurred', 500)
+
+
+@page_bp.route('/<project_id>/pages/<page_id>/template', methods=['POST', 'PATCH', 'DELETE'])
+def update_page_template(project_id, page_id):
+    try:
+        page = Page.query.get(page_id)
+        if not page or page.project_id != project_id:
+            return not_found('Page')
+
+        file_service = FileService(current_app.config['UPLOAD_FOLDER'])
+        if request.method == 'POST':
+            file = request.files.get('template_image')
+            if not file or not file.filename:
+                return bad_request("template_image is required")
+            if not allowed_file(file.filename, current_app.config['ALLOWED_EXTENSIONS']):
+                return bad_request("Invalid file type. Allowed types: png, jpg, jpeg, gif, webp")
+            if page.template_image_path:
+                file_service.delete_page_image_version(page.template_image_path)
+            page.template_image_path = file_service.save_page_template_image(file, project_id, page_id)
+        elif request.method == 'PATCH':
+            data = request.get_json() or {}
+            page.template_style_text = (data.get('template_style_text') or '').strip() or None
+        else:
+            if page.template_image_path:
+                file_service.delete_page_image_version(page.template_image_path)
+            page.template_image_path = None
+            page.template_style_text = None
+
+        page.updated_at = datetime.utcnow()
+        if page.project:
+            page.project.updated_at = datetime.utcnow()
+            record_ppt_revision(page.project, 'page.template', changed_page_ids=[page.id])
+        db.session.commit()
+        return success_response(page.to_dict())
+    except ValueError as e:
+        db.session.rollback()
+        return bad_request(str(e))
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Failed to update page template {page_id}: {e}")
+        return error_response('SERVER_ERROR', 'An internal server error occurred', 500)
+
+
+@page_bp.route('/<project_id>/pages/templates/auto-match', methods=['POST'])
+def auto_match_page_templates(project_id):
+    try:
+        project = Project.query.get(project_id)
+        if not project:
+            return not_found('Project')
+
+        data = request.get_json(silent=True) or {}
+        overwrite_existing = bool(data.get('overwrite_existing', True))
+        pages = Page.query.filter_by(project_id=project_id).order_by(Page.order_index.asc()).all()
+        total_pages = len(pages)
+        if not pages:
+            return bad_request('Project has no pages')
+
+        matched = []
+        skipped = 0
+        for page in pages:
+            if not overwrite_existing and page.template_selection_source:
+                skipped += 1
+                continue
+            role, layout, source, reason = _auto_match_page_template(page, project, total_pages)
+            page.template_selection_role = role
+            page.template_selection_layout = layout
+            page.template_selection_source = source
+            page.template_match_reason = reason
+            page.updated_at = datetime.utcnow()
+            matched.append({
+                'page_id': page.id,
+                'role': role,
+                'layout': layout,
+                'source': source,
+                'reason': reason,
+            })
+
+        project.updated_at = datetime.utcnow()
+        record_ppt_revision(
+            project,
+            'page.template_auto_match',
+            changed_page_ids=[item['page_id'] for item in matched],
+        )
+        db.session.commit()
+        return success_response({
+            'matched': len(matched),
+            'skipped': skipped,
+            'pages': matched,
+        })
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Failed to auto-match page templates for project {project_id}: {e}")
         return error_response('SERVER_ERROR', 'An internal server error occurred', 500)
 
 
@@ -196,6 +391,7 @@ def update_page_outline(project_id, page_id):
         project = Project.query.get(project_id)
         if project:
             project.updated_at = datetime.utcnow()
+            record_ppt_revision(project, 'page.outline', changed_page_ids=[page.id])
         
         db.session.commit()
         
@@ -238,6 +434,7 @@ def update_page_description(project_id, page_id):
         project = Project.query.get(project_id)
         if project:
             project.updated_at = datetime.utcnow()
+            record_ppt_revision(project, 'page.description', changed_page_ids=[page.id])
         
         db.session.commit()
         
@@ -361,7 +558,8 @@ def generate_page_image(project_id, page_id):
         use_template = data.get('use_template', True)
         force_regenerate = data.get('force_regenerate', False)
         language = data.get('language', current_app.config.get('OUTPUT_LANGUAGE', 'zh'))
-        image_density, image_style, image_style_prompt = _resolve_image_generation_options(data)
+        image_density, image_style, image_composition, image_restraint, image_style_prompt = _resolve_image_generation_options(data)
+        quality_issues = normalize_quality_issues(data.get('quality_issues'))
         file_service = FileService(current_app.config['UPLOAD_FOLDER'])
         
         # Check if already generated
@@ -431,7 +629,10 @@ def generate_page_image(project_id, page_id):
         
         # 检查是否有模板图片或风格描述
         # 如果都没有，则返回错误
-        if not ref_image_path and not project.template_style and not has_gorden_template_pack(project.template_pack_id):
+        is_renovation = project.creation_type in {'renovation', 'ppt_renovation'}
+        has_generation_style = image_style != 'theme' or bool(image_style_prompt)
+        has_page_template = bool(page.template_image_path or page.template_style_text)
+        if not is_renovation and not ref_image_path and not project.template_style and not has_page_template and not has_gorden_template_pack(project.template_pack_id) and not has_generation_style:
             return bad_request("No template image or style description found for project")
         
         # Generate prompt
@@ -469,8 +670,14 @@ def generate_page_image(project_id, page_id):
         combined_requirements += _build_image_generation_settings_prompt(
             image_density,
             image_style,
+            image_composition,
+            image_restraint,
             image_style_prompt,
         )
+        combined_requirements += _build_template_visual_preferences_prompt(
+            get_ppt_settings(project)['native_image_settings']
+        )
+        combined_requirements += build_quality_repair_requirements(quality_issues)
         
         # Create async task for image generation
         task = Task(
@@ -496,13 +703,16 @@ def generate_page_image(project_id, page_id):
                 'max_workers': 1,
                 'image_density': image_density,
                 'image_style': image_style,
+                'image_composition': image_composition,
+                'image_restraint': image_restraint,
                 'image_style_prompt': image_style_prompt,
+                'quality_issues': quality_issues,
             },
             style_snapshot={
                 'template_pack_id': project.template_pack_id,
                 'template_style': project.template_style or '',
                 'extra_requirements': project.extra_requirements or '',
-                'aspect_ratio': project.image_aspect_ratio,
+                'aspect_ratio': get_ppt_settings(project)['image_aspect_ratio'],
                 'resolution': current_app.config['DEFAULT_RESOLUTION'],
             },
         )
@@ -529,7 +739,7 @@ def generate_page_image(project_id, page_id):
             file_service,
             outline,
             use_template,
-            project.image_aspect_ratio,
+            get_ppt_settings(project)['image_aspect_ratio'],
             current_app.config['DEFAULT_RESOLUTION'],
             app,
             combined_requirements if combined_requirements.strip() else None,
@@ -636,7 +846,26 @@ def edit_page_image(project_id, page_id):
             use_template = data.get('use_template', 'false').lower() == 'true'
         
         if use_template:
-            template_path = file_service.get_template_path(project_id)
+            template_path = None
+            if page.template_image_path:
+                candidate = Path(file_service.upload_folder) / page.template_image_path.replace('\\', '/')
+                if candidate.exists() and candidate.is_file():
+                    template_path = str(candidate)
+            template_path = template_path or file_service.get_template_path(project_id)
+            if not page.template_image_path:
+                total_pages = Page.query.filter_by(project_id=project_id).count()
+                page_data = page.get_outline_content() or {}
+                role = page.template_selection_role or infer_image_page_role(
+                    page.order_index + 1,
+                    total_pages,
+                    page_data,
+                    page.part,
+                )
+                template_path = resolve_template_reference_path(
+                    project.template_pack_id,
+                    role,
+                    template_path,
+                )
             if template_path:
                 additional_ref_images.append(template_path)
         
@@ -702,7 +931,7 @@ def edit_page_image(project_id, page_id):
             data['edit_instruction'],
             ai_service,
             file_service,
-            project.image_aspect_ratio,
+            get_ppt_settings(project)['image_aspect_ratio'],
             current_app.config['DEFAULT_RESOLUTION'],
             original_description,
             additional_ref_images if additional_ref_images else None,
@@ -743,6 +972,45 @@ def get_page_image_versions(project_id, page_id):
     
     except Exception as e:
         return error_response('SERVER_ERROR', str(e), 500)
+
+
+@page_bp.route(
+    '/<project_id>/pages/<page_id>/image-versions/<version_id>/recover-scene',
+    methods=['POST'],
+)
+def recover_page_image_scene(project_id, page_id, version_id):
+    version = PageImageVersion.query.filter_by(id=version_id, page_id=page_id).first()
+    if not version or not version.page or version.page.project_id != project_id:
+        return not_found('Image Version')
+    data = request.get_json(silent=True) or {}
+    task = Task(project_id=project_id, task_type='RECOVER_IMAGE_SCENES', status='PENDING')
+    db.session.add(task)
+    db.session.flush()
+    task.set_progress({
+        'total': 1,
+        'completed': 0,
+        'failed': 0,
+        'pages': [],
+        '_resume': {
+            'kind': 'historical-image-scenes',
+            'kwargs': {
+                'project_id': project_id,
+                'version_ids': [version_id],
+                'force': bool(data.get('force')),
+            },
+        },
+    })
+    db.session.commit()
+    task_manager.submit_task(
+        task.id,
+        recover_historical_image_scenes_task,
+        project_id,
+        [version_id],
+        FileService(current_app.config['UPLOAD_FOLDER']),
+        current_app._get_current_object(),
+        bool(data.get('force')),
+    )
+    return success_response({'task_id': task.id, 'status': 'PENDING'}, status_code=202)
 
 
 @page_bp.route('/<project_id>/pages/<page_id>/image-versions/<version_id>/set-current', methods=['POST'])
@@ -860,6 +1128,13 @@ def regenerate_renovation_page(project_id, page_id):
         if not md_text.strip():
             return error_response('PARSE_ERROR', f"Failed to extract content from page {page.order_index + 1}", 400)
 
+        from services.material_import_service import import_reference_markdown_images_to_materials
+        import_reference_markdown_images_to_materials(
+            project_id=project_id,
+            markdown_content=md_text,
+            upload_folder=current_app.config['UPLOAD_FOLDER'],
+        )
+
         # Step 2: AI extract structured content
         logger.info(f"Regenerating renovation page {page.order_index + 1}: extracting content...")
         content = ai_service.extract_page_content(md_text, language=language)
@@ -930,11 +1205,17 @@ def update_page_narration(project_id, page_id):
 
         data = request.get_json()
 
-        if not data or 'narration_text' not in data:
-            return bad_request("narration_text is required")
+        if not data or ('narration_text' not in data and 'narration_segments' not in data):
+            return bad_request("narration_text or narration_segments is required")
 
-        page.set_narration_text(data['narration_text'])
-        page.updated_at = datetime.utcnow()
+        ensure_legacy_narration_version(page)
+        save_manual_narration_version(page, {
+            'base_revision': data.get('base_revision', page.narration_revision or 0),
+            'text': data.get('narration_text'),
+            'segments': data.get('narration_segments'),
+            'mode': data.get('mode') or ('dialogue' if has_dialogue_speakers(data.get('narration_segments')) else 'single'),
+            'language': data.get('language', 'auto'),
+        })
 
         project = Project.query.get(project_id)
         if project:
@@ -944,6 +1225,9 @@ def update_page_narration(project_id, page_id):
 
         return success_response(page.to_dict())
 
+    except NarrationRevisionConflict as e:
+        db.session.rollback()
+        return error_response('NARRATION_REVISION_CONFLICT', str(e), 409)
     except Exception as e:
         db.session.rollback()
         return error_response('SERVER_ERROR', str(e), 500)
@@ -975,9 +1259,6 @@ def generate_page_narration(project_id, page_id):
         force_regenerate = data.get('force_regenerate', False)
         language = data.get('language', current_app.config.get('OUTPUT_LANGUAGE', 'zh'))
 
-        if page.narration_text and not force_regenerate:
-            return bad_request("Narration already exists. Set force_regenerate=true to regenerate")
-
         # Need description content to generate narration
         desc_content = page.get_description_content()
         desc_text = ''
@@ -1004,14 +1285,37 @@ def generate_page_narration(project_id, page_id):
         # Generate narration using AI
         ai_service = get_ai_service()
         from services.prompts import (
+            get_dialogue_narration_generation_prompt,
             get_narration_generation_prompt,
             normalize_narration_generation_config,
+            parse_dialogue_narration_result,
+            parse_narration_generation_result,
         )
         narration_config = normalize_narration_generation_config(
             data.get('narration_config'),
-            fallback_topic=project.idea_prompt or outline_content.get('title', ''),
+            fallback_topic=(
+                get_spine_source_fields(project)['idea_prompt']
+                or outline_content.get('title', '')
+            ),
         )
-        prompt = get_narration_generation_prompt(
+        narration_mode = data.get('narration_mode') or narration_config.get('narration_mode') or 'single'
+        narration_mode = narration_mode if narration_mode in {'single', 'dialogue'} else 'single'
+        speakers = normalize_speakers(
+            data.get('speakers') or narration_config.get('speakers'),
+            default_voice=current_app.config.get('TTS_DEFAULT_VOICE_ZH', 'zh-CN-XiaoxiaoNeural'),
+        )
+        narration_config['narration_mode'] = narration_mode
+        narration_config['speakers'] = speakers
+        config_hash = narration_config_hash(narration_config, narration_mode, speakers)
+        source_hash = narration_source_hash(page, narration_config, narration_mode, speakers)
+        has_existing_narration = bool(
+            (page.narration_text or '').strip() or page.get_narration_segments()
+        )
+        dialogue_ready = narration_mode != 'dialogue' or has_dialogue_speakers(page.get_narration_segments())
+        if has_existing_narration and dialogue_ready and not force_regenerate and page_narration_is_current(page, source_hash, config_hash):
+            return success_response(page.to_dict())
+        prompt_builder = get_dialogue_narration_generation_prompt if narration_mode == 'dialogue' else get_narration_generation_prompt
+        prompt = prompt_builder(
             pages=[{
                 'page_index': page.order_index + 1,
                 'title': outline_content.get('title', ''),
@@ -1023,11 +1327,22 @@ def generate_page_narration(project_id, page_id):
         )
 
         narration = ai_service.text_provider.generate_text(prompt)
-
-        if not narration or not narration.strip():
+        parsed = parse_dialogue_narration_result(narration) if narration_mode == 'dialogue' else parse_narration_generation_result(narration)
+        parsed_value = parsed.get(page.order_index + 1)
+        if narration_mode == 'dialogue' and parsed_value is None and len(parsed) == 1:
+            parsed_value = next(iter(parsed.values()))
+        if narration_mode == 'single' and not parsed_value and narration and narration.strip():
+            parsed_value = narration.strip()
+        if not parsed_value:
             return error_response('AI_SERVICE_ERROR', 'AI returned empty narration', 503)
 
-        page.set_narration_text(narration.strip())
+        set_page_narration(
+            page,
+            text=parsed_value if isinstance(parsed_value, str) else None,
+            segments=parsed_value if isinstance(parsed_value, list) else None,
+            source_hash=source_hash,
+            config_hash=config_hash,
+        )
         page.updated_at = datetime.utcnow()
         db.session.commit()
 
@@ -1066,21 +1381,37 @@ def generate_all_narrations(project_id):
         total_pages = len(pages)
         ai_service = get_ai_service()
         from services.prompts import (
+            get_dialogue_narration_generation_prompt,
             get_narration_generation_prompt,
             normalize_narration_generation_config,
+            parse_dialogue_narration_result,
+            parse_narration_generation_result,
         )
         narration_config = normalize_narration_generation_config(
             data.get('narration_config'),
-            fallback_topic=project.idea_prompt or '',
+            fallback_topic=get_spine_source_fields(project)['idea_prompt'],
         )
+        narration_mode = data.get('narration_mode') or narration_config.get('narration_mode') or 'single'
+        narration_mode = narration_mode if narration_mode in {'single', 'dialogue'} else 'single'
+        speakers = normalize_speakers(
+            data.get('speakers') or narration_config.get('speakers'),
+            default_voice=current_app.config.get('TTS_DEFAULT_VOICE_ZH', 'zh-CN-XiaoxiaoNeural'),
+        )
+        narration_config['narration_mode'] = narration_mode
+        narration_config['speakers'] = speakers
+        config_hash = narration_config_hash(narration_config, narration_mode, speakers)
 
         generated = 0
         skipped = 0
         failed = 0
 
         for page in pages:
-            # Skip if already has narration and not forcing
-            if page.narration_text and not force_regenerate:
+            source_hash = narration_source_hash(page, narration_config, narration_mode, speakers)
+            has_existing_narration = bool(
+                (page.narration_text or '').strip() or page.get_narration_segments()
+            )
+            dialogue_ready = narration_mode != 'dialogue' or has_dialogue_speakers(page.get_narration_segments())
+            if has_existing_narration and dialogue_ready and not force_regenerate and page_narration_is_current(page, source_hash, config_hash):
                 skipped += 1
                 continue
 
@@ -1105,7 +1436,8 @@ def generate_all_narrations(project_id):
                     continue
 
             try:
-                prompt = get_narration_generation_prompt(
+                prompt_builder = get_dialogue_narration_generation_prompt if narration_mode == 'dialogue' else get_narration_generation_prompt
+                prompt = prompt_builder(
                     pages=[{
                         'page_index': page.order_index + 1,
                         'title': outline_content.get('title', ''),
@@ -1116,9 +1448,21 @@ def generate_all_narrations(project_id):
                     config=narration_config,
                 )
                 narration = ai_service.text_provider.generate_text(prompt)
+                parsed = parse_dialogue_narration_result(narration) if narration_mode == 'dialogue' else parse_narration_generation_result(narration)
+                parsed_value = parsed.get(page.order_index + 1)
+                if narration_mode == 'dialogue' and parsed_value is None and len(parsed) == 1:
+                    parsed_value = next(iter(parsed.values()))
+                if narration_mode == 'single' and not parsed_value and narration and narration.strip():
+                    parsed_value = narration.strip()
 
-                if narration and narration.strip():
-                    page.set_narration_text(narration.strip())
+                if parsed_value:
+                    set_page_narration(
+                        page,
+                        text=parsed_value if isinstance(parsed_value, str) else None,
+                        segments=parsed_value if isinstance(parsed_value, list) else None,
+                        source_hash=source_hash,
+                        config_hash=config_hash,
+                    )
                     page.updated_at = datetime.utcnow()
                     generated += 1
                 else:

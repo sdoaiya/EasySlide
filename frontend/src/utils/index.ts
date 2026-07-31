@@ -29,6 +29,7 @@ export function normalizePage(data: any): Page {
     ...data,
     id: data.page_id || data.id,
     generated_image_path: data.generated_image_url || data.generated_image_path,
+    template_image_path: data.template_image_url || data.template_image_path,
   };
 }
 

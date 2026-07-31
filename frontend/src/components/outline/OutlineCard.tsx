@@ -111,10 +111,10 @@ export const OutlineCard: React.FC<OutlineCardProps> = ({
 
   return (
     <Card
-      className={`relative rounded-2xl p-5 md:p-6 shadow-sm transition-all ${
+      className={`relative rounded-[var(--app-radius-card)] p-5 md:p-6 transition-[background-color,border-color,box-shadow,transform] ${
         isSelected
-          ? 'border-2 border-sky-500 bg-sky-50/70 shadow-sky-100'
-          : 'border border-slate-100 bg-white hover:border-sky-200 hover:shadow-md'
+          ? 'border border-[var(--app-accent)] bg-[var(--app-surface)] shadow-[var(--app-shadow-soft)]'
+          : 'border border-[var(--app-border)] bg-[var(--app-surface)] hover:border-[var(--app-border-strong)] hover:bg-[var(--app-surface-hover)]'
       }`}
       onClick={!isEditing ? onClick : undefined}
     >
@@ -124,7 +124,7 @@ export const OutlineCard: React.FC<OutlineCardProps> = ({
         {/* 拖拽手柄 */}
         <div
           {...dragHandleProps}
-          className="flex-shrink-0 cursor-move text-slate-400 hover:text-slate-600 pt-1"
+          className="flex-shrink-0 cursor-move pt-1 text-[var(--app-text-tertiary)] hover:text-[var(--app-text-secondary)]"
         >
           <GripVertical size={18} />
         </div>
@@ -133,12 +133,12 @@ export const OutlineCard: React.FC<OutlineCardProps> = ({
         <div className="flex-1 min-w-0">
           {/* 页码和章节 */}
           <div className="flex items-center gap-2 mb-3">
-            <span className="text-base font-bold text-slate-900 dark:text-foreground-primary">
+            <span className="text-base font-bold text-[var(--app-text)]">
               {t('outlineCard.page', { num: index + 1 })}
             </span>
             {index === 0 && !isEditing && (
               <span
-                className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600 dark:bg-background-hover dark:text-foreground-secondary"
+                className="rounded-md bg-[var(--app-surface-muted)] px-2 py-0.5 text-xs font-semibold text-[var(--app-text-secondary)]"
                 title={t('outlineCard.coverPageTooltip')}
               >
                 {t('outlineCard.coverPage')}
@@ -150,12 +150,12 @@ export const OutlineCard: React.FC<OutlineCardProps> = ({
                 value={editPart}
                 onChange={(e) => setEditPart(e.target.value)}
                 onClick={(e) => e.stopPropagation()}
-                className="text-xs px-2 py-0.5 w-24 border border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="w-24 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 py-0.5 text-xs text-[var(--app-text)] focus-visible:border-[var(--app-accent)] focus-visible:outline-none"
                 placeholder={t('outlineCard.chapter')}
               />
             ) : (
               page.part && (
-                <span className="rounded-md bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
+                <span className="rounded-md bg-[color:var(--app-accent-soft)] px-2 py-0.5 text-xs font-semibold text-[var(--app-accent)]">
                   {page.part}
                 </span>
               )
@@ -169,7 +169,7 @@ export const OutlineCard: React.FC<OutlineCardProps> = ({
                 type="text"
                 value={editTitle}
                 onChange={(e) => setEditTitle(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-border-primary bg-white dark:bg-background-secondary text-gray-900 dark:text-foreground-primary rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                className="w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 text-[var(--app-text)] focus-visible:border-[var(--app-accent)] focus-visible:outline-none"
                 placeholder={t('outlineCard.titleLabel')}
               />
               <div>
@@ -187,7 +187,7 @@ export const OutlineCard: React.FC<OutlineCardProps> = ({
               <div className="flex justify-end gap-2">
                 <button
                   onClick={handleCancel}
-                  className="px-3 py-1.5 text-sm text-gray-700 dark:text-foreground-secondary hover:bg-gray-100 dark:hover:bg-background-hover rounded-lg transition-colors"
+                  className="rounded-[var(--app-radius-control)] px-3 py-1.5 text-sm text-[var(--app-text-secondary)] transition-colors hover:bg-[var(--app-surface-hover)]"
                 >
                   <X size={16} className="inline mr-1" />
                   {t('common.cancel')}
@@ -195,7 +195,7 @@ export const OutlineCard: React.FC<OutlineCardProps> = ({
                 <button
                   onClick={handleSave}
                   disabled={isUploading}
-                  className="px-3 py-1.5 text-sm bg-cyan-500 text-black dark:text-white rounded-lg hover:bg-cyan-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="rounded-[var(--app-radius-control)] bg-[var(--app-primary-action)] px-3 py-1.5 text-sm text-[var(--app-surface)] transition-colors hover:bg-[var(--app-primary-action-hover)] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Check size={16} className="inline mr-1" />
                   {t('common.save')}
@@ -205,10 +205,10 @@ export const OutlineCard: React.FC<OutlineCardProps> = ({
           ) : (
             /* 查看模式 */
             <div>
-              <h4 className="mb-3 text-lg font-bold text-slate-900 dark:text-foreground-primary">
+              <h4 className="mb-3 text-lg font-bold text-[var(--app-text)]">
                 {outline.title}
               </h4>
-              <div className="text-base leading-8 text-slate-600 dark:text-foreground-tertiary">
+              <div className="text-base leading-8 text-[var(--app-text-secondary)]">
                 <Markdown>{outline.points.join('\n')}</Markdown>
               </div>
             </div>
@@ -217,13 +217,14 @@ export const OutlineCard: React.FC<OutlineCardProps> = ({
 
         {/* 操作按钮 */}
         {!isEditing && (
-          <div className="flex-shrink-0 flex gap-5 pr-1">
+          <div className="flex-shrink-0 flex gap-2 pr-1">
             <button
               onClick={(e) => {
                 e.stopPropagation();
                 setIsEditing(true);
               }}
-              className="p-1.5 text-blue-500 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-background-hover rounded transition-colors"
+              className="rounded-[var(--app-radius-control)] p-1.5 text-[var(--app-accent)] transition-colors hover:bg-[var(--app-accent-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)]"
+              aria-label={t('common.edit')}
             >
               <Edit2 size={16} />
             </button>
@@ -236,7 +237,8 @@ export const OutlineCard: React.FC<OutlineCardProps> = ({
                   { title: t('outlineCard.confirmDeleteTitle'), variant: 'danger' }
                 );
               }}
-              className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded transition-colors"
+              className="rounded-[var(--app-radius-control)] p-1.5 text-[var(--app-error)] transition-colors hover:bg-[var(--app-error-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-error-soft)]"
+              aria-label={t('common.delete')}
             >
               <Trash2 size={16} />
             </button>
@@ -250,6 +252,7 @@ export const OutlineCard: React.FC<OutlineCardProps> = ({
         onClose={() => setIsMaterialSelectorOpen(false)}
         onSelect={handleMaterialSelect}
         multiple
+        mediaKindFilter={['image']}
       />
     </Card>
   );

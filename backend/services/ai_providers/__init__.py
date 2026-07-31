@@ -122,16 +122,25 @@ def _build_provider_config() -> Dict[str, Any]:
     fmt = get_provider_format()
     cfg: Dict[str, Any] = {'format': fmt}
 
-    if fmt == 'openai':
-        cfg['api_key'] = _resolve_setting('OPENAI_API_KEY') or _resolve_setting('GOOGLE_API_KEY')
-        cfg['api_base'] = _resolve_setting('OPENAI_API_BASE', 'https://api.openai.com/v1')
+    if fmt in ('openai', 'volcengine'):
+        if fmt == 'volcengine':
+            cfg['api_key'] = (_resolve_setting('VOLCENGINE_API_KEY')
+                              or _resolve_setting('ARK_API_KEY')
+                              or _resolve_setting('OPENAI_API_KEY'))
+            cfg['api_base'] = _resolve_setting(
+                'VOLCENGINE_API_BASE',
+                'https://ark.cn-beijing.volces.com/api/v3',
+            )
+        else:
+            cfg['api_key'] = _resolve_setting('OPENAI_API_KEY') or _resolve_setting('GOOGLE_API_KEY')
+            cfg['api_base'] = _resolve_setting('OPENAI_API_BASE', 'https://api.openai.com/v1')
 
         if not cfg['api_key']:
             raise ValueError(
-                "OPENAI_API_KEY or GOOGLE_API_KEY (from database settings or environment) "
-                "is required when AI_PROVIDER_FORMAT=openai."
+                "An API key is required for the selected OpenAI-compatible provider."
             )
-        logger.info("Provider config — format: openai, api_base: %s", cfg['api_base'])
+        cfg['format'] = 'openai'
+        logger.info("Provider config — format: %s, api_base: %s", fmt, cfg['api_base'])
 
     elif fmt == 'anthropic':
         cfg['api_key'] = _resolve_setting('ANTHROPIC_API_KEY') or _resolve_setting('OPENAI_API_KEY')
@@ -227,19 +236,24 @@ def _get_model_type_provider_config(model_type: str) -> Dict[str, Any]:
         logger.info("Per-model config — %s: gemini, api_base: %s", model_type, api_base)
         return {'format': 'gemini', 'api_key': api_key, 'api_base': api_base}
 
-    elif source_lower == 'openai':
+    elif source_lower in ('openai', 'volcengine'):
         api_key = (_resolve_setting(f'{prefix}_API_KEY')
+                   or (_resolve_setting('VOLCENGINE_API_KEY') if source_lower == 'volcengine' else None)
+                   or (_resolve_setting('ARK_API_KEY') if source_lower == 'volcengine' else None)
                    or _resolve_setting('OPENAI_API_KEY')
                    or _resolve_setting('GOOGLE_API_KEY'))
+        default_base = ('https://ark.cn-beijing.volces.com/api/v3'
+                        if source_lower == 'volcengine'
+                        else 'https://api.openai.com/v1')
         api_base = (_resolve_setting(f'{prefix}_API_BASE')
-                    or _resolve_setting('OPENAI_API_BASE', 'https://api.openai.com/v1'))
+                    or _resolve_setting('VOLCENGINE_API_BASE' if source_lower == 'volcengine' else 'OPENAI_API_BASE', default_base))
 
         if not api_key:
             raise ValueError(
                 f"API key is required for {model_type} model with OpenAI provider. "
                 f"Set {prefix}_API_KEY or OPENAI_API_KEY."
             )
-        logger.info("Per-model config — %s: openai, api_base: %s", model_type, api_base)
+        logger.info("Per-model config — %s: %s, api_base: %s", model_type, source_lower, api_base)
         return {'format': 'openai', 'api_key': api_key, 'api_base': api_base}
 
     elif source_lower == 'codex':

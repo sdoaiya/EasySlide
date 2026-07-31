@@ -129,7 +129,7 @@ export const TextStyleSelector: React.FC<TextStyleSelectorProps> = ({ value, onC
           value={value}
           onChange={(e) => onChange(e.target.value)}
           rows={3}
-          className="text-sm border-2 border-gray-200 dark:border-border-primary dark:bg-background-tertiary dark:text-white dark:placeholder-foreground-tertiary focus:border-cyan-500 dark:focus:border-cyan-400 transition-colors duration-200 pr-24"
+          className="pr-24 text-sm"
         />
         <button
           type="button"
@@ -141,7 +141,7 @@ export const TextStyleSelector: React.FC<TextStyleSelectorProps> = ({ value, onC
             setSaveColor(STYLE_COLORS[Math.floor(Math.random() * STYLE_COLORS.length)]);
             setShowSaveDialog(true);
           }}
-          className="absolute right-2 top-2 flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-500 dark:text-foreground-tertiary hover:text-banana-600 dark:hover:text-banana rounded-md hover:bg-banana-50 dark:hover:bg-background-hover transition-colors"
+          className="absolute right-2 top-2 flex items-center gap-1 rounded-[var(--app-radius-control)] px-2 py-1 text-xs font-medium text-[var(--app-text-tertiary)] transition-colors hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-accent)]"
         >
           <Save size={12} />
           {t('saveAsTemplate')}
@@ -149,13 +149,13 @@ export const TextStyleSelector: React.FC<TextStyleSelectorProps> = ({ value, onC
       </div>
 
       {showSaveDialog && (
-        <div className="flex items-center gap-2 p-3 bg-gray-50 dark:bg-background-tertiary rounded-lg border border-gray-200 dark:border-border-primary">
+        <div className="flex items-center gap-2 rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)] p-3">
           <input
             type="text"
             value={saveName}
             onChange={(e) => setSaveName(e.target.value)}
             placeholder={t('styleNamePlaceholder')}
-            className="flex-1 px-2 py-1 text-sm border border-gray-200 dark:border-border-primary rounded-md bg-white dark:bg-background-secondary dark:text-white focus:outline-none focus:border-cyan-500 dark:focus:border-cyan-400"
+            className="flex-1 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 py-1 text-sm text-[var(--app-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--app-accent-soft)]"
             onKeyDown={(e) => { if (e.key === 'Enter') handleSave(); }}
             autoFocus
           />
@@ -165,7 +165,7 @@ export const TextStyleSelector: React.FC<TextStyleSelectorProps> = ({ value, onC
                 key={c}
                 type="button"
                 onClick={() => setSaveColor(c)}
-                className={`w-5 h-5 rounded-full ring-1 ring-black/10 transition-transform ${saveColor === c ? 'scale-125 ring-2 ring-banana-400 dark:ring-banana' : ''}`}
+                className={`h-5 w-5 rounded-full ring-1 ring-[var(--app-border)] transition-transform ${saveColor === c ? 'scale-125 ring-2 ring-[var(--app-accent)]' : ''}`}
                 style={{ backgroundColor: c }}
               />
             ))}
@@ -174,14 +174,14 @@ export const TextStyleSelector: React.FC<TextStyleSelectorProps> = ({ value, onC
             type="button"
             onClick={handleSave}
             disabled={isSaving || !saveName.trim()}
-            className="px-3 py-1 text-xs font-medium text-white bg-banana-500 hover:bg-banana-600 rounded-md disabled:opacity-50 transition-colors"
+            className="rounded-[var(--app-radius-control)] bg-[var(--app-primary-action)] px-3 py-1 text-xs font-medium text-[var(--app-surface)] transition-colors hover:bg-[var(--app-primary-action-hover)] disabled:opacity-50"
           >
             {isSaving ? <Loader2 size={12} className="animate-spin" /> : t('saveStyle')}
           </button>
           <button
             type="button"
             onClick={() => { setShowSaveDialog(false); setSaveName(''); }}
-            className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-foreground-secondary"
+            className="p-1 text-[var(--app-text-tertiary)] transition-colors hover:text-[var(--app-text)]"
           >
             <X size={14} />
           </button>
@@ -190,7 +190,7 @@ export const TextStyleSelector: React.FC<TextStyleSelectorProps> = ({ value, onC
 
       {userStyles.length > 0 && (
         <div className="space-y-2">
-          <p className="text-xs font-medium text-gray-600 dark:text-foreground-tertiary">
+          <p className="text-xs font-medium text-[var(--app-text-tertiary)]">
             {t('myStylesLabel')}
           </p>
           <div className="flex flex-wrap gap-2">
@@ -201,30 +201,30 @@ export const TextStyleSelector: React.FC<TextStyleSelectorProps> = ({ value, onC
                   onClick={() => onChange(style.description)}
                   onMouseEnter={() => setHoveredUserStyleId(style.id)}
                   onMouseLeave={() => setHoveredUserStyleId(null)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full border-2 border-banana-200 dark:border-banana/30 text-banana-700 dark:text-banana bg-banana-50 dark:bg-banana/10 hover:border-banana-400 dark:hover:border-banana hover:bg-banana-100 dark:hover:bg-banana/20 transition-all duration-200"
+                  className="flex items-center gap-1.5 rounded-[var(--app-radius-control)] border border-[var(--app-accent)] bg-[var(--app-accent-soft)] px-3 py-1.5 text-xs font-medium text-[var(--app-accent)] transition-colors hover:bg-[var(--app-surface-hover)]"
                 >
                   <span
-                    className="w-2.5 h-2.5 rounded-full flex-shrink-0 ring-1 ring-black/10"
-                    style={{ backgroundColor: style.color || '#3B82F6' }}
+                    className="w-2.5 h-2.5 rounded-full flex-shrink-0 ring-1 ring-[var(--app-border)]"
+                    style={{ backgroundColor: style.color || STYLE_COLORS[0] }}
                   />
                   {style.name}
                 </button>
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); handleDelete(style.id); }}
-                  className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600"
+                  className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-[var(--app-error)] text-[var(--app-surface)] rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:opacity-90"
                 >
                   <X size={10} />
                 </button>
                 {hoveredUserStyleId === style.id && (
                   <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 z-50 animate-in fade-in slide-in-from-bottom-2 duration-200">
-                    <div className="bg-white dark:bg-background-secondary rounded-lg shadow-xl dark:shadow-none border border-gray-200 dark:border-border-primary p-2.5 w-64 max-w-xs">
-                      <p className="text-xs text-gray-600 dark:text-foreground-tertiary line-clamp-4">
+                    <div className="w-64 max-w-xs rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)] p-2.5 shadow-[var(--app-shadow-soft)]">
+                      <p className="line-clamp-4 text-xs text-[var(--app-text-tertiary)]">
                         {style.description}
                       </p>
                     </div>
                     <div className="absolute top-full left-1/2 transform -translate-x-1/2 -mt-1">
-                      <div className="w-3 h-3 bg-white dark:bg-background-secondary border-r border-b border-gray-200 dark:border-border-primary transform rotate-45" />
+                      <div className="h-3 w-3 rotate-45 border-b border-r border-[var(--app-border)] bg-[var(--app-surface)]" />
                     </div>
                   </div>
                 )}
@@ -235,7 +235,7 @@ export const TextStyleSelector: React.FC<TextStyleSelectorProps> = ({ value, onC
       )}
 
       <div className="space-y-2">
-        <p className="text-xs font-medium text-gray-600 dark:text-foreground-tertiary">
+        <p className="text-xs font-medium text-[var(--app-text-tertiary)]">
           {t('presetStylesLabel')}
         </p>
         <div className="flex flex-wrap gap-2">
@@ -246,29 +246,29 @@ export const TextStyleSelector: React.FC<TextStyleSelectorProps> = ({ value, onC
                 onClick={() => onChange(t(preset.descriptionKey))}
                 onMouseEnter={() => setHoveredPresetId(preset.id)}
                 onMouseLeave={() => setHoveredPresetId(null)}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full border-2 border-gray-200 dark:border-border-primary dark:text-foreground-secondary hover:border-banana-400 dark:hover:border-banana hover:bg-banana-50 dark:hover:bg-background-hover transition-all duration-200 hover:shadow-sm dark:hover:shadow-none"
+                className="flex items-center gap-1.5 rounded-[var(--app-radius-control)] border border-[var(--app-border)] px-3 py-1.5 text-xs font-medium text-[var(--app-text-secondary)] transition-colors hover:border-[var(--app-accent)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-accent)]"
               >
                 <span
-                  className="w-2.5 h-2.5 rounded-full flex-shrink-0 ring-1 ring-black/10"
+                  className="w-2.5 h-2.5 rounded-full flex-shrink-0 ring-1 ring-[var(--app-border)]"
                   style={{ backgroundColor: preset.color }}
                 />
                 {t(preset.nameKey)}
               </button>
               {hoveredPresetId === preset.id && preset.previewImage && (
                 <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 z-50 animate-in fade-in slide-in-from-bottom-2 duration-200">
-                  <div className="bg-white dark:bg-background-secondary rounded-lg shadow-2xl dark:shadow-none border-2 border-banana-400 dark:border-banana p-2.5 w-72">
+                  <div className="w-72 rounded-[var(--app-radius-card)] border border-[var(--app-accent)] bg-[var(--app-surface)] p-2.5 shadow-[var(--app-shadow-soft)]">
                     <img
                       src={preset.previewImage}
                       alt={t(preset.nameKey)}
                       className="w-full h-40 object-cover rounded"
                       onError={(e) => { e.currentTarget.style.display = 'none'; }}
                     />
-                    <p className="text-xs text-gray-600 dark:text-foreground-tertiary mt-2 px-1 line-clamp-3">
+                    <p className="mt-2 line-clamp-3 px-1 text-xs text-[var(--app-text-tertiary)]">
                       {t(preset.descriptionKey)}
                     </p>
                   </div>
                   <div className="absolute top-full left-1/2 transform -translate-x-1/2 -mt-1">
-                    <div className="w-3 h-3 bg-white dark:bg-background-secondary border-r-2 border-b-2 border-banana-400 dark:border-banana transform rotate-45" />
+                    <div className="h-3 w-3 rotate-45 border-b border-r border-[var(--app-accent)] bg-[var(--app-surface)]" />
                   </div>
                 </div>
               )}
@@ -279,7 +279,7 @@ export const TextStyleSelector: React.FC<TextStyleSelectorProps> = ({ value, onC
             type="button"
             onClick={() => styleImageInputRef.current?.click()}
             disabled={isExtractingStyle}
-            className="px-3 py-1.5 text-xs font-medium rounded-full border-2 border-dashed border-gray-300 dark:border-border-primary dark:text-foreground-secondary hover:border-banana-400 dark:hover:border-banana hover:bg-banana-50 dark:hover:bg-background-hover transition-all duration-200 hover:shadow-sm dark:hover:shadow-none flex items-center gap-1"
+            className="flex items-center gap-1 rounded-[var(--app-radius-control)] border border-dashed border-[var(--app-border)] px-3 py-1.5 text-xs font-medium text-[var(--app-text-secondary)] transition-colors hover:border-[var(--app-accent)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-accent)]"
           >
             {isExtractingStyle ? (
               <><Loader2 size={12} className="animate-spin" />{t('extracting')}</>
@@ -313,8 +313,8 @@ export const TextStyleSelector: React.FC<TextStyleSelectorProps> = ({ value, onC
         </div>
       </div>
 
-      <p className="text-xs text-gray-500 dark:text-foreground-tertiary">
-        💡 {t('styleTip')}
+      <p className="text-xs text-[var(--app-text-tertiary)]">
+        {t('styleTip')}
       </p>
     </div>
   );

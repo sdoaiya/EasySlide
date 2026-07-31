@@ -32,12 +32,34 @@ describe('WorkspaceShell', () => {
       gridTemplateColumns: 'minmax(0, var(--workspace-sidebar-width)) minmax(0, 1fr) minmax(0, var(--workspace-inspector-width))',
     });
     expect(screen.getByRole('contentinfo')).toHaveTextContent('已保存');
+    expect(screen.getByRole('contentinfo')).toHaveClass('workspace-status-bar');
+    expect(screen.getByRole('main')).toHaveStyle({ paddingBottom: 'var(--workspace-statusbar-height)' });
+    expect(screen.getByRole('main').parentElement).toHaveStyle({
+      gridTemplateAreas: '"toolbar toolbar toolbar" "sidebar canvas inspector"',
+    });
     fireEvent.click(screen.getByRole('button', { name: '收起页面栏' }));
     expect(screen.getByRole('complementary', { name: '页面栏' })).toHaveAttribute('data-collapsed', 'true');
     expect(screen.getByRole('complementary', { name: '属性栏' })).toHaveAttribute('data-collapsed', 'false');
 
     fireEvent.click(screen.getByRole('button', { name: '收起属性栏' }));
     expect(screen.getByRole('complementary', { name: '属性栏' })).toHaveAttribute('data-collapsed', 'true');
+  });
+
+  it('reuses the content-project rail instead of reserving a second sidebar', () => {
+    render(
+      <>
+        <div data-content-project-rail-slot />
+        <WorkspaceShell toolbar="命令栏" sidebar="项目页面" inspector="属性栏">
+          画布
+        </WorkspaceShell>
+      </>
+    );
+
+    const shell = screen.getByRole('main').parentElement;
+    expect(document.querySelector('[data-content-project-rail-slot]')).toHaveTextContent('项目页面');
+    expect(shell).toHaveStyle({
+      gridTemplateColumns: 'minmax(0, 0) minmax(0, 1fr) minmax(0, var(--workspace-inspector-width))',
+    });
   });
 
   it('keeps long inspector content inside its own scroll container', () => {
@@ -86,9 +108,21 @@ describe('WorkspaceShell', () => {
     expect(shell).toHaveStyle({ gridTemplateColumns: 'minmax(0, 1fr)' });
     expect(shell).toHaveStyle({ gridTemplateAreas: '"canvas"' });
     expect(screen.getByRole('main')).toBeVisible();
+    expect(screen.getByRole('main')).not.toHaveStyle({ paddingBottom: 'var(--workspace-statusbar-height)' });
     expect(shell?.querySelector('header')).toHaveStyle({ display: 'none' });
     expect(shell?.querySelector('[aria-label="页面栏"]')).toHaveStyle({ display: 'none' });
     expect(shell?.querySelector('footer')).toHaveStyle({ display: 'none' });
+  });
+
+  it('does not reserve status bar space when the status bar is hidden', () => {
+    render(
+      <WorkspaceShell toolbar="命令栏" sidebar="页面栏" hideStatusBar>
+        画布
+      </WorkspaceShell>
+    );
+
+    expect(screen.getByRole('main')).not.toHaveStyle({ paddingBottom: 'var(--workspace-statusbar-height)' });
+    expect(screen.queryByRole('contentinfo')).not.toBeInTheDocument();
   });
 
   it('can hide only the page-rail toggle while keeping the inspector toggle available', () => {
@@ -130,6 +164,50 @@ describe('WorkspaceShell', () => {
     expect(inspector).toHaveTextContent('属性栏');
   });
 
+  it('uses the overlay inspector below 1200px and closes it with Escape', () => {
+    vi.mocked(window.matchMedia).mockImplementation((query) => ({
+      matches: query === '(max-width: 1279px)',
+      media: query,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    } as unknown as MediaQueryList));
+
+    render(
+      <WorkspaceShell toolbar="命令栏" sidebar="页面栏" inspector="属性栏" statusBar="状态栏">
+        画布
+      </WorkspaceShell>
+    );
+
+    const shell = screen.getByRole('main').parentElement;
+    const inspector = shell?.querySelector('[aria-label="属性栏"]');
+    expect(shell).toHaveAttribute('data-inspector-layout', 'drawer');
+    expect(inspector).toHaveStyle({ bottom: 'var(--workspace-statusbar-height)' });
+    fireEvent.click(screen.getByRole('button', { name: '打开属性栏' }));
+    expect(inspector).toHaveAttribute('data-collapsed', 'false');
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(inspector).toHaveAttribute('data-collapsed', 'true');
+  });
+
+  it('keeps panel controls available in the status bar when the toolbar is external', () => {
+    vi.mocked(window.matchMedia).mockReturnValue({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    } as unknown as MediaQueryList);
+
+    render(
+      <WorkspaceShell hideToolbar toolbar={null} sidebar="页面栏" inspector="属性栏" statusBar="图片模式">
+        画布
+      </WorkspaceShell>
+    );
+
+    expect(screen.queryByRole('banner')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '打开属性栏' }));
+    expect(screen.getByRole('complementary', { name: '属性栏' })).toHaveAttribute('data-collapsed', 'false');
+    fireEvent.click(screen.getByRole('button', { name: '收起页面栏' }));
+    expect(screen.getByRole('complementary', { name: '页面栏' })).toHaveAttribute('data-collapsed', 'true');
+  });
+
   it('uses soft shadows instead of hard panel borders when requested', () => {
     render(
       <WorkspaceShell toolbar="命令栏" sidebar="页面栏" inspector="属性栏" softBorders>
@@ -142,7 +220,7 @@ describe('WorkspaceShell', () => {
 
     expect(sidebar).not.toHaveClass('border-r');
     expect(inspector).not.toHaveClass('border-l');
-    expect(sidebar.className).toContain('shadow-[inset_-1px_0_0_rgba(148,163,184,0.16)]');
-    expect(inspector.className).toContain('shadow-[inset_1px_0_0_rgba(148,163,184,0.16)]');
+    expect(sidebar.className).toContain('shadow-[inset_-1px_0_0_rgba(');
+    expect(inspector.className).toContain('shadow-[inset_1px_0_0_rgba(');
   });
 });

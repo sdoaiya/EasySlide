@@ -19,6 +19,7 @@ from utils.path_utils import find_file_with_prefix
 logger = logging.getLogger(__name__)
 
 MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^()]*(?:\([^()]*\)[^()]*)*)\)")
+HTML_IMAGE_RE = re.compile(r"<img\b[^>]*?\bsrc\s*=\s*['\"]([^'\"]+)['\"][^>]*>", re.IGNORECASE)
 SUPPORTED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 
 
@@ -89,6 +90,8 @@ def import_reference_markdown_images_to_materials(
 def _iter_markdown_images(markdown_content: str):
     for match in MARKDOWN_IMAGE_RE.finditer(markdown_content):
         yield match.group(1), match.group(2).strip()
+    for match in HTML_IMAGE_RE.finditer(markdown_content):
+        yield '', match.group(1).strip()
 
 
 def _resolve_local_mineru_image(image_url: str, upload_folder: Path) -> Optional[Path]:

@@ -2,7 +2,7 @@
  * Markdown 组件测试 - 验证 LaTeX 公式渲染
  */
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { Markdown } from '@/components/shared/Markdown'
 
@@ -24,6 +24,8 @@ describe('Markdown Component', () => {
     expect(link.tagName).toBe('A')
     expect(link).toHaveAttribute('href', 'https://example.com')
     expect(link).toHaveAttribute('target', '_blank')
+    expect(link).toHaveClass('text-[var(--app-link)]')
+    expect(link).not.toHaveClass('text-blue-600')
   })
 
   it('renders markdown images', () => {
@@ -33,6 +35,20 @@ describe('Markdown Component', () => {
     expect(img).toHaveAttribute('src', 'https://example.com/img.png')
   })
 
+  it('resolves local PDF images through the desktop backend', async () => {
+    Object.defineProperty(window, 'electronAPI', { configurable: true, value: {} })
+    vi.resetModules()
+
+    try {
+      const { getImageUrl } = await import('@/api/client')
+      expect(getImageUrl('/files/mineru/extract123/images/chart.png')).toBe(
+        'http://127.0.0.1:5011/files/mineru/extract123/images/chart.png'
+      )
+    } finally {
+      Object.defineProperty(window, 'electronAPI', { configurable: true, value: undefined })
+      vi.resetModules()
+    }
+  })
   it('renders inline LaTeX formula with $ delimiters', () => {
     const { container } = render(<Markdown>The formula $E = mc^2$ is famous</Markdown>)
     // KaTeX renders math into spans with class "katex"

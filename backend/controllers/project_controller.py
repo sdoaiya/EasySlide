@@ -16,7 +16,8 @@ from sqlalchemy.orm import joinedload
 from werkzeug.exceptions import BadRequest
 from werkzeug.utils import secure_filename
 
-from models import db, Project, Page, Task, ReferenceFile
+from models import db, Project, Page, PageImageVersion, Task, ReferenceFile
+from models.project import normalize_native_image_settings
 from services import ProjectContext, FileService
 from services.ai_service_manager import get_ai_service
 from services.image_generation_manifest import (
@@ -24,6 +25,17 @@ from services.image_generation_manifest import (
     persist_image_generation_manifest,
 )
 from services.image_template_profiles import has_gorden_template_pack
+from services.content_spine_service import (
+    get_spine_source_fields,
+    update_spine_source_fields,
+)
+from services.ppt_workspace_service import (
+    get_ppt_settings,
+    get_ppt_status,
+    record_ppt_revision,
+    set_ppt_status,
+    update_ppt_settings,
+)
 from services.task_manager import (
     task_manager,
     generate_descriptions_task,
@@ -31,6 +43,7 @@ from services.task_manager import (
     process_ppt_renovation_task,
     get_image_prompt_field_names,
     prepare_page_for_image_generation,
+    recover_historical_image_scenes_task,
 )
 from utils import (
     success_response, error_response, not_found, bad_request,
@@ -42,12 +55,24 @@ logger = logging.getLogger(__name__)
 project_bp = Blueprint('projects', __name__, url_prefix='/api/projects')
 ASYNC_EXPORT_TASK_TYPES = {
     'EXPORT_EDITABLE_PPTX', 'EXPORT_NATIVE_PPTX', 'EXPORT_NATIVE_PDF',
-    'EXPORT_NATIVE_HTML', 'EXPORT_VIDEO', 'GENERATE_NATIVE_DECK',
+    'EXPORT_NATIVE_HTML', 'EXPORT_VIDEO', 'EXPORT_VIDEO_WORKSPACE',
+    'EXPORT_PODCAST_WORKSPACE', 'GENERATE_NATIVE_DECK',
 }
-PAUSABLE_TASK_TYPES = ASYNC_EXPORT_TASK_TYPES | {'GENERATE_IMAGES'}
+PAUSABLE_TASK_TYPES = ASYNC_EXPORT_TASK_TYPES | {
+    'GENERATE_IMAGES', 'INITIALIZE_CONTENT_WORKSPACE', 'RECOVER_IMAGE_SCENES',
+}
 MAX_IMAGE_GENERATION_WORKERS = 4
 ACTIVE_TASK_STATUSES = {'PENDING', 'PROCESSING', 'RUNNING'}
 ACTIVE_PAGE_STATUSES = {'GENERATING_DESCRIPTION', 'QUEUED', 'GENERATING'}
+WORKSPACE_ACTIVE_TASK_TYPES = {
+    'INITIALIZE_CONTENT_WORKSPACE',
+    'EXPORT_VIDEO_WORKSPACE',
+    'EXPORT_PODCAST_WORKSPACE',
+}
+WORKSPACE_READY_STAGES = {
+    'READY', 'COMPLETED', 'EXPORTED', 'FINAL',
+    'GENERATED', 'IMAGES_GENERATED', 'NATIVE_DECK_GENERATED',
+}
 
 
 def _page_has_image(page):
@@ -62,15 +87,15 @@ def _reset_image_page_after_stale_task(page):
 
 
 def _derive_image_project_status(project, pages):
-    if project.render_mode == 'native':
-        return project.status
+    if get_ppt_settings(project)['render_mode'] == 'native':
+        return get_ppt_status(project)
     if not pages:
-        return project.status
+        return get_ppt_status(project)
     if all(page.status in {'COMPLETED', 'NATIVE_GENERATED'} or _page_has_image(page) for page in pages):
         return 'COMPLETED'
     if any(page.description_content for page in pages):
         return 'DESCRIPTIONS_GENERATED'
-    if project.outline_text or any(page.outline_content for page in pages):
+    if get_spine_source_fields(project)['outline_text'] or any(page.outline_content for page in pages):
         return 'OUTLINE_GENERATED'
     return 'DRAFT'
 
@@ -79,7 +104,7 @@ def _calibrate_stale_image_generation_state(project):
     """Turn DB-only running image tasks into resumable paused tasks before listing."""
     changed = False
     pages = list(project.pages or [])
-    if project.render_mode != 'native':
+    if get_ppt_settings(project)['render_mode'] != 'native':
         file_service = FileService(current_app.config['UPLOAD_FOLDER'])
         for page in pages:
             if page.generated_image_path and not file_service.file_exists(page.generated_image_path):
@@ -102,11 +127,11 @@ def _calibrate_stale_image_generation_state(project):
     if not tasks:
         next_status = _derive_image_project_status(project, pages)
         if (
-            project.render_mode != 'native'
-            and project.status != next_status
-            and (changed or project.status == 'GENERATING_IMAGES')
+            get_ppt_settings(project)['render_mode'] != 'native'
+            and get_ppt_status(project) != next_status
+            and (changed or get_ppt_status(project) == 'GENERATING_IMAGES')
         ):
-            project.status = next_status
+            set_ppt_status(project, next_status)
             changed = True
         return changed
 
@@ -123,8 +148,8 @@ def _calibrate_stale_image_generation_state(project):
         changed = _reset_image_page_after_stale_task(page) or changed
 
     next_status = _derive_image_project_status(project, pages)
-    if project.render_mode != 'native' and project.status != next_status:
-        project.status = next_status
+    if get_ppt_settings(project)['render_mode'] != 'native' and get_ppt_status(project) != next_status:
+        set_ppt_status(project, next_status)
         changed = True
 
     return changed
@@ -139,11 +164,57 @@ def _calibrate_projects_for_listing(projects):
     return changed
 
 
+def _workspace_task_matches_kind(task, kind):
+    """Return whether a task represents work for the given media workspace."""
+    if task.task_type == 'EXPORT_VIDEO_WORKSPACE':
+        return kind == 'video'
+    if task.task_type == 'EXPORT_PODCAST_WORKSPACE':
+        return kind == 'podcast'
+    if task.task_type == 'INITIALIZE_CONTENT_WORKSPACE':
+        progress = task.get_progress()
+        return (
+            progress.get('workspace_kind') == kind
+            or progress.get('_resume', {}).get('kwargs', {}).get('workspace_kind') == kind
+        )
+    return False
+
+
+def _get_non_ppt_workspace_status(workspace, tasks):
+    """Reduce video/podcast workspace state to generating, completed, or draft."""
+    stage = str(workspace.stage or '').strip().upper()
+    if stage.startswith('GENERATING') or stage in {
+        'PENDING', 'PROCESSING', 'RUNNING', 'QUEUED', 'EXPORTING',
+    }:
+        return 'generating'
+
+    matching_tasks = [
+        task for task in tasks
+        if task.task_type in WORKSPACE_ACTIVE_TASK_TYPES
+        and _workspace_task_matches_kind(task, workspace.kind)
+    ]
+    if any(task.status in ACTIVE_TASK_STATUSES for task in matching_tasks):
+        return 'generating'
+    if workspace.state == 'ready' or stage in WORKSPACE_READY_STAGES:
+        return 'completed'
+    # A successful workspace export is a completed deliverable even though
+    # the editable workspace itself remains in the draft state.
+    if any(
+        task.status == 'COMPLETED'
+        and task.task_type in {
+            f'EXPORT_{workspace.kind.upper()}_WORKSPACE',
+        }
+        for task in matching_tasks
+    ):
+        return 'completed'
+    return 'in_progress'
+
+
 def _get_project_dashboard_stats():
     """Calculate project counters across the full project set, not one page."""
     all_projects = Project.query.options(
         joinedload(Project.pages),
         joinedload(Project.tasks),
+        joinedload(Project.workspaces),
     ).all()
     _calibrate_projects_for_listing(all_projects)
     completed = 0
@@ -152,11 +223,24 @@ def _get_project_dashboard_stats():
     for project in all_projects:
         pages = list(project.pages or [])
         has_active_pages = any(page.status in ACTIVE_PAGE_STATUSES for page in pages)
-        if project.status in {'GENERATING_DESCRIPTIONS', 'GENERATING_IMAGES'} or has_active_pages:
+        ppt_status = get_ppt_status(project)
+        workspace_statuses = [
+            _get_non_ppt_workspace_status(workspace, project.tasks or [])
+            for workspace in (project.workspaces or [])
+            if workspace.kind in {'video', 'podcast'}
+        ]
+        if (
+            ppt_status in {'GENERATING_DESCRIPTIONS', 'GENERATING_IMAGES'}
+            or has_active_pages
+            or 'generating' in workspace_statuses
+        ):
             generating += 1
             continue
 
-        if project.status in {'COMPLETED', 'NATIVE_DECK_GENERATED'}:
+        if (
+            ppt_status in {'COMPLETED', 'NATIVE_DECK_GENERATED'}
+            or 'completed' in workspace_statuses
+        ):
             completed += 1
             continue
 
@@ -186,17 +270,63 @@ def _resolve_image_generation_workers(requested, configured):
 
 
 IMAGE_DENSITY_HINTS = {
-    'sparse': ('轻量', '页面更留白，减少装饰和信息块，突出核心标题与 1-2 个关键视觉元素'),
-    'standard': ('标准', '保持常规商务 PPT 信息密度，标题、正文、图表与装饰均衡'),
-    'rich': ('丰富', '提高信息密度，可使用更多图表、卡片、标注和数据层级，但不得拥挤或遮挡文字'),
+    'sparse': ('极简', '只保留一个核心主体，次要主体不超过一个、环境道具不超过两个；背景复杂度低，关闭装饰元素并最大化留白'),
+    'standard': ('克制', '保持一个视觉焦点，次要主体不超过两个、环境道具不超过三个；背景简单，装饰元素仅在页面明确需要时出现'),
+    'rich': ('丰富', '允许多层信息和辅助元素，但仍只保留一个视觉焦点；辅助元素不超过四个，背景不得喧宾夺主或挤占文字区'),
 }
 
 IMAGE_STYLE_HINTS = {
     'theme': ('跟随模板', '优先延续当前模板或项目既有视觉风格'),
-    'business': ('商务简洁', '克制、清晰、适合汇报，避免夸张装饰'),
-    'tech': ('科技感', '现代科技视觉，可使用冷色、网格、发光线条或数据界面质感'),
-    'photo': ('真实图片感', '优先使用真实场景、产品摄影或高质量写实素材感'),
-    'flat': ('扁平插画', '使用干净扁平插画、几何图形和低复杂度图标风格'),
+    'business': ('商务简洁', '克制、清晰、适合汇报，避免奢侈品广告感和夸张装饰'),
+    'tech': ('科技编辑风', '使用冷静的现代科技视觉和清晰信息层级；除非页面内容明确要求，不使用霓虹、全息界面或漂浮光效'),
+    'photo': ('真实商业摄影', '使用可信的真实场景、自然材质、合理比例和自然接触阴影；默认平视、中广角、自然景深，大部分元素清晰，保留轻微自然相机纹理而非重胶片颗粒'),
+    'flat': ('扁平商务插画', '使用干净色块、清晰边缘和低复杂度图形，不使用伪 3D 光泽或塑料渐变'),
+}
+
+IMAGE_COMPOSITION_HINTS = {
+    'auto': ('自动适配', '依据本页角色和内容选择构图，确保文字区与视觉区互不争抢'),
+    'text-left': ('左文右图', '核心视觉集中在右侧约 40% 区域，左侧约 45% 为文字安全区，重要物体不得进入左侧文字区'),
+    'text-right': ('右文左图', '核心视觉集中在左侧约 40% 区域，右侧约 45% 为文字安全区，重要物体不得进入右侧文字区'),
+    'center': ('居中主视觉', '主体居中并保持清晰层级，标题与正文使用独立且不重叠的安全区域'),
+    'full-bleed': ('全画面', '视觉可铺满画面，但文字必须位于低噪声区域并保持足够对比度'),
+}
+
+IMAGE_RESTRAINT_HINTS = {
+    'standard': ('标准', '控制饱和度和视觉噪声，不添加随机光点、无意义装饰、页面正文之外的文字或水印'),
+    'strong': ('强力', '使用自然或柔和商业光，保持现实尺度、统一光源和自然接触阴影；避免霓虹、全息界面、体积光、电影调色、塑料材质和广告式完美'),
+    'documentary': ('纪实', '保持普通工作日氛围、自然间距与轻微不对称，允许合理使用痕迹；人物不摆拍、不强制微笑、不直视镜头，不过度磨皮'),
+}
+
+IMAGE_VISUAL_PALETTES = {
+    'default': ('跟随模板', ''),
+    'enterprise_blue': ('企业蓝', '主色使用企业蓝，辅助色使用青绿，整体保持冷静、可信、商业汇报感'),
+    'teal': ('青绿', '主色使用青绿，辅助色使用克制暖金，整体更清爽、自然、专业'),
+    'black_gold': ('黑金', '使用黑金高端配色，背景和文字保持高对比，避免廉价金属质感'),
+    'orange_gray': ('橙灰', '使用橙色重点和中性灰结构，整体更有行动感但不过度活泼'),
+    'custom': ('自定义', ''),
+}
+
+IMAGE_CHART_THEMES = {
+    'clean': '图表保持清爽、低噪声、易读，弱化网格和装饰',
+    'consulting': '图表使用咨询报告风格，突出结论、对比、桥接关系和关键标注',
+    'contrast': '图表使用高对比表达，重点数字和差异必须醒目',
+    'executive': '图表服务高管摘要，减少细碎数据，强化结论层级',
+}
+
+IMAGE_MEDIA_STYLES = {
+    'auto': '图片素材跟随页面内容和模板角色',
+    'photo': '优先写实商业照片，真实场景和主体明确',
+    'illustration': '使用克制插画，避免卡通、廉价 3D 和无意义装饰',
+    'product': '突出产品、业务主体或解决方案对象，背景简洁',
+    'none': '尽量不用装饰图片，优先以排版、色块、图表和文本层级完成页面',
+}
+
+IMAGE_TONES = {
+    'strategy': '表达偏战略咨询，强调判断、路径和取舍',
+    'sales': '表达偏销售方案，强调价值、场景和行动',
+    'government': '表达偏政府汇报，稳健、正式、少夸张',
+    'technical': '表达偏技术方案，强调结构、机制和可验证性',
+    'research': '表达偏研究报告，强调证据、定义和边界',
 }
 
 
@@ -223,22 +353,60 @@ def _resolve_image_generation_options(options):
         IMAGE_STYLE_HINTS,
         'theme',
     )
+    composition = _normalize_image_generation_choice(
+        options.get('image_composition') or options.get('composition'),
+        IMAGE_COMPOSITION_HINTS,
+        'auto',
+    )
+    restraint = _normalize_image_generation_choice(
+        options.get('image_restraint') or options.get('restraint'),
+        IMAGE_RESTRAINT_HINTS,
+        'strong',
+    )
     custom_prompt = _clean_image_style_prompt(
         options.get('image_style_prompt') or options.get('custom_prompt')
     )
-    return density, style, custom_prompt
+    return density, style, composition, restraint, custom_prompt
 
 
-def _build_image_generation_settings_prompt(density, style, custom_prompt):
+def _build_image_generation_settings_prompt(density, style, composition, restraint, custom_prompt):
     density_label, density_hint = IMAGE_DENSITY_HINTS[density]
     style_label, style_hint = IMAGE_STYLE_HINTS[style]
+    composition_label, composition_hint = IMAGE_COMPOSITION_HINTS[composition]
+    restraint_label, restraint_hint = IMAGE_RESTRAINT_HINTS[restraint]
     lines = [
-        f"信息密度：{density_label}。{density_hint}。",
+        "用途：productivity-visual，用于演示文稿页面视觉，不生成独立海报或与页面无关的装饰图。",
+        "资产类型：PPT 页面视觉素材；优先服务页面信息层级、文字安全区和投屏可读性。",
+        f"视觉密度：{density_label}。{density_hint}。",
         f"视觉风格：{style_label}。{style_hint}。",
+        f"构图安全区：{composition_label}。{composition_hint}。",
+        f"AI 味抑制：{restraint_label}。{restraint_hint}。",
     ]
     if custom_prompt:
-        lines.append(f"用户补充图片风格要求：{custom_prompt}")
-    return "\n\n图片生成设置：\n" + "\n".join(f"- {line}" for line in lines)
+        lines.append(f"用户补充的必须出现、禁止出现或品牌约束：{custom_prompt}")
+    return ("\n\n结构化图片生成约束（若与项目补充、模板描述、页面角色或版式提示冲突，以本段为准）：\n"
+            + "\n".join(f"- {line}" for line in lines))
+
+
+def _build_template_visual_preferences_prompt(settings):
+    if not isinstance(settings, dict):
+        return ''
+    palette = settings.get('palette') or 'default'
+    chart_theme = settings.get('chart_theme') or 'clean'
+    media_style = settings.get('media_style') or 'auto'
+    tone = settings.get('tone') or 'strategy'
+    palette_label, palette_hint = IMAGE_VISUAL_PALETTES.get(palette, IMAGE_VISUAL_PALETTES['default'])
+    lines = [
+        f"模板配色变体：{palette_label}。{palette_hint or '保留所选模板的原始色彩体系。'}",
+        f"图表表达：{IMAGE_CHART_THEMES.get(chart_theme, IMAGE_CHART_THEMES['clean'])}。",
+        f"图片策略：{IMAGE_MEDIA_STYLES.get(media_style, IMAGE_MEDIA_STYLES['auto'])}。",
+        f"表达语气：{IMAGE_TONES.get(tone, IMAGE_TONES['strategy'])}。",
+    ]
+    custom_palette = settings.get('custom_palette') if isinstance(settings.get('custom_palette'), dict) else {}
+    if palette == 'custom' and custom_palette:
+        colors = ', '.join(f'{key}={value}' for key, value in custom_palette.items())
+        lines.append(f"自定义色值：{colors}。在不破坏模板版式识别的前提下替换原模板主辅色。")
+    return "\n\n图片模式模板视觉偏好：\n" + "\n".join(f"- {line}" for line in lines)
 
 
 def _submit_image_generation_task(task, project, pages, options=None):
@@ -246,10 +414,12 @@ def _submit_image_generation_task(task, project, pages, options=None):
     options = options or {}
     file_service = FileService(current_app.config['UPLOAD_FOLDER'])
     use_template = options.get('use_template', True)
-    image_density, image_style, image_style_prompt = _resolve_image_generation_options(options)
+    image_density, image_style, image_composition, image_restraint, image_style_prompt = _resolve_image_generation_options(options)
     ref_image_path = file_service.get_template_path(project.id) if use_template else None
     has_generation_style = image_style != 'theme' or bool(image_style_prompt)
-    if not ref_image_path and not project.template_style and not has_gorden_template_pack(project.template_pack_id) and not has_generation_style:
+    has_page_template = any(page.template_image_path or page.template_style_text for page in pages)
+    is_renovation = project.creation_type in {'renovation', 'ppt_renovation'}
+    if not is_renovation and not ref_image_path and not project.template_style and not has_page_template and not has_gorden_template_pack(project.template_pack_id) and not has_generation_style:
         raise ValueError("请先上传模板图片或添加风格描述。")
 
     outline = _reconstruct_outline_from_pages(get_filtered_pages(project.id, None))
@@ -282,13 +452,15 @@ def _submit_image_generation_task(task, project, pages, options=None):
             'max_workers': max_workers,
             'image_density': image_density,
             'image_style': image_style,
+            'image_composition': image_composition,
+            'image_restraint': image_restraint,
             'image_style_prompt': image_style_prompt,
         },
         style_snapshot={
             'template_pack_id': project.template_pack_id,
             'template_style': project.template_style or '',
             'extra_requirements': project.extra_requirements or '',
-            'aspect_ratio': project.image_aspect_ratio,
+            'aspect_ratio': get_ppt_settings(project)['image_aspect_ratio'],
             'resolution': current_app.config['DEFAULT_RESOLUTION'],
         },
         existing=existing_progress,
@@ -313,7 +485,12 @@ def _submit_image_generation_task(task, project, pages, options=None):
     combined_requirements += _build_image_generation_settings_prompt(
         image_density,
         image_style,
+        image_composition,
+        image_restraint,
         image_style_prompt,
+    )
+    combined_requirements += _build_template_visual_preferences_prompt(
+        get_ppt_settings(project)['native_image_settings']
     )
 
     try:
@@ -326,7 +503,7 @@ def _submit_image_generation_task(task, project, pages, options=None):
             outline,
             use_template,
             max_workers,
-            project.image_aspect_ratio,
+            get_ppt_settings(project)['image_aspect_ratio'],
             current_app.config['DEFAULT_RESOLUTION'],
             current_app._get_current_object(),
             combined_requirements if combined_requirements.strip() else None,
@@ -344,7 +521,7 @@ def _submit_image_generation_task(task, project, pages, options=None):
         db.session.commit()
         raise
 
-    project.status = 'GENERATING_IMAGES'
+    set_ppt_status(project, 'GENERATING_IMAGES')
     db.session.commit()
 
 
@@ -501,7 +678,11 @@ def list_projects():
         total = stats['total']
 
         projects = Project.query\
-            .options(joinedload(Project.pages), joinedload(Project.tasks))\
+            .options(
+                joinedload(Project.pages),
+                joinedload(Project.tasks),
+                joinedload(Project.workspaces),
+            )\
             .order_by(desc(Project.updated_at))\
             .limit(limit)\
             .offset(offset)\
@@ -546,13 +727,19 @@ def create_project():
         
         creation_type = data.get('creation_type')
         
-        if creation_type not in ['idea', 'outline', 'descriptions']:
+        if creation_type not in ['idea', 'outline', 'descriptions', 'blank']:
             return bad_request("Invalid creation_type")
 
         render_mode = data.get('render_mode', 'image')
         if render_mode not in ('image', 'native'):
             return bad_request("Invalid render_mode")
         native_theme = data.get('native_theme') or ('theme01' if render_mode == 'native' else None)
+        initial_workspace = data.get('initial_workspace')
+        if initial_workspace is not None and initial_workspace not in ('ppt', 'video', 'podcast'):
+            return bad_request('Invalid initial_workspace')
+        workspace_settings = data.get('workspace_settings') or {}
+        if not isinstance(workspace_settings, dict):
+            return bad_request('workspace_settings must be an object')
 
         template_pack_id = data.get('template_pack_id')
         if template_pack_id is not None and (not isinstance(template_pack_id, str) or len(template_pack_id) > 120):
@@ -565,29 +752,104 @@ def create_project():
                 image_aspect_ratio = normalize_aspect_ratio(data['image_aspect_ratio'])
             except ValueError as e:
                 return bad_request(str(e))
+        try:
+            native_image_settings = normalize_native_image_settings(
+                data.get('native_image_settings')
+            )
+        except ValueError as exc:
+            return bad_request(str(exc))
 
         # Create project
         project = Project(
+            project_title=data.get('project_title'),
             creation_type=creation_type,
-            idea_prompt=data.get('idea_prompt'),
-            outline_text=data.get('outline_text'),
-            description_text=data.get('description_text'),
             template_style=data.get('template_style'),
             template_pack_id=(template_pack_id.strip() or None) if isinstance(template_pack_id, str) else None,
-            image_aspect_ratio=image_aspect_ratio,
-            render_mode=render_mode,
-            native_theme=native_theme,
-            status='DRAFT'
+            status='active',
+            last_workspace=initial_workspace or 'ppt',
         )
-        
+        try:
+            if 'pronunciation_lexicon' in data:
+                project.set_pronunciation_lexicon(data['pronunciation_lexicon'])
+            if 'narration_preferences' in data:
+                project.set_narration_preferences(data['narration_preferences'])
+        except ValueError as exc:
+            return bad_request(str(exc))
+
+        from controllers.content_workspace_controller import (
+            submit_workspace_task,
+            workspace_initialization_task_summary,
+        )
+        from services.content_spine_service import create_spine, spine_to_dict
+        from services.project_workspace_service import (
+            create_workspace_set,
+            initialize_workspace_from_snapshot,
+            queue_workspace_initialization,
+            workspace_to_dict,
+        )
+
         db.session.add(project)
+        db.session.flush()
+        project.content_spine = create_spine(project.id, data)
+        project.workspaces.extend(create_workspace_set(project.id))
+        db.session.flush()
+        ppt_workspace_settings = {
+            'render_mode': render_mode,
+            'native_theme': native_theme,
+            'image_aspect_ratio': image_aspect_ratio,
+            'native_image_settings': native_image_settings,
+            **workspace_settings,
+        }
+
+        if initial_workspace:
+            if initial_workspace == 'ppt':
+                workspace_settings = ppt_workspace_settings
+            task = queue_workspace_initialization(
+                project,
+                initial_workspace,
+                settings=workspace_settings,
+                require_confirmed=False,
+            )
+            db.session.add(task)
+            db.session.commit()
+            try:
+                submit_workspace_task(task, current_app._get_current_object())
+            except Exception as exc:
+                task.status = 'PAUSED'
+                task.error_message = str(exc)
+                db.session.commit()
+            return success_response({
+                'project_id': project.id,
+                'status': get_ppt_status(project),
+                'initial_workspace': initial_workspace,
+                'task_id': task.id,
+                'task_status': task.status,
+                'initialization_task': workspace_initialization_task_summary(task, initial_workspace),
+                'spine': spine_to_dict(project.content_spine),
+                'workspaces': [workspace_to_dict(item) for item in project.workspaces],
+            }, status_code=202)
+
+        spine = project.content_spine
+        initialize_workspace_from_snapshot(
+            project.id,
+            'ppt',
+            spine.revision,
+            spine.content_hash,
+            json.loads(spine.document_json),
+            ppt_workspace_settings,
+        )
         db.session.commit()
         
+        ppt_settings = get_ppt_settings(project)
         return success_response({
             'project_id': project.id,
-            'status': project.status,
-            'render_mode': project.render_mode,
-            'native_theme': project.native_theme,
+            'status': get_ppt_status(project),
+            'render_mode': ppt_settings['render_mode'],
+            'native_theme': ppt_settings['native_theme'],
+            'native_image_settings': ppt_settings['native_image_settings'],
+            'pronunciation_lexicon': project.get_pronunciation_lexicon(),
+            'narration_preferences': project.get_narration_preferences(),
+            'initialization_task': None,
             'pages': []
         }, status_code=201)
     
@@ -612,7 +874,11 @@ def get_project(project_id):
     try:
         # Use eager loading to load project and related pages
         project = Project.query\
-            .options(joinedload(Project.pages), joinedload(Project.tasks))\
+            .options(
+                joinedload(Project.pages),
+                joinedload(Project.tasks),
+                joinedload(Project.workspaces),
+            )\
             .filter(Project.id == project_id)\
             .first()
         
@@ -651,25 +917,22 @@ def update_project(project_id):
             return not_found('Project')
         
         data = request.get_json()
+        ppt_changed = False
 
-        if 'render_mode' in data and data['render_mode'] != (project.render_mode or 'image'):
+        if 'render_mode' in data and data['render_mode'] != get_ppt_settings(project)['render_mode']:
             return bad_request("render_mode cannot be changed after project creation")
 
         # Update project_title if provided
         if 'project_title' in data:
             project.project_title = data['project_title']
         
-        # Update idea_prompt if provided
-        if 'idea_prompt' in data:
-            project.idea_prompt = data['idea_prompt']
-
-        # Update outline_text if provided
-        if 'outline_text' in data:
-            project.outline_text = data['outline_text']
-
-        # Update description_text if provided
-        if 'description_text' in data:
-            project.description_text = data['description_text']
+        spine_patch = {
+            field: data[field]
+            for field in ('idea_prompt', 'outline_text', 'description_text')
+            if field in data
+        }
+        if spine_patch:
+            update_spine_source_fields(project.content_spine, spine_patch)
 
         # Update extra_requirements if provided
         if 'extra_requirements' in data:
@@ -693,14 +956,34 @@ def update_project(project_id):
 
         if 'native_image_settings' in data:
             try:
-                project.set_native_image_settings(data['native_image_settings'])
+                native_image_settings = normalize_native_image_settings(data['native_image_settings'])
+                if update_ppt_settings(
+                    project,
+                    {'native_image_settings': native_image_settings},
+                    record_revision=False,
+                ):
+                    ppt_changed = True
             except ValueError as exc:
                 return bad_request(str(exc))
+
+        try:
+            if 'pronunciation_lexicon' in data:
+                project.set_pronunciation_lexicon(data['pronunciation_lexicon'])
+            if 'narration_preferences' in data:
+                project.set_narration_preferences(data['narration_preferences'])
+        except ValueError as exc:
+            return bad_request(str(exc))
         
         # Update aspect ratio if provided
         if 'image_aspect_ratio' in data:
             try:
-                project.image_aspect_ratio = normalize_aspect_ratio(data['image_aspect_ratio'])
+                image_aspect_ratio = normalize_aspect_ratio(data['image_aspect_ratio'])
+                if update_ppt_settings(
+                    project,
+                    {'image_aspect_ratio': image_aspect_ratio},
+                    record_revision=False,
+                ):
+                    ppt_changed = True
             except ValueError as e:
                 return bad_request(str(e))
 
@@ -733,8 +1016,15 @@ def update_project(project_id):
             for index, page_id in enumerate(pages_order):
                 if page_id in pages_map:
                     pages_map[page_id].order_index = index
+            ppt_changed = True
         
         project.updated_at = datetime.utcnow()
+        if ppt_changed:
+            record_ppt_revision(
+                project,
+                'ppt.update',
+                changed_page_ids=data.get('pages_order') or [],
+            )
         db.session.commit()
         
         return success_response(project.to_dict(include_pages=True))
@@ -809,34 +1099,31 @@ def generate_outline(project_id):
                 logger.info(f"  - {rf['filename']}: {len(rf['content'])} characters")
         else:
             logger.info(f"No reference files found for project {project_id}")
-        
+        project_context = ProjectContext(project, reference_files_content)
+
         # 根据项目类型选择不同的处理方式
         if project.creation_type == 'outline':
             # 从大纲生成：解析用户输入的大纲文本
-            if not project.outline_text:
+            if not project_context.outline_text:
                 return bad_request("outline_text is required for outline type project")
-            
-            # Create project context and parse outline text into structured format
-            project_context = ProjectContext(project, reference_files_content)
             outline = ai_service.parse_outline_text(project_context, language=language)
         elif project.creation_type == 'descriptions':
             # 从描述生成：从 description_text 提取大纲结构（仅大纲，不含页面描述）
-            if not project.description_text:
+            if not project_context.description_text:
                 return bad_request("description_text is required for descriptions type project")
 
-            project_context = ProjectContext(project, reference_files_content)
             outline = ai_service.parse_description_to_outline(project_context, language=language)
         else:
             # 一句话生成：从idea生成大纲
-            idea_prompt = data.get('idea_prompt') or project.idea_prompt
+            idea_prompt = data.get('idea_prompt') or project_context.idea_prompt
             
             if not idea_prompt:
                 return bad_request("idea_prompt is required")
             
-            project.idea_prompt = idea_prompt
-            
-            # Create project context and generate outline from idea
+            update_spine_source_fields(project.content_spine, {'idea_prompt': idea_prompt})
             project_context = ProjectContext(project, reference_files_content)
+
+            # Create project context and generate outline from idea
             outline = ai_service.generate_outline(project_context, language=language)
         
         # Flatten outline to pages and smart merge with existing
@@ -845,10 +1132,16 @@ def generate_outline(project_id):
 
         # Update project status (don't downgrade if all pages already have content)
         if all(p.description_content for p in pages_list) and pages_list:
-            project.status = 'DESCRIPTIONS_GENERATED'
+            set_ppt_status(project, 'DESCRIPTIONS_GENERATED')
         else:
-            project.status = 'OUTLINE_GENERATED'
+            set_ppt_status(project, 'OUTLINE_GENERATED')
         project.updated_at = datetime.utcnow()
+        record_ppt_revision(
+            project,
+            'outline.generate',
+            changed_page_ids=[page.id for page in pages_list],
+            source_type='ai',
+        )
         
         db.session.commit()
         
@@ -897,21 +1190,22 @@ def generate_outline_stream(project_id):
                 ai_service = get_ai_service()
                 reference_files_content = _get_project_reference_files_content(project_id)
 
+                source_fields = get_spine_source_fields(proj)
                 # Validate input based on creation type
-                if proj.creation_type == 'outline' and not proj.outline_text:
+                if proj.creation_type == 'outline' and not source_fields['outline_text']:
                     yield _sse_event('error', {'message': 'outline_text is required'})
                     return
-                if proj.creation_type == 'descriptions' and not proj.description_text:
+                if proj.creation_type == 'descriptions' and not source_fields['description_text']:
                     yield _sse_event('error', {'message': 'description_text is required'})
                     return
 
                 # Update idea_prompt if provided
                 if proj.creation_type not in ('outline', 'descriptions'):
-                    idea_prompt = data.get('idea_prompt') or proj.idea_prompt
+                    idea_prompt = data.get('idea_prompt') or source_fields['idea_prompt']
                     if not idea_prompt:
                         yield _sse_event('error', {'message': 'idea_prompt is required'})
                         return
-                    proj.idea_prompt = idea_prompt
+                    update_spine_source_fields(proj.content_spine, {'idea_prompt': idea_prompt})
 
                 project_context = ProjectContext(proj, reference_files_content)
 
@@ -952,6 +1246,12 @@ def generate_outline_stream(project_id):
                 else:
                     proj.status = 'OUTLINE_GENERATED'
                 proj.updated_at = datetime.utcnow()
+                record_ppt_revision(
+                    proj,
+                    'outline.generate_stream',
+                    changed_page_ids=[page.id for page in pages_list],
+                    source_type='ai',
+                )
                 db.session.commit()
 
                 logger.info(f"流式大纲生成完成: 项目 {project_id}, {len(pages_list)} 个页面")
@@ -1015,13 +1315,18 @@ def generate_from_description(project_id):
         
         # Get description text and language
         data = request.get_json() or {}
-        description_text = data.get('description_text') or project.description_text
+        description_text = (
+            data.get('description_text')
+            or get_spine_source_fields(project)['description_text']
+        )
         language = data.get('language', current_app.config.get('OUTPUT_LANGUAGE', 'zh'))
         
         if not description_text:
             return bad_request("description_text is required")
         
-        project.description_text = description_text
+        update_spine_source_fields(
+            project.content_spine, {'description_text': description_text}
+        )
         
         # Get singleton AI service instance
         ai_service = get_ai_service()
@@ -1084,8 +1389,14 @@ def generate_from_description(project_id):
             pages_list.append(page)
         
         # Update project status
-        project.status = 'DESCRIPTIONS_GENERATED'
+        set_ppt_status(project, 'DESCRIPTIONS_GENERATED')
         project.updated_at = datetime.utcnow()
+        record_ppt_revision(
+            project,
+            'description.import',
+            changed_page_ids=[page.id for page in pages_list],
+            source_type='ai',
+        )
         
         db.session.commit()
         
@@ -1181,7 +1492,7 @@ def generate_descriptions(project_id):
         )
         
         # Update project status
-        project.status = 'GENERATING_DESCRIPTIONS'
+        set_ppt_status(project, 'GENERATING_DESCRIPTIONS')
         db.session.commit()
         
         return success_response({
@@ -1372,13 +1683,14 @@ def generate_images(project_id):
         if not requested_pages:
             return bad_request("No pages found for project")
 
-        # Batch generation is additive. Explicit single-page regeneration remains
-        # available through the page endpoint with force_regenerate=true.
+        # The first renovation image is the PDF source, not a generated result.
         file_service = FileService(current_app.config['UPLOAD_FOLDER'])
-        pages = [
-            page for page in requested_pages
-            if prepare_page_for_image_generation(page, file_service)
-        ]
+        is_renovation = project.creation_type in {'renovation', 'ppt_renovation'}
+        pages = (
+            [page for page in requested_pages if page.image_versions.count() <= 1]
+            if is_renovation
+            else [page for page in requested_pages if prepare_page_for_image_generation(page, file_service)]
+        )
         skipped_existing = len(requested_pages) - len(pages)
 
         active_image_tasks = Task.query.filter(
@@ -1446,6 +1758,65 @@ def generate_images(project_id):
         return error_response('SERVER_ERROR', str(e), 500)
 
 
+@project_bp.route('/<project_id>/recover-image-scenes', methods=['POST'])
+def recover_project_image_scenes(project_id):
+    if not db.session.get(Project, project_id):
+        return not_found('Project')
+    data = request.get_json(silent=True) or {}
+    page_ids = data.get('page_ids')
+    if page_ids is not None and (
+        not isinstance(page_ids, list)
+        or any(not isinstance(page_id, str) for page_id in page_ids)
+    ):
+        return bad_request('page_ids must be a list of page IDs')
+    pages = Page.query.filter_by(project_id=project_id).order_by(Page.order_index).all()
+    if page_ids is not None:
+        selected = set(page_ids)
+        pages = [page for page in pages if page.id in selected]
+    versions = PageImageVersion.query.filter(
+        PageImageVersion.page_id.in_([page.id for page in pages]),
+        PageImageVersion.is_current.is_(True),
+    ).all() if pages else []
+    versions_by_page = {version.page_id: version for version in versions}
+    version_ids = [
+        versions_by_page[page.id].id
+        for page in pages
+        if page.id in versions_by_page
+    ]
+    if not version_ids:
+        return bad_request('No current image versions are available for recovery')
+
+    force = bool(data.get('force'))
+    resume_kwargs = {
+        'project_id': project_id,
+        'version_ids': version_ids,
+        'force': force,
+    }
+    task = Task(project_id=project_id, task_type='RECOVER_IMAGE_SCENES', status='PENDING')
+    db.session.add(task)
+    db.session.flush()
+    task.set_progress({
+        'total': len(version_ids),
+        'completed': 0,
+        'failed': 0,
+        'pages': [],
+        '_resume': {'kind': 'historical-image-scenes', 'kwargs': resume_kwargs},
+    })
+    db.session.commit()
+    task_manager.submit_task(
+        task.id,
+        recover_historical_image_scenes_task,
+        file_service=FileService(current_app.config['UPLOAD_FOLDER']),
+        app=current_app._get_current_object(),
+        **resume_kwargs,
+    )
+    return success_response({
+        'task_id': task.id,
+        'status': 'PENDING',
+        'total_pages': len(version_ids),
+    }, status_code=202)
+
+
 @project_bp.route('/<project_id>/tasks/<task_id>', methods=['GET'])
 def get_task_status(project_id, task_id):
     """
@@ -1484,6 +1855,31 @@ def resume_export_task(project_id, task_id):
         return not_found('Task')
     if task.task_type not in PAUSABLE_TASK_TYPES:
         return bad_request('This asynchronous task cannot be resumed')
+    if task.task_type == 'INITIALIZE_CONTENT_WORKSPACE':
+        if task.status not in {'PAUSED', 'FAILED'}:
+            return success_response(task.to_dict())
+        if task_manager.is_task_active(task.id):
+            task.status = 'PROCESSING'
+            task.error_message = None
+            db.session.commit()
+            return success_response(task.to_dict())
+        resume = task.get_progress().get('_resume')
+        if not isinstance(resume, dict) or resume.get('kind') != 'content-workspace':
+            return bad_request('This content workspace task cannot be resumed')
+        task.status = 'PENDING'
+        task.error_message = None
+        task.completed_at = None
+        db.session.commit()
+        try:
+            from controllers.content_workspace_controller import submit_workspace_task
+
+            submit_workspace_task(task, current_app._get_current_object())
+        except Exception as exc:
+            task.status = 'PAUSED'
+            task.error_message = str(exc)
+            db.session.commit()
+            return error_response('SERVER_ERROR', str(exc), 500)
+        return success_response(task.to_dict())
     if task.status != 'PAUSED':
         return success_response(task.to_dict())
 
@@ -1540,12 +1936,18 @@ def resume_export_task(project_id, task_id):
 
     from services.task_manager import (
         export_editable_pptx_with_recursive_analysis_task,
+        export_podcast_workspace_task,
         export_video_task,
+        export_video_workspace_task,
+        recover_historical_image_scenes_task,
     )
 
     task_func = {
         'editable-pptx': export_editable_pptx_with_recursive_analysis_task,
+        'podcast_workspace': export_podcast_workspace_task,
         'video': export_video_task,
+        'video_workspace': export_video_workspace_task,
+        'historical-image-scenes': recover_historical_image_scenes_task,
     }.get(resume.get('kind'))
     if task_func is None:
         return bad_request('Unknown export task type')
@@ -1555,12 +1957,16 @@ def resume_export_task(project_id, task_id):
     task.completed_at = None
     db.session.commit()
     try:
+        submit_kwargs = {
+            'app': current_app._get_current_object(),
+            **resume['kwargs'],
+        }
+        if resume.get('kind') not in {'podcast_workspace', 'video_workspace'}:
+            submit_kwargs['file_service'] = FileService(current_app.config['UPLOAD_FOLDER'])
         task_manager.submit_task(
             task.id,
             task_func,
-            file_service=FileService(current_app.config['UPLOAD_FOLDER']),
-            app=current_app._get_current_object(),
-            **resume['kwargs'],
+            **submit_kwargs,
         )
     except Exception as exc:
         task.status = 'PAUSED'
@@ -1659,10 +2065,16 @@ def refine_outline(project_id):
 
         # Update project status
         if preserved_count and all(p.description_content for p in pages_list):
-            project.status = 'DESCRIPTIONS_GENERATED'
+            set_ppt_status(project, 'DESCRIPTIONS_GENERATED')
         else:
-            project.status = 'OUTLINE_GENERATED'
+            set_ppt_status(project, 'OUTLINE_GENERATED')
         project.updated_at = datetime.utcnow()
+        record_ppt_revision(
+            project,
+            'outline.refine',
+            changed_page_ids=[page.id for page in pages_list],
+            source_type='ai',
+        )
         
         db.session.commit()
         
@@ -1785,7 +2197,7 @@ def refine_descriptions(project_id):
             page.status = 'DESCRIPTION_GENERATED'
         
         # Update project status
-        project.status = 'DESCRIPTIONS_GENERATED'
+        set_ppt_status(project, 'DESCRIPTIONS_GENERATED')
         project.updated_at = datetime.utcnow()
         
         db.session.commit()
@@ -1843,9 +2255,31 @@ def create_ppt_renovation_project():
         project = Project(
             creation_type='ppt_renovation',
             template_style=template_style,
-            status='DRAFT'
+            status='active',
+            last_workspace='ppt',
         )
         db.session.add(project)
+        db.session.flush()
+        from services.content_spine_service import create_spine
+        from services.project_workspace_service import (
+            create_workspace_set,
+            initialize_workspace_from_snapshot,
+        )
+
+        project.content_spine = create_spine(project.id, {
+            'project_title': Path(file.filename).stem,
+        })
+        project.workspaces.extend(create_workspace_set(project.id))
+        db.session.flush()
+        spine = project.content_spine
+        initialize_workspace_from_snapshot(
+            project.id,
+            'ppt',
+            spine.revision,
+            spine.content_hash,
+            json.loads(spine.document_json),
+            {'render_mode': 'image', 'image_aspect_ratio': '16:9'},
+        )
         db.session.commit()
 
         project_id = project.id
@@ -1947,8 +2381,13 @@ def create_ppt_renovation_project():
         if pdf_page_width and pdf_page_height and pdf_page_width > 0 and pdf_page_height > 0:
             try:
                 raw_ratio = f"{int(round(pdf_page_width))}:{int(round(pdf_page_height))}"
-                project.image_aspect_ratio = normalize_aspect_ratio(raw_ratio)
-                logger.info(f"Set project aspect ratio from PDF: {pdf_page_width}x{pdf_page_height} -> {project.image_aspect_ratio}")
+                image_aspect_ratio = normalize_aspect_ratio(raw_ratio)
+                update_ppt_settings(
+                    project,
+                    {'image_aspect_ratio': image_aspect_ratio},
+                    record_revision=False,
+                )
+                logger.info(f"Set project aspect ratio from PDF: {pdf_page_width}x{pdf_page_height} -> {image_aspect_ratio}")
             except (ValueError, OverflowError) as e:
                 logger.warning(f"Could not normalize PDF aspect ratio ({pdf_page_width}x{pdf_page_height}): {e}, keeping default 16:9")
 
@@ -2031,7 +2470,7 @@ def create_ppt_renovation_project():
             language
         )
 
-        project.status = 'PROCESSING'
+        set_ppt_status(project, 'PROCESSING')
         db.session.commit()
 
         return success_response({

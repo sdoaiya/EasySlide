@@ -11,6 +11,14 @@ describe('ExportTasksPanel downloads', () => {
     expect(panel).toContain('electronAPI?.saveDownload');
   });
 
+  it('keeps podcast transcript and cover sidecars downloadable from the task center', () => {
+    const panel = source('src/components/shared/ExportTasksPanel.tsx');
+
+    expect(panel).toContain('task.progress?.sidecars');
+    expect(panel).toContain("kind === 'transcript'");
+    expect(panel).toContain("kind === 'cover_manifest'");
+  });
+
   it('saves desktop downloads to the configured export directory', () => {
     const main = source('../desktop/main.js');
     const builder = source('../desktop/electron-builder.yml');

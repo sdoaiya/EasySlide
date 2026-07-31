@@ -188,6 +188,7 @@
 @media (prefers-reduced-motion: reduce) {
   .native-enter-fade,
   .native-enter-slide-up,
+  .native-enter-slide-down,
   .native-enter-slide-left,
   .native-enter-slide-right,
   .native-enter-zoom-in,
@@ -205,7 +206,8 @@
   .native-page-transition-wipe,
   .native-page-transition-split,
   .native-page-transition-cover,
-  .native-page-transition-uncover {
+  .native-page-transition-uncover,
+  .native-page-outgoing {
     animation-duration: 1ms !important;
     animation-delay: 0ms !important;
   }
@@ -949,6 +951,50 @@
 .core01-bars-body span { font-size: 27px; font-weight: 700; }
 .core01-bars-body i { display: block; height: 34px; max-width: 100%; background: #087f8c; }
 .core01-bars-body li:nth-child(even) i { background: #d49a2a; }
+
+.core01-chart-body {
+  display: grid;
+  grid-template-columns: .34fr 1.66fr;
+  gap: 62px;
+  min-height: 660px;
+  margin-top: 38px;
+}
+
+.core01-chart-body > p {
+  align-self: end;
+  margin: 0 0 26px;
+  padding-top: 28px;
+  border-top: 8px solid #087f8c;
+  color: #4b5963;
+  font-size: 31px;
+  font-weight: 700;
+  line-height: 1.55;
+}
+
+.core01-flint-chart {
+  position: relative;
+  min-width: 0;
+  min-height: 660px;
+  overflow: hidden;
+}
+
+.core01-flint-chart-canvas { width: 100%; height: 100%; }
+
+.core01-flint-chart-error {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  padding: 48px;
+  border: 2px solid #b24536;
+  background: #fff;
+  color: #8b2f25;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.5;
+  text-align: center;
+}
 
 .core01-table-head { display: grid; grid-template-columns: 1fr 1fr; margin-top: 58px; padding: 16px 92px; border-bottom: 3px solid #18232d; color: #61717d; font-size: 22px; font-weight: 800; }
 .core01-table-head span:last-child { text-align: right; }

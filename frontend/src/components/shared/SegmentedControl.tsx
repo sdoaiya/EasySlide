@@ -47,7 +47,7 @@ export function SegmentedControl<T extends string>({
       role="radiogroup"
       aria-label={ariaLabel}
       aria-disabled={disabled || undefined}
-      className={`inline-flex rounded-md border border-border-primary bg-background-secondary p-1 ${className}`}
+      className={`inline-flex rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-1 shadow-[var(--app-shadow-control)] ${className}`}
     >
       {options.map((option, index) => {
         const selected = option.value === value;
@@ -65,10 +65,10 @@ export function SegmentedControl<T extends string>({
             tabIndex={selected ? 0 : -1}
             onClick={() => onChange(option.value)}
             onKeyDown={(event) => move(event, index)}
-            className={`min-h-9 rounded px-3 text-sm transition-colors ${
+            className={`min-h-9 rounded border px-3 text-sm transition-[background-color,color,border-color,box-shadow,transform] duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--app-accent-soft)] ${
               selected
-                ? 'bg-background-elevated font-medium text-foreground-primary shadow-sm'
-                : 'text-foreground-secondary hover:text-foreground-primary'
+                ? 'border-[var(--app-border)] bg-[var(--app-surface)] font-semibold text-[var(--app-text)] shadow-[var(--app-shadow-control)]'
+                : 'border-transparent text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text)]'
             } disabled:cursor-not-allowed disabled:opacity-50`}
           >
             {option.label}

@@ -1,27 +1,32 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useTranslation } from 'react-i18next';
-import { Home as HomeIcon, Trash2, Sun, Moon, LayoutDashboard, FolderOpen, ImagePlus, Settings, FileText, RefreshCw, CheckCircle, Clock3, Layers3 } from 'lucide-react';
-import { Button, Loading, Card, Pagination, useToast, useConfirm, MaterialGeneratorModal, MaterialCenterModal } from '@/components/shared';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { Trash2, LayoutDashboard, FileText, RefreshCw, CheckCircle, Clock3, Layers3, Plus, Search } from 'lucide-react';
+import { getStaticAssetUrl } from '@/api/client';
+import { AppTopNav, Button, Loading, Pagination, useToast, useConfirm } from '@/components/shared';
 import { ProjectCard } from '@/components/history/ProjectCard';
 import { useProjectStore } from '@/store/useProjectStore';
-import { useTheme } from '@/hooks/useTheme';
 import { useT } from '@/hooks/useT';
 import * as api from '@/api/endpoints';
-import { getStaticAssetUrl } from '@/api/client';
 import { normalizeProject } from '@/utils';
-import { getProjectTitle, getProjectRoute } from '@/utils/projectUtils';
+import { getFirstPageImage, getProjectTitle, getProjectRoute } from '@/utils/projectUtils';
 import type { Project, ProjectDashboardStats } from '@/types';
+import { useExportTasksStore } from '@/store/useExportTasksStore';
 
 // 页面特有翻译 - AI 可以直接看到所有文案
 const historyI18n = {
   zh: {
     home: { title: 'EasySlide', actions: { createProject: '创建新项目' } },
-    nav: { home: '主页', createProject: '创建项目', history: '我的项目', materialCenter: '素材中心', materialGenerate: '素材生成', settings: '设置' },
+    nav: { home: '首页', createProject: '创建项目', history: '我的项目', materialCenter: '素材中心', materialGenerate: '素材生成', settings: '设置' },
     settings: { language: { label: '界面语言' }, theme: { light: '浅色', dark: '深色' } },
     history: {
       title: '我的项目',
       subtitle: '统一查看与管理当前账户下的项目内容。',
+      heroTitle: '从想法到成稿',
+      heroEmphasis: '让每一页，都值得上场',
+      heroDescription: '让 AI 协助完成从构思到成稿的每一步，组织内容结构、视觉叙事与整套演示。你只需要专注于真正想表达的事。',
+      importFile: '导入文件',
+      searchPlaceholder: '搜索项目或灵感...',
+      noSearchResults: '没有找到匹配的项目',
       listTitle: '项目列表',
       listSubtitle: '支持项目编辑、重命名、删除及批量管理。',
       refresh: '刷新',
@@ -58,6 +63,12 @@ const historyI18n = {
     history: {
       title: 'My Projects',
       subtitle: 'View and manage projects under the current account.',
+      heroTitle: 'From idea to final deck',
+      heroEmphasis: 'Make every slide worth presenting',
+      heroDescription: 'Turn one idea into a complete visual story with AI, from structure and narrative to a presentation-ready deck.',
+      importFile: 'Import File',
+      searchPlaceholder: 'Search projects or ideas...',
+      noSearchResults: 'No matching projects found',
       listTitle: 'Project List',
       listSubtitle: 'Supports editing, renaming, deleting, and batch management.',
       refresh: 'Refresh',
@@ -89,23 +100,24 @@ const historyI18n = {
   },
 };
 
-const DEFAULT_PAGE_SIZE = 5;
+const PAGE_SIZE_OPTIONS = [4, 8, 16];
+const DEFAULT_PAGE_SIZE = PAGE_SIZE_OPTIONS[0];
 const PAGE_SIZE_KEY = 'history_page_size';
 
-export const History: React.FC = () => {
+export const History: React.FC<{ showNavigation?: boolean }> = ({ showNavigation = true }) => {
   const navigate = useNavigate();
-  const { i18n } = useTranslation();
+  const location = useLocation();
   const t = useT(historyI18n); // 组件内翻译 + 自动 fallback 到全局
-  const { isDark, setTheme } = useTheme();
   const { syncProject, setCurrentProject } = useProjectStore();
+  const { addTask, pollTask } = useExportTasksStore();
 
   const [projects, setProjects] = useState<Project[]>([]);
   const [totalProjects, setTotalProjects] = useState(0);
   const [projectStats, setProjectStats] = useState<ProjectDashboardStats | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(() => {
-    const saved = localStorage.getItem(PAGE_SIZE_KEY);
-    return saved ? Number(saved) : DEFAULT_PAGE_SIZE;
+    const saved = Number(localStorage.getItem(PAGE_SIZE_KEY));
+    return PAGE_SIZE_OPTIONS.includes(saved) ? saved : DEFAULT_PAGE_SIZE;
   });
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -113,23 +125,41 @@ export const History: React.FC = () => {
   const [isDeleting, setIsDeleting] = useState(false);
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState<string>('');
-  const [isMaterialModalOpen, setIsMaterialModalOpen] = useState(false);
-  const [isMaterialCenterOpen, setIsMaterialCenterOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const { show, ToastContainer } = useToast();
   const { confirm, ConfirmDialog } = useConfirm();
 
   const totalPages = Math.ceil(totalProjects / pageSize);
   const safeTotalPages = Math.max(totalPages, 1);
+  const pptStage = (project: Project) => project.workspaces?.find((workspace) => workspace.kind === 'ppt')?.stage;
   const completedCount = projectStats?.completed ?? projects.filter((project) =>
-    project.status === 'COMPLETED' ||
+    pptStage(project) === 'COMPLETED' ||
     Boolean(project.pages?.length) && project.pages!.every((page) => page.status === 'COMPLETED' || page.generated_image_path || page.generated_image_url)
   ).length;
   const generatingCount = projectStats?.generating ?? projects.filter((project) =>
-    project.status === 'GENERATING_DESCRIPTIONS' || project.status === 'GENERATING_IMAGES' || project.pages?.some((page) =>
+    pptStage(project) === 'GENERATING_DESCRIPTIONS' || pptStage(project) === 'GENERATING_IMAGES' || project.pages?.some((page) =>
       page.status === 'GENERATING_DESCRIPTION' || page.status === 'GENERATING' || page.status === 'QUEUED'
     )
   ).length;
   const inProgressCount = projectStats?.in_progress ?? Math.max(totalProjects - completedCount - generatingCount, 0);
+  const normalizedSearchQuery = searchQuery.trim().toLocaleLowerCase();
+  const visibleProjects = normalizedSearchQuery
+    ? projects.filter((project) => getProjectTitle(project).toLocaleLowerCase().includes(normalizedSearchQuery))
+    : projects;
+  const isHomeRoute = location.pathname === '/home' || location.pathname === '/';
+  const projectInspirationImages = projects.flatMap((project) => {
+    const src = getFirstPageImage(project);
+    return src ? [{ src, alt: `${getProjectTitle(project)} 项目预览` }] : [];
+  }).slice(0, 3);
+  const inspirationImages = [
+    ...projectInspirationImages,
+    ...['theme01', 'theme07', 'theme11']
+      .slice(0, 3 - projectInspirationImages.length)
+      .map((theme, index) => ({
+        src: getStaticAssetUrl(`/assets/native-theme-previews/${theme}.webp`),
+        alt: `精选模板 ${projectInspirationImages.length + index + 1}`,
+      })),
+  ];
 
   const loadProjects = useCallback(async (page: number) => {
     setIsLoading(true);
@@ -317,6 +347,78 @@ export const History: React.FC = () => {
    
   }, [confirm, deleteProjects]);
 
+  const handleExportProject = useCallback(async (e: React.MouseEvent, project: Project) => {
+    e.stopPropagation();
+    const projectId = project.id || project.project_id;
+    if (!projectId) return;
+
+    const workspace = project.workspaces?.find((item) => item.kind === project.last_workspace && item.state !== 'uninitialized')
+      || project.workspaces?.find((item) => item.state !== 'uninitialized');
+    const kind = workspace?.kind || 'ppt';
+    const taskKey = `project-export-${projectId}-${Date.now()}`;
+
+    try {
+      if (kind === 'video') {
+        const response = await api.exportVideoWorkspace(projectId, { renderProfile: 'proof' });
+        const taskId = response.data?.task_id;
+        if (!taskId) throw new Error('视频导出任务创建失败');
+        addTask({
+          id: taskKey,
+          taskId,
+          projectId,
+          type: 'video',
+          status: 'PENDING',
+          progress: { total: 100, completed: 0, percent: 0, current_step: '等待 Proof 渲染', render_profile: 'proof' },
+        });
+        void pollTask(taskKey, projectId, taskId);
+      } else if (kind === 'podcast') {
+        const response = await api.exportPodcastWorkspace(projectId, { format: 'mp3' });
+        const taskId = response.data?.task_id;
+        if (!taskId) throw new Error('播客导出任务创建失败');
+        addTask({
+          id: taskKey,
+          taskId,
+          projectId,
+          type: 'podcast',
+          status: 'PENDING',
+          progress: { total: 100, completed: 0, percent: 0, current_step: '等待播客渲染', format: 'mp3' },
+        });
+        void pollTask(taskKey, projectId, taskId);
+      } else if (project.render_mode === 'native' || workspace?.settings?.render_mode === 'native') {
+        const response = await api.createNativePptxExport(projectId, 'pptx');
+        const taskId = response.data?.task_id;
+        if (!taskId) throw new Error('原生 PPTX 导出任务创建失败');
+        addTask({ id: taskKey, taskId, projectId, type: 'native-pptx', status: 'PENDING' });
+        void pollTask(taskKey, projectId, taskId);
+      } else {
+        const response = await api.exportPPTX(projectId);
+        const downloadUrl = response.data?.download_url || response.data?.download_url_absolute;
+        if (!downloadUrl) throw new Error('PPTX 导出未返回下载地址');
+        addTask({
+          id: taskKey,
+          taskId: '',
+          projectId,
+          type: 'pptx',
+          status: 'COMPLETED',
+          downloadUrl,
+          filename: response.data?.filename,
+        });
+      }
+      show({ message: '导出任务已提交，请在任务中心查看进度', type: 'success', duration: 2000 });
+    } catch (cause: any) {
+      const message = cause?.response?.data?.error?.message || cause?.response?.data?.message || cause?.message || '导出失败';
+      const failedTaskType = kind === 'video'
+        ? 'video'
+        : kind === 'podcast'
+          ? 'podcast'
+          : project.render_mode === 'native' || workspace?.settings?.render_mode === 'native'
+            ? 'native-pptx'
+            : 'pptx';
+      addTask({ id: taskKey, taskId: '', projectId, type: failedTaskType, status: 'FAILED', errorMessage: message });
+      show({ message, type: 'error' });
+    }
+  }, [addTask, pollTask, show]);
+
   const handleBatchDelete = useCallback(async () => {
     if (selectedProjects.size === 0) return;
 
@@ -403,154 +505,115 @@ export const History: React.FC = () => {
   }, [handleSaveEdit, handleCancelEdit]);
 
   return (
-    <div className="min-h-screen bg-[#f5f9fc] dark:bg-background-primary relative overflow-hidden">
-      {/* 导航栏 */}
-      <nav aria-label="工作台导航" className="relative z-50 h-16 md:h-18 bg-white/40 dark:bg-background-primary backdrop-blur-2xl dark:backdrop-blur-none dark:border-b dark:border-border-primary">
-        <div className="max-w-7xl mx-auto px-4 md:px-6 h-full flex items-center justify-between">
-          <div className="flex items-center">
-            <img src={getStaticAssetUrl('/logo-nav.png')} alt="EasySlide Logo" className="h-12 md:h-14 w-auto rounded-lg object-contain" />
-          </div>
-          <div className="flex items-center gap-2 md:gap-3">
-            <Button variant="ghost" size="sm" icon={<HomeIcon size={16} className="md:w-[18px] md:h-[18px]" />} onClick={() => navigate('/')} className="text-xs md:text-sm hover:bg-sky-50 hover:text-cyan-700 hover:shadow-sm hover:scale-105 transition-all duration-200 font-medium">
-              <span className="hidden md:inline">{t('nav.home')}</span>
-            </Button>
-            <Button variant="ghost" size="sm" icon={<LayoutDashboard size={16} className="md:w-[18px] md:h-[18px]" />} onClick={() => navigate('/create')} className="text-xs md:text-sm hover:bg-sky-50 hover:text-cyan-700 hover:shadow-sm hover:scale-105 transition-all duration-200 font-medium">
-              <span className="hidden md:inline">{t('nav.createProject')}</span>
-            </Button>
-            <Button variant="ghost" size="sm" icon={<FileText size={16} className="md:w-[18px] md:h-[18px]" />} onClick={() => navigate('/history')} className="text-xs md:text-sm bg-sky-50 text-cyan-700 shadow-sm transition-all duration-200 font-medium">
-              <span>{t('nav.history')}</span>
-            </Button>
-            <Button variant="ghost" size="sm" icon={<FolderOpen size={16} className="md:w-[18px] md:h-[18px]" />} onClick={() => setIsMaterialCenterOpen(true)} className="text-xs md:text-sm hover:bg-sky-50 hover:text-cyan-700 hover:shadow-sm hover:scale-105 transition-all duration-200 font-medium">
-              <span className="hidden md:inline">{t('nav.materialCenter')}</span>
-            </Button>
-            <Button variant="ghost" size="sm" icon={<ImagePlus size={16} className="md:w-[18px] md:h-[18px]" />} onClick={() => setIsMaterialModalOpen(true)} className="text-xs md:text-sm hover:bg-sky-50 hover:text-cyan-700 hover:shadow-sm hover:scale-105 transition-all duration-200 font-medium">
-              <span className="hidden md:inline">{t('nav.materialGenerate')}</span>
-            </Button>
-            <Button variant="ghost" size="sm" icon={<Settings size={16} className="md:w-[18px] md:h-[18px]" />} onClick={() => navigate('/settings')} className="text-xs md:text-sm hover:bg-sky-50 hover:text-cyan-700 hover:shadow-sm hover:scale-105 transition-all duration-200 font-medium">
-              <span className="hidden md:inline">{t('nav.settings')}</span>
-            </Button>
-            <div className="h-5 w-px bg-gray-300 dark:bg-border-primary mx-1" />
-            <button onClick={() => i18n.changeLanguage(i18n.language?.startsWith('zh') ? 'en' : 'zh')} className="px-2 py-1 text-xs font-medium text-slate-600 dark:text-foreground-tertiary hover:text-cyan-700 dark:hover:text-gray-100 hover:bg-sky-50 dark:hover:bg-background-hover rounded-md transition-all" title={t('settings.language.label')}>
-              {i18n.language?.startsWith('zh') ? 'EN' : '中'}
-            </button>
-            <button onClick={() => setTheme(isDark ? 'light' : 'dark')} className="p-1.5 text-slate-600 dark:text-foreground-tertiary hover:text-cyan-700 dark:hover:text-gray-100 hover:bg-sky-50 dark:hover:bg-background-hover rounded-md transition-all" title={isDark ? t('settings.theme.light') : t('settings.theme.dark')}>
-              {isDark ? <Sun size={16} /> : <Moon size={16} />}
-            </button>
-          </div>
-        </div>
-      </nav>
+    <div className="min-h-screen bg-[var(--app-background)] text-[var(--app-text)] lg:pl-[216px]">
+      {showNavigation && <AppTopNav />}
 
-      {/* ??? */}
-      <main className="relative max-w-7xl mx-auto px-3 md:px-6 py-10 md:py-16">
-        <section className="mb-8 rounded-[32px] border border-white/80 bg-white/95 p-7 md:p-10 shadow-[0_30px_90px_rgba(15,23,42,0.10)] backdrop-blur-xl dark:border-border-primary dark:bg-background-secondary dark:shadow-none">
-          <div className="grid gap-8 lg:grid-cols-[1fr_1.05fr] lg:items-center">
+      <main>
+        {isHomeRoute && (
+        <section className="border-b border-[var(--app-border)] bg-[var(--app-surface)]">
+          <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-5 md:px-6 xl:flex-row xl:items-center xl:justify-between">
             <div>
-              <h1 className="text-3xl md:text-5xl font-extrabold tracking-tight text-slate-950 dark:text-foreground-primary mb-5">{t('history.title')}</h1>
-              <p className="text-base md:text-lg font-medium text-slate-600 dark:text-foreground-tertiary mb-8">{t('history.subtitle')}</p>
-              <Button
-                variant="primary"
-                size="lg"
-                onClick={() => navigate('/create')}
-                className="rounded-2xl bg-blue-600 px-7 shadow-[0_12px_28px_rgba(37,99,235,0.28)] hover:bg-blue-700"
-              >
-                {t('home.actions.createProject')}
-              </Button>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--app-text-tertiary)]">EasySlide · Editorial Workbench</p>
+              <h1 className="mt-1 text-xl font-semibold">作品工作台</h1>
+              <p className="mt-1 text-sm text-[var(--app-text-secondary)]">在一个内容项目中组织内容主线、PPT、视频与播客。</p>
             </div>
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              {[
-                { label: t('history.totalCount'), value: totalProjects, icon: FileText, tone: 'blue', active: true },
-                { label: t('history.completed'), value: completedCount, icon: CheckCircle, tone: 'emerald' },
-                { label: t('history.inProgress'), value: inProgressCount, icon: Layers3, tone: 'cyan' },
-                { label: t('history.generating'), value: generatingCount, icon: Clock3, tone: 'orange' },
-              ].map((item) => {
-                const Icon = item.icon;
-                const toneClass = item.tone === 'emerald'
-                  ? 'text-emerald-600 bg-emerald-50 ring-emerald-100'
-                  : item.tone === 'orange'
-                    ? 'text-orange-500 bg-orange-50 ring-orange-100'
-                    : item.tone === 'cyan'
-                      ? 'text-cyan-600 bg-cyan-50 ring-cyan-100'
-                      : 'text-blue-600 bg-blue-50 ring-blue-100';
-                return (
-                  <div
-                    key={item.label}
-                    className={`rounded-[24px] border bg-white/90 p-5 shadow-sm transition-all ${
-                      item.active
-                        ? 'border-sky-300 bg-sky-50/80 shadow-[0_18px_50px_rgba(56,189,248,0.16)]'
-                        : 'border-slate-100'
-                    }`}
-                  >
-                    <div className="flex items-center gap-4">
-                      <span className={`inline-flex h-12 w-12 items-center justify-center rounded-2xl ring-8 ${toneClass}`}>
-                        <Icon size={22} />
-                      </span>
-                      <div>
-                        <div className="text-sm font-semibold text-slate-500">{item.label}</div>
-                        <div className="mt-1 text-2xl font-extrabold text-slate-950">{item.value}</div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row xl:max-w-[620px]">
+              <label className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-background)] px-3 text-[var(--app-text-tertiary)] focus-within:border-[var(--app-accent)]">
+                <Search size={16} aria-hidden="true" />
+                <span className="sr-only">{t('history.searchPlaceholder')}</span>
+                <input type="search" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder={t('history.searchPlaceholder')} className="min-w-0 flex-1 bg-transparent text-sm text-[var(--app-text)] outline-none" />
+              </label>
+              <Button icon={<Plus size={16} />} onClick={() => navigate('/create')}>{t('home.actions.createProject')}</Button>
             </div>
           </div>
         </section>
+        )}
 
+        <div className="mx-auto max-w-7xl px-4 py-6 md:px-6 md:py-7">
+          {!isHomeRoute && (
+            <section className="mb-7 grid gap-6 border-b border-[var(--app-border)] pb-6 lg:grid-cols-[minmax(0,1fr)_minmax(420px,0.78fr)] lg:items-stretch">
+              <header className="flex min-h-40 flex-col items-start justify-between gap-6 py-1">
+                <div>
+                  <h1 className="text-xl font-semibold leading-7">{t('history.title')}</h1>
+                  <p className="mt-1 max-w-xl text-sm leading-6 text-[var(--app-text-secondary)]">{t('history.subtitle')}</p>
+                </div>
+                <Button variant="primary" size="sm" icon={<LayoutDashboard size={16} />} onClick={() => navigate('/create')}>
+                  {t('home.actions.createProject')}
+                </Button>
+              </header>
+              <div aria-label="项目统计" className="grid grid-cols-2 overflow-hidden rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)]">
+                {[
+                  { label: t('history.totalCount'), value: totalProjects, icon: FileText, tone: 'var(--app-accent-blue)', bg: 'var(--app-accent-blue-soft)' },
+                  { label: t('history.completed'), value: completedCount, icon: CheckCircle, tone: 'var(--app-success)', bg: 'rgba(36, 138, 61, 0.14)' },
+                  { label: t('history.inProgress'), value: inProgressCount, icon: Layers3, tone: 'var(--app-accent-violet)', bg: 'var(--app-accent-violet-soft)' },
+                  { label: t('history.generating'), value: generatingCount, icon: Clock3, tone: 'var(--app-accent-coral)', bg: 'var(--app-accent-coral-soft)' },
+                ].map((item, index) => {
+                  const Icon = item.icon;
+                  return (
+                    <div key={item.label} className={`flex min-w-0 items-center gap-3 px-4 py-4 ${index % 2 === 0 ? 'border-r border-[var(--app-border)]' : ''} ${index < 2 ? 'border-b border-[var(--app-border)]' : ''}`}>
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--app-radius-control)]" style={{ background: item.bg, color: item.tone }}><Icon size={17} aria-hidden="true" /></span>
+                      <div className="min-w-0"><div className="truncate text-xs text-[var(--app-text-secondary)]">{item.label}</div><div className="mt-0.5 text-lg font-semibold tabular-nums" style={{ color: item.tone }}>{item.value}</div></div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
         {isLoading ? (
           <div className="flex items-center justify-center py-12">
             <Loading message={t('common.loading')} />
           </div>
         ) : error ? (
-          <Card className="p-8 text-center shadow-[0_20px_60px_rgba(15,70,120,0.08)]">
-            <p className="text-slate-600 dark:text-foreground-tertiary mb-4">{error}</p>
+          <section className="border-y border-[var(--app-border)] py-10 text-center">
+            <p className="mb-4 text-sm text-[var(--app-text-secondary)]">{error}</p>
             <Button variant="primary" onClick={() => loadProjects(currentPage)}>
               {t('common.retry')}
             </Button>
-          </Card>
+          </section>
         ) : projects.length === 0 ? (
-          <Card className="p-12 text-center shadow-[0_20px_60px_rgba(15,70,120,0.08)]">
-            <h3 className="text-xl font-semibold text-slate-800 dark:text-foreground-secondary mb-2">
+          <section className="rounded-[var(--app-radius-card)] border border-dashed border-[var(--app-border-strong)] bg-[var(--app-surface)] px-6 py-12 text-center">
+            <h2 className="mb-2 text-[15px] font-semibold leading-[22px]">
               {t('history.noProjects')}
-            </h3>
-            <p className="text-slate-500 dark:text-foreground-tertiary mb-6">
+            </h2>
+            <p className="mb-5 text-sm text-[var(--app-text-secondary)]">
               {t('history.createFirst')}
             </p>
-          </Card>
+            <Button size="sm" onClick={() => navigate('/create')}>{t('home.actions.createProject')}</Button>
+          </section>
         ) : (
-          <section className="rounded-[32px] border border-white/80 bg-white/95 p-5 md:p-8 shadow-[0_30px_90px_rgba(15,23,42,0.10)] backdrop-blur-xl dark:border-border-primary dark:bg-background-secondary dark:shadow-none">
-            <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <section aria-labelledby="project-list-title">
+            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <h2 className="text-2xl font-bold text-slate-950 dark:text-foreground-primary">{t('history.listTitle')}</h2>
-                <p className="mt-2 text-sm md:text-base text-slate-500 dark:text-foreground-tertiary">{t('history.listSubtitle')}</p>
+                <h2 id="project-list-title" className="text-[15px] font-semibold leading-[22px]">{t('history.listTitle')}</h2>
+                <p className="mt-0.5 text-xs text-[var(--app-text-secondary)]">{t('history.listSubtitle')}</p>
               </div>
               <Button
                 variant="secondary"
                 size="sm"
                 icon={<RefreshCw size={16} />}
                 onClick={() => loadProjects(currentPage)}
-                className="rounded-full border-slate-200 bg-white px-4 text-slate-700 hover:bg-sky-50 hover:text-blue-700"
               >
                 {t('history.refresh')}
               </Button>
             </div>
 
-            <div className="mb-4 flex flex-wrap items-center gap-3">
-              <label className="flex items-center gap-2 cursor-pointer">
+            <div className="mb-3 flex min-h-10 flex-wrap items-center gap-3 border-y border-[var(--app-border)] py-2">
+              <label className="flex cursor-pointer items-center gap-2">
                 <input
                   type="checkbox"
+                  aria-label={selectedProjects.size === projects.length ? t('common.deselectAll') : t('common.selectAll')}
                   checked={selectedProjects.size === projects.length && projects.length > 0}
                   onChange={handleSelectAll}
-                  className="w-4 h-4 text-cyan-600 border-sky-200 dark:border-border-primary rounded focus:ring-cyan-500"
+                  className="h-4 w-4 rounded border-[var(--app-border-strong)] accent-[var(--app-accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)]"
                 />
-                <span className="text-sm text-slate-700 dark:text-foreground-secondary">
+                <span className="text-sm text-[var(--app-text-secondary)]">
                   {selectedProjects.size === projects.length ? t('common.deselectAll') : t('common.selectAll')}
                 </span>
               </label>
 
               {selectedProjects.size > 0 && (
                 <div className="flex items-center gap-3">
-                  <span className="text-sm text-slate-600 dark:text-foreground-tertiary">
+                  <span className="text-sm text-[var(--app-text-secondary)]">
                     {t('history.selectedCount', { count: selectedProjects.size })}
                   </span>
                   <Button variant="secondary" size="sm" onClick={() => setSelectedProjects(new Set())} disabled={isDeleting}>
@@ -563,8 +626,8 @@ export const History: React.FC = () => {
               )}
             </div>
 
-            <div className="space-y-4">
-              {projects.map((project) => {
+            <div data-testid={isHomeRoute ? 'project-grid' : 'project-list'} className={isHomeRoute ? 'grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4' : 'space-y-2'}>
+              {visibleProjects.map((project) => {
                 const projectId = project.id || project.project_id;
                 if (!projectId) return null;
 
@@ -578,17 +641,22 @@ export const History: React.FC = () => {
                     onSelect={handleSelectProject}
                     onToggleSelect={handleToggleSelect}
                     onDelete={handleDeleteProject}
+                    onExport={handleExportProject}
                     onStartEdit={handleStartEdit}
                     onTitleChange={setEditingTitle}
                     onTitleKeyDown={handleTitleKeyDown}
                     onSaveEdit={handleSaveEdit}
                     isBatchMode={selectedProjects.size > 0}
+                    layout={isHomeRoute ? 'grid' : 'list'}
                   />
                 );
               })}
             </div>
+            {isHomeRoute && visibleProjects.length === 0 && (
+              <div className="py-10 text-center text-sm text-[var(--app-text-secondary)]">{t('history.noSearchResults')}</div>
+            )}
 
-            <div className="mt-7 flex flex-col gap-4 border-t border-slate-100 pt-6 text-sm text-slate-500 sm:flex-row sm:items-center sm:justify-between">
+            <div className="mt-5 flex flex-col gap-3 border-t border-[var(--app-border)] pt-4 text-sm text-[var(--app-text-secondary)] sm:flex-row sm:items-center sm:justify-between">
               <span>{t('history.pageSummary', { total: totalProjects, current: currentPage, totalPages: safeTotalPages })}</span>
               <Pagination
                 currentPage={currentPage}
@@ -596,15 +664,30 @@ export const History: React.FC = () => {
                 onPageChange={handlePageChange}
                 pageSize={pageSize}
                 onPageSizeChange={handlePageSizeChange}
+                pageSizeOptions={PAGE_SIZE_OPTIONS}
                 pageSizeLabel={t('history.perPage')}
               />
             </div>
           </section>
         )}
+        {isHomeRoute && (
+          <section aria-labelledby="inspiration-title" className="mt-8 border-t border-[var(--app-border)] pt-5">
+            <div className="mb-3">
+              <h2 id="inspiration-title" className="text-[15px] font-semibold">灵感墙</h2>
+              <p className="mt-1 text-xs text-[var(--app-text-secondary)]">精选模板与视觉素材，保持少量、可用、不过度装饰。</p>
+            </div>
+            <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
+              {inspirationImages.map((image, index) => (
+                <div key={`${image.src}-${index}`} className="overflow-hidden rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)]">
+                  <img src={image.src} alt={image.alt} className="aspect-video w-full object-cover" loading="lazy" />
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+        </div>
       </main>
       <ToastContainer />
-      <MaterialGeneratorModal projectId={null} isOpen={isMaterialModalOpen} onClose={() => setIsMaterialModalOpen(false)} />
-      <MaterialCenterModal isOpen={isMaterialCenterOpen} onClose={() => setIsMaterialCenterOpen(false)} />
       {ConfirmDialog}
     </div>
   );

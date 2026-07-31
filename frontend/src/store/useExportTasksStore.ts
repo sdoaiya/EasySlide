@@ -4,7 +4,7 @@ import * as api from '@/api/endpoints';
 import { devLog } from '@/utils/logger';
 import { getT } from '@/utils/i18nHelper';
 import { normalizeErrorMessage } from '@/utils';
-import type { NativeExportQualityReport } from '@/types';
+import type { NarrationQualityReport, NativeExportQualityReport } from '@/types';
 
 const exportI18n = {
   zh: { exportStore: { exportFailed: '导出失败', pollFailed: '轮询失败' } },
@@ -14,7 +14,7 @@ const t = getT(exportI18n);
 
 // Note: Backend uses 'RUNNING' but we also accept 'PROCESSING' for compatibility
 export type ExportTaskStatus = 'PENDING' | 'PROCESSING' | 'RUNNING' | 'PAUSED' | 'COMPLETED' | 'FAILED';
-export type ExportTaskType = 'pptx' | 'pdf' | 'editable-pptx' | 'native-pptx' | 'native-pdf' | 'native-html' | 'images' | 'video';
+export type ExportTaskType = 'pptx' | 'pdf' | 'editable-pptx' | 'native-pptx' | 'native-pdf' | 'native-html' | 'images' | 'video' | 'podcast' | 'workspace';
 
 export interface ExportTask {
   id: string;
@@ -31,6 +31,12 @@ export interface ExportTask {
     help_text?: string;
     messages?: string[];
     warnings?: string[];  // 导出警告信息
+    render_profile?: 'proof' | 'final';
+    source_proof_task_id?: string;
+    workspace_version_id?: string;
+    format?: 'mp3' | 'wav';
+    workspace_kind?: 'ppt' | 'video' | 'podcast';
+    sidecars?: Record<string, string>;
     warning_details?: {   // 警告详细信息
       style_extraction_failed?: Array<{ element_id: string; reason: string }>;
       text_render_failed?: Array<{ text: string; reason: string }>;
@@ -39,7 +45,7 @@ export interface ExportTask {
       other_warnings?: string[];
       total_warnings?: number;
     };
-    quality_report?: NativeExportQualityReport;
+    quality_report?: NativeExportQualityReport | NarrationQualityReport;
   };
   downloadUrl?: string;
   filename?: string;
@@ -142,6 +148,7 @@ export const useExportTasksStore = create<ExportTasksState>()(
               return;
             }
 
+            const existingProgress = get().tasks.find(task => task.id === id)?.progress;
             const updates: Partial<ExportTask> = {
               status: task.status as ExportTaskStatus,
             };
@@ -156,8 +163,24 @@ export const useExportTasksStore = create<ExportTasksState>()(
                   console.warn('[ExportTasksStore] Failed to parse progress:', e);
                 }
               }
+              const parsedProgress = progressData as Record<string, any>;
+              const resumeKwargs = parsedProgress._resume?.kwargs as Record<string, any> | undefined;
               
-              updates.progress = progressData;
+              updates.progress = {
+                ...existingProgress,
+                ...parsedProgress,
+                total: parsedProgress.total ?? existingProgress?.total ?? 0,
+                completed: parsedProgress.completed ?? existingProgress?.completed ?? 0,
+                render_profile: parsedProgress.render_profile
+                  || resumeKwargs?.render_profile
+                  || existingProgress?.render_profile,
+                source_proof_task_id: parsedProgress.source_proof_task_id
+                  || resumeKwargs?.source_proof_task_id
+                  || existingProgress?.source_proof_task_id,
+                workspace_version_id: parsedProgress.workspace_version_id
+                  || resumeKwargs?.workspace_version_id
+                  || existingProgress?.workspace_version_id,
+              };
               
               // Extract download URL if available
               const downloadUrl = progressData.download_url || progressData.download_url_absolute;

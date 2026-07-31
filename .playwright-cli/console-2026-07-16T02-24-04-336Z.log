@@ -1,0 +1,35 @@
+[    5436ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://127.0.0.1:5173/node_modules/.vite/deps/chunk-YZVM2MHU.js?v=d77a8e79:21550
+[    5560ms] [WARNING] ⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition. @ http://127.0.0.1:5173/node_modules/.vite/deps/react-router-dom.js?v=d77a8e79:4412
+[    5560ms] [WARNING] ⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath. @ http://127.0.0.1:5173/node_modules/.vite/deps/react-router-dom.js?v=d77a8e79:4412
+[    5600ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:5173/api/access-code/check:0
+[    5601ms] [ERROR] API Error:  @ http://127.0.0.1:5173/src/api/client.ts:46
+[    5731ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:5173/api/access-code/check:0
+[    5731ms] [ERROR] API Error:  @ http://127.0.0.1:5173/src/api/client.ts:46
+[    5761ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:5173/api/user-templates:0
+[    5761ms] [ERROR] API Error:  @ http://127.0.0.1:5173/src/api/client.ts:46
+[    5762ms] [ERROR] 加载用户模板失败: AxiosError @ http://127.0.0.1:5173/src/pages/Home.tsx:304
+[    5762ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:5173/api/user-templates:0
+[    5762ms] [ERROR] API Error:  @ http://127.0.0.1:5173/src/api/client.ts:46
+[    5762ms] [ERROR] 加载用户模板失败: AxiosError @ http://127.0.0.1:5173/src/pages/Home.tsx:304
+[   38747ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:5173/api/projects?limit=5&offset=0:0
+[   38747ms] [ERROR] API Error:  @ http://127.0.0.1:5173/src/api/client.ts:46
+[   38748ms] [ERROR] 加载项目失败: AxiosError @ http://127.0.0.1:5173/src/pages/History.tsx:155
+[   38753ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:5173/api/projects?limit=5&offset=0:0
+[   38754ms] [ERROR] API Error:  @ http://127.0.0.1:5173/src/api/client.ts:46
+[   38754ms] [ERROR] 加载项目失败: AxiosError @ http://127.0.0.1:5173/src/pages/History.tsx:155
+[   41273ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:5173/api/user-templates:0
+[   41273ms] [ERROR] API Error:  @ http://127.0.0.1:5173/src/api/client.ts:46
+[   41273ms] [ERROR] Failed to load user templates: AxiosError @ http://127.0.0.1:5173/src/components/shared/TemplateSelector.tsx:169
+[   41274ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:5173/api/user-templates:0
+[   41275ms] [ERROR] API Error:  @ http://127.0.0.1:5173/src/api/client.ts:46
+[   41276ms] [ERROR] 加载用户模板失败: AxiosError @ http://127.0.0.1:5173/src/pages/Home.tsx:304
+[   41278ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:5173/api/user-templates:0
+[   41279ms] [ERROR] API Error:  @ http://127.0.0.1:5173/src/api/client.ts:46
+[   41279ms] [ERROR] Failed to load user templates: AxiosError @ http://127.0.0.1:5173/src/components/shared/TemplateSelector.tsx:169
+[   41284ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:5173/api/user-templates:0
+[   41285ms] [ERROR] API Error:  @ http://127.0.0.1:5173/src/api/client.ts:46
+[   41285ms] [ERROR] 加载用户模板失败: AxiosError @ http://127.0.0.1:5173/src/pages/Home.tsx:304
+[   47287ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:5173/api/user-style-templates:0
+[   47288ms] [ERROR] API Error:  @ http://127.0.0.1:5173/src/api/client.ts:46
+[   47288ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:5173/api/user-style-templates:0
+[   47288ms] [ERROR] API Error:  @ http://127.0.0.1:5173/src/api/client.ts:46

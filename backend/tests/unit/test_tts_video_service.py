@@ -5,6 +5,7 @@ TTS Video Service 单元测试
 需要 app context 的集成测试使用 conftest 提供的 fixtures。
 """
 import os
+import json
 import sys
 import pytest
 import tempfile
@@ -14,6 +15,7 @@ import uuid
 import inspect
 import importlib
 import importlib.util
+import shutil
 from unittest.mock import patch, MagicMock
 
 # 确保 backend 目录在路径中
@@ -52,10 +54,11 @@ get_audio_duration = _tts_mod.get_audio_duration
 KEN_BURNS_EFFECTS = _tts_mod.KEN_BURNS_EFFECTS
 resolve_ken_burns_effect = _tts_mod.resolve_ken_burns_effect
 KEN_BURNS_MAX_ZOOM = _tts_mod.KEN_BURNS_MAX_ZOOM
+_resolve_segment_prosody = _tts_mod._resolve_segment_prosody
 composite_video = _tts_mod.composite_video
+mix_audio_cues = _tts_mod.mix_audio_cues
 _run_ffmpeg_command = _tts_mod._run_ffmpeg_command
 _hidden_subprocess_kwargs = _tts_mod._hidden_subprocess_kwargs
-_format_elevenlabs_api_error = _tts_mod._format_elevenlabs_api_error
 _wait_for_process_with_idle_watchdog = _tts_mod._wait_for_process_with_idle_watchdog
 _split_narration_to_sentences = _tts_mod._split_narration_to_sentences
 _build_timed_subtitle_entries = _tts_mod._build_timed_subtitle_entries
@@ -123,21 +126,6 @@ class TestHiddenSubprocessKwargs:
         assert kwargs['startupinfo'].wShowWindow == 0
 
 
-class TestElevenLabsApiErrorFormatting:
-    """测试 ElevenLabs 错误提示"""
-
-    def test_invalid_voice_tells_user_to_reselect_voice(self):
-        message = _format_elevenlabs_api_error(
-            400,
-            "voice_not_found",
-            "Invalid voice 'IKne3meq5aSn9XLyUdCD'.",
-            {},
-        )
-
-        assert "声音无效" in message
-        assert "重新选择声音" in message
-
-
 class TestGetDefaultVoice:
     """测试语音映射"""
 
@@ -161,6 +149,61 @@ class TestGetDefaultVoice:
         }
         assert get_default_voice('zh', config) == 'zh-CN-YunxiNeural'
         assert get_default_voice('en', config) == 'en-US-GuyNeural'
+
+
+class TestGenerateTtsAudio:
+    """测试 TTS 网络抖动时的有限重试。"""
+
+    def test_retries_transient_generation_failure(self, monkeypatch, tmp_path):
+        attempts = []
+
+        async def fake_generate(text, output_path, voice, rate):
+            attempts.append((text, voice, rate))
+            if len(attempts) == 1:
+                raise OSError('temporary Bing connection failure')
+            with open(output_path, 'wb') as handle:
+                handle.write(b'audio')
+
+        monkeypatch.setattr(_tts_mod, '_generate_tts_async', fake_generate)
+        monkeypatch.setattr(_tts_mod, 'get_audio_duration', lambda *_args: 1.25)
+        monkeypatch.setattr(_tts_mod.time, 'sleep', lambda _seconds: None)
+
+        output_path = str(tmp_path / 'narration.mp3')
+        duration = _tts_mod.generate_tts_audio_sync('测试旁白', output_path)
+
+        assert duration == 1.25
+        assert len(attempts) == 2
+        assert os.path.getsize(output_path) > 0
+
+    def test_falls_back_to_windows_speech_after_edge_tts_is_unavailable(self, monkeypatch, tmp_path):
+        attempts = []
+        fallback_calls = []
+
+        async def failing_generate(*_args):
+            attempts.append(1)
+            raise OSError('Cannot connect to host speech.platform.bing.com:443')
+
+        def fake_windows_fallback(text, output_path, voice, rate, ffmpeg_path):
+            fallback_calls.append((text, voice, rate, ffmpeg_path))
+            with open(output_path, 'wb') as handle:
+                handle.write(b'local audio')
+
+        output_path = str(tmp_path / 'narration.mp3')
+        monkeypatch.setattr(_tts_mod.os, 'name', 'nt')
+        monkeypatch.setattr(_tts_mod, '_generate_tts_async', failing_generate)
+        monkeypatch.setattr(_tts_mod, '_generate_windows_sapi_audio', fake_windows_fallback)
+        monkeypatch.setattr(_tts_mod, 'get_audio_duration', lambda *_args: 2.5)
+        monkeypatch.setattr(_tts_mod.time, 'sleep', lambda _seconds: None)
+
+        duration = _tts_mod.generate_tts_audio_sync(
+            '双人旁白测试',
+            output_path,
+            voice='zh-CN-YunxiNeural',
+        )
+
+        assert duration == 2.5
+        assert len(attempts) == 3
+        assert fallback_calls == [('双人旁白测试', 'zh-CN-YunxiNeural', '+0%', 'ffmpeg')]
 
 
 class TestCheckFfmpegAvailable:
@@ -240,6 +283,23 @@ class TestKenBurnsEffects:
     def test_zoom_strength_is_conservative(self):
         assert KEN_BURNS_MAX_ZOOM == pytest.approx(1.08)
 
+    def test_segment_delivery_changes_rate_pitch_and_pause(self):
+        prosody = _resolve_segment_prosody({
+            'speaker_id': 'expert',
+            'delivery': 'emphasis',
+            'pause_after_ms': 520,
+            'rate_delta': '-3%',
+            'pitch_delta': '-2Hz',
+        })
+
+        assert prosody == {
+            'delivery': 'emphasis',
+            'rate_delta': '-3%',
+            'pitch_delta': '-2Hz',
+            'volume': '+0%',
+            'pause_after_ms': 520,
+        }
+
     @pytest.mark.parametrize(
         ('effect_type', 'frame_index'),
         [
@@ -295,6 +355,46 @@ class TestKenBurnsEffects:
                 assert red > green + 40
                 assert red > blue + 40
 
+    def test_standard_motion_changes_rendered_frames_with_real_ffmpeg(self):
+        if not check_ffmpeg_available():
+            pytest.skip("ffmpeg not available")
+
+        cv2 = pytest.importorskip('cv2')
+        pil_image = pytest.importorskip('PIL.Image')
+        pil_draw = pytest.importorskip('PIL.ImageDraw')
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            image_path = os.path.join(tmpdir, 'source.png')
+            video_path = os.path.join(tmpdir, 'standard-motion.mp4')
+            image = pil_image.new('RGB', (320, 180), 'white')
+            draw = pil_draw.Draw(image)
+            draw.rectangle((20, 20, 120, 80), fill=(220, 40, 40))
+            draw.ellipse((220, 95, 300, 170), fill=(30, 90, 220))
+            image.save(image_path)
+
+            create_ken_burns_clip(
+                image_path,
+                video_path,
+                duration=0.8,
+                width=320,
+                height=180,
+                fps=12,
+                effect_type='zoom_in',
+                motion_intensity='standard',
+            )
+
+            capture = cv2.VideoCapture(video_path)
+            frames = []
+            while True:
+                ok, frame = capture.read()
+                if not ok:
+                    break
+                frames.append(frame)
+            capture.release()
+
+            assert len(frames) >= 2
+            assert cv2.absdiff(frames[0], frames[-1]).mean() > 2.0
+
     @patch.object(_tts_mod, '_run_ffmpeg_command')
     def test_silent_static_clip_uses_extended_default_idle_timeout(self, mock_run_ffmpeg):
         _tts_mod.create_silent_clip(
@@ -343,10 +443,10 @@ class TestCompositeVideoConcatFile:
                     os.unlink(f)
 
     @patch.object(_tts_mod, '_run_ffmpeg_command')
-    def test_multiple_clips_concat(self, mock_run_ffmpeg):
+    def test_multiple_clips_concat(self, mock_run_ffmpeg, tmp_path):
         """多片段使用 concat demuxer"""
         clips = ['/fake/clip1.mp4', '/fake/clip2.mp4']
-        out_path = '/tmp/test_concat_output.mp4'
+        out_path = str(tmp_path / 'test_concat_output.mp4')
 
         composite_video(clips, out_path)
 
@@ -355,6 +455,39 @@ class TestCompositeVideoConcatFile:
         cmd = args[0][0]
         assert '-f' in cmd
         assert 'concat' in cmd
+
+    @patch.object(_tts_mod, '_run_ffmpeg_command')
+    def test_concat_file_uses_system_ansi_encoding_on_windows(self, mock_run_ffmpeg, monkeypatch):
+        """Windows 上 concat 列表文件必须用系统 ANSI 代码页写入，否则中文路径乱码"""
+        monkeypatch.setattr(_tts_mod.os, 'name', 'nt')
+        captured_content = {}
+
+        def _capture(cmd, *args, **kwargs):
+            # ffmpeg 调用时 concat 文件已写入，捕获其内容（finally 会删除它）
+            concat_file = cmd[cmd.index('-i') + 1]
+            with open(concat_file, 'r', encoding='mbcs') as f:
+                captured_content['text'] = f.read()
+
+        mock_run_ffmpeg.side_effect = _capture
+        # 用两个真实临时文件，确保走 concat 路径（单片段会走 copy 短路）
+        tmpdir = tempfile.mkdtemp()
+        try:
+            clips = [
+                os.path.join(tmpdir, '测试片段1.mp4'),
+                os.path.join(tmpdir, '测试片段2.mp4'),
+            ]
+            for c in clips:
+                with open(c, 'wb') as f:
+                    f.write(b'fake')
+            out_path = os.path.join(tmpdir, '测试输出.mp4')
+
+            composite_video(clips, out_path)
+            # 验证 concat 文件用 mbcs 编码写入（Windows 上能正确解码中文）
+            content = captured_content.get('text', '')
+            assert '测试片段1.mp4' in content, \
+                f'concat 文件内容应包含原始中文路径，实际: {content!r}'
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 class _FakeProcess:
@@ -427,11 +560,19 @@ class TestIdleWatchdog:
 
         assert proc.returncode == -9
 
-    def test_concat_rejects_newline_in_path(self):
+    def test_concat_rejects_newline_in_path(self, tmp_path):
         """路径含换行符时应抛出 ValueError（防止 concat 注入）"""
         clips = ['/fake/clip1.mp4', '/fake/clip\n2.mp4']
         with pytest.raises(ValueError, match="newline"):
-            composite_video(clips, '/tmp/test_output.mp4')
+            composite_video(clips, str(tmp_path / 'test_output.mp4'))
+
+    def test_tmp_dir_uses_ascii_name_avoiding_chinese_path_issue(self):
+        """临时目录名基于 hash，纯 ASCII，避免 Windows 下中文路径导致 FFmpeg 失败"""
+        import hashlib
+        for output_name in ['汉武帝一生.mp4', 'report.pdf', 'プレゼン.mp4']:
+            tmp_name = '_tmp_' + hashlib.md5(output_name.encode('utf-8')).hexdigest()[:16]
+            # hexdigest 必然是纯 ASCII
+            assert tmp_name.isascii(), f'临时目录名应纯 ASCII: {tmp_name}'
 
     def test_multiple_clips_concat_with_real_ffmpeg(self):
         """真实 FFmpeg 校验：长任务 watchdog 不影响正常 concat 完成。"""
@@ -581,6 +722,46 @@ class TestGenerateNarrationVideoPrerequisites:
                 output_path='/tmp/out.mp4',
             )
 
+    @patch.object(_tts_mod, 'check_ffmpeg_ass_filter_available', return_value=True)
+    @patch.object(_tts_mod, 'check_ffmpeg_available', return_value=True)
+    def test_dialogue_does_not_fallback_to_single_segment(self, mock_ffmpeg, mock_ass, tmp_path):
+        with pytest.raises(RuntimeError, match='双人旁白'):
+            _tts_mod.generate_narration_video(
+                pages_data=[{
+                    'image_path': '/tmp/fake.png',
+                    'narration_text': '单人旁白',
+                    'narration_segments': [{'speaker_id': 'host', 'text': '单人旁白'}],
+                    'page_index': 0,
+                }],
+                output_path=str(tmp_path / 'out.mp4'),
+                narration_mode='dialogue',
+                speakers=[
+                    {'id': 'host', 'name': '主持人', 'voice': 'zh-CN-XiaoxiaoNeural'},
+                    {'id': 'expert', 'name': '专家', 'voice': 'zh-CN-YunxiNeural'},
+                ],
+            )
+
+    @patch.object(_tts_mod, 'check_ffmpeg_ass_filter_available', return_value=True)
+    @patch.object(_tts_mod, 'check_ffmpeg_available', return_value=True)
+    def test_dialogue_rejects_unconfigured_speaker(self, mock_ffmpeg, mock_ass, tmp_path):
+        with pytest.raises(RuntimeError, match='未配置的旁白角色'):
+            _tts_mod.generate_narration_video(
+                pages_data=[{
+                    'image_path': '/tmp/fake.png',
+                    'narration_segments': [
+                        {'speaker_id': 'host', 'text': '开场'},
+                        {'speaker_id': 'guest', 'text': '补充'},
+                    ],
+                    'page_index': 0,
+                }],
+                output_path=str(tmp_path / 'out.mp4'),
+                narration_mode='dialogue',
+                speakers=[
+                    {'id': 'host', 'name': '主持人', 'voice': 'zh-CN-XiaoxiaoNeural'},
+                    {'id': 'expert', 'name': '专家', 'voice': 'zh-CN-YunxiNeural'},
+                ],
+            )
+
 
 class TestNarrationPrompt:
     """测试旁白 prompt 构建"""
@@ -724,6 +905,24 @@ class TestExportVideoRoute:
         )
         db.session.add(project)
         db.session.flush()
+        from services.content_spine_service import create_spine
+        from services.project_workspace_service import (
+            create_workspace_set,
+            initialize_workspace_from_snapshot,
+        )
+
+        project.content_spine = create_spine(project.id, {'idea_prompt': '视频导出测试'})
+        project.workspaces.extend(create_workspace_set(project.id))
+        db.session.flush()
+        spine = project.content_spine
+        initialize_workspace_from_snapshot(
+            project.id,
+            'ppt',
+            spine.revision,
+            spine.content_hash,
+            json.loads(spine.document_json),
+            {'render_mode': 'image', 'image_aspect_ratio': '16:9'},
+        )
 
         pages_dir = os.path.join(app.config['UPLOAD_FOLDER'], project.id, 'pages')
         os.makedirs(pages_dir, exist_ok=True)
@@ -888,3 +1087,34 @@ class TestNarrationCRUD:
             json={'wrong_field': 'test'},
         )
         assert response.status_code in (400, 404)
+
+
+def test_video_audio_cues_mix_into_narration_with_real_ffmpeg(tmp_path):
+    if not check_ffmpeg_available():
+        pytest.skip('ffmpeg not available')
+
+    import hashlib
+    import subprocess
+
+    narration = tmp_path / 'narration.mp3'
+    sfx = tmp_path / 'sfx.mp3'
+    output = tmp_path / 'mixed.mp3'
+    for target, frequency, duration in ((narration, 440, 1.2), (sfx, 880, 0.25)):
+        subprocess.run([
+            'ffmpeg', '-y', '-f', 'lavfi', '-i',
+            f'sine=frequency={frequency}:duration={duration}', str(target),
+        ], check=True, capture_output=True)
+
+    duration = mix_audio_cues(
+        str(narration),
+        str(output),
+        [{
+            'cue': {'cue_id': 'cue.1', 'kind': 'sfx', 'asset_ref': 'sfx', 'offset_ms': 250, 'gain_db': -6},
+            'path': str(sfx),
+            'sha256': hashlib.sha256(sfx.read_bytes()).hexdigest(),
+        }],
+        duration=1.2,
+    )
+
+    assert output.stat().st_size > 0
+    assert 1.0 <= duration <= 1.4

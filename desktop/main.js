@@ -19,11 +19,16 @@ function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
 }
 
-function getUserDataDirs() {
+function getDefaultUserDataRoot() {
   const portableRoot = app.isPackaged ? path.dirname(process.execPath) : null;
-  const root = portableRoot && fs.existsSync(path.join(portableRoot, 'portable.flag'))
+  return portableRoot && fs.existsSync(path.join(portableRoot, 'portable.flag'))
     ? path.join(portableRoot, 'EasySlideData')
     : app.getPath('userData');
+}
+
+function getUserDataDirs() {
+  const dataRoot = readDesktopSettings().dataRoot;
+  const root = dataRoot ? String(dataRoot) : getDefaultUserDataRoot();
   return {
     root,
     databasePath: path.join(root, 'data', 'database.db'),
@@ -33,7 +38,7 @@ function getUserDataDirs() {
 }
 
 function getDesktopSettingsPath() {
-  return path.join(getUserDataDirs().root, 'desktop-settings.json');
+  return path.join(getDefaultUserDataRoot(), 'desktop-settings.json');
 }
 
 function readDesktopSettings() {
@@ -80,6 +85,12 @@ function startBackend() {
     EASYSLIDE_BOOTSTRAP_SETTINGS_PATH: app.isPackaged
       ? path.join(process.resourcesPath, 'bootstrap-settings.json')
       : '',
+    EASYSLIDE_ELECTRON_EXECUTABLE: app.isPackaged ? process.execPath : '',
+    EASYSLIDE_HYPERFRAMES_ENABLED: process.env.EASYSLIDE_HYPERFRAMES_ENABLED
+      || (app.isPackaged ? 'true' : ''),
+    EASYSLIDE_IMAGE_SCENE_ENABLED: process.env.EASYSLIDE_IMAGE_SCENE_ENABLED
+      || (app.isPackaged ? 'true' : ''),
+    CONTENT_PROJECT_CUTOVER: process.env.CONTENT_PROJECT_CUTOVER || 'true',
   };
 
   backendProcess = spawn(python, args, {
@@ -208,6 +219,13 @@ function createWindow() {
     mainWindow.show();
   });
 
+  mainWindow.on('enter-full-screen', () => {
+    mainWindow?.webContents.send('window-fullscreen-changed', true);
+  });
+  mainWindow.on('leave-full-screen', () => {
+    mainWindow?.webContents.send('window-fullscreen-changed', false);
+  });
+
   mainWindow.on('close', (event) => {
     if (!isQuitting) {
       event.preventDefault();
@@ -271,6 +289,31 @@ ipcMain.handle('open-data-dir', async () => {
   ensureDir(dirs.root);
   return shell.openPath(dirs.root);
 });
+ipcMain.handle('get-data-dir', () => {
+  const dirs = getUserDataDirs();
+  ensureDir(dirs.root);
+  return dirs.root;
+});
+ipcMain.handle('choose-data-dir', async () => {
+  const dirs = getUserDataDirs();
+  ensureDir(dirs.root);
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    title: '选择数据目录',
+    defaultPath: dirs.root,
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  if (canceled || !filePaths[0]) {
+    return dirs.root;
+  }
+
+  const dataRoot = filePaths[0];
+  writeDesktopSettings({
+    ...readDesktopSettings(),
+    dataRoot,
+  });
+  ensureDir(dataRoot);
+  return dataRoot;
+});
 ipcMain.handle('get-export-dir', () => {
   const exportDir = getConfiguredExportDir();
   ensureDir(exportDir);
@@ -317,6 +360,11 @@ ipcMain.handle('window-maximize', () => {
     return;
   }
   mainWindow.maximize();
+});
+ipcMain.handle('window-set-fullscreen', (_event, enabled) => {
+  if (!mainWindow) return false;
+  mainWindow.setFullScreen(Boolean(enabled));
+  return mainWindow.isFullScreen();
 });
 ipcMain.handle('window-close', () => mainWindow?.close());
 ipcMain.handle('check-for-updates', async () => {

@@ -34,14 +34,14 @@ interface StatusBadgeProps {
 }
 
 const statusClassNames: Record<PageStatus, string> = {
-  DRAFT: 'bg-gray-100 dark:bg-background-secondary text-gray-600 dark:text-foreground-tertiary',
-  GENERATING_DESCRIPTION: 'bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 animate-pulse',
-  DESCRIPTION_GENERATED: 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400',
-  NATIVE_GENERATED: 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400',
-  QUEUED: 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 animate-pulse',
-  GENERATING: 'bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 animate-pulse',
-  COMPLETED: 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400',
-  FAILED: 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400',
+  DRAFT: 'border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text-secondary)]',
+  GENERATING_DESCRIPTION: 'border-[color:var(--app-index-yellow)] bg-[var(--app-surface)] text-[var(--app-index-yellow)] animate-pulse',
+  DESCRIPTION_GENERATED: 'border-[color:var(--app-index-green)] bg-[var(--app-surface)] text-[var(--app-index-green)]',
+  NATIVE_GENERATED: 'border-[color:var(--app-index-green)] bg-[var(--app-surface)] text-[var(--app-index-green)]',
+  QUEUED: 'border-[color:var(--app-index-yellow)] bg-[var(--app-surface)] text-[var(--app-index-yellow)] animate-pulse',
+  GENERATING: 'border-[color:var(--app-index-yellow)] bg-[var(--app-surface)] text-[var(--app-index-yellow)] animate-pulse',
+  COMPLETED: 'border-[color:var(--app-index-green)] bg-[var(--app-surface)] text-[var(--app-index-green)]',
+  FAILED: 'border-[color:var(--app-error)] bg-[var(--app-surface)] text-[var(--app-error)]',
 };
 
 const statusLabelKeys: Record<PageStatus, string> = {
@@ -65,7 +65,7 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({ status }) => {
       data-testid="status-badge"
       data-status={status}
       className={cn(
-        'inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium',
+        'inline-flex items-center rounded-[var(--app-radius-control)] border px-2.5 py-0.5 text-xs font-medium',
         className
       )}
     >

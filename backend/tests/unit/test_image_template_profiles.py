@@ -45,6 +45,7 @@ def test_role_hints_carry_distinct_image_generation_constraints():
     assert data is not None
     assert ending is not None
     assert '低密度' in cover
+    assert '中央安全区' in cover
     assert 'KPI' in data
     assert '图表' in data
     assert '总结' in ending

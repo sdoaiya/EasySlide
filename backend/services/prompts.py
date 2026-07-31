@@ -15,6 +15,7 @@ import logging
 import re
 from typing import List, Dict, Optional, TYPE_CHECKING, Any
 
+
 if TYPE_CHECKING:
     from services.ai_service import ProjectContext
 
@@ -91,6 +92,14 @@ _OUTLINE_JSON_FORMAT = """\
     }
 ]"""
 
+_OUTLINE_TAKEAWAY_RULE = """\
+Takeaway rule:
+- For content pages, the FIRST point must be the page's takeaway: one complete assertion sentence stating the conclusion the audience should remember, never a topic phrase.
+- State the conclusion itself; do not merely announce that a conclusion exists.
+- Follow the takeaway with 1-2 points giving concrete evidence, examples, data, or mechanisms, not a restatement of the takeaway.
+- For functional pages (cover, table of contents, section divider, thank-you/Q&A), points only describe what the page contains; do not force assertions.
+- Read in order, the takeaways should form a coherent storyline of the whole deck."""
+
 
 # --- 辅助函数 ---
 
@@ -161,7 +170,7 @@ def normalize_narration_generation_config(
     """Normalize narration generation options from UI/API payloads."""
     normalized = get_default_narration_generation_config(fallback_topic=fallback_topic)
     if not isinstance(config, dict):
-        return normalized
+        config = {}
 
     for field in ('speaker_persona', 'target_audience', 'speech_tone', 'presentation_topic'):
         value = config.get(field)
@@ -175,6 +184,10 @@ def normalize_narration_generation_config(
 
     normalized['min_words'] = min_words
     normalized['max_words'] = max_words
+    mode = config.get('narration_mode')
+    from services.narration_service import normalize_speakers
+    normalized['narration_mode'] = mode if mode in {'single', 'dialogue'} else 'single'
+    normalized['speakers'] = normalize_speakers(config.get('speakers'))
     return normalized
 
 
@@ -194,6 +207,35 @@ def parse_narration_generation_result(result: str) -> Dict[int, str]:
             parsed[int(idx_str)] = text.strip()
         except ValueError:
             continue
+    return parsed
+
+
+def parse_dialogue_narration_result(result: str) -> Dict[int, list]:
+    """Parse JSON dialogue output, tolerating a fenced JSON response."""
+    if not result or not result.strip():
+        return {}
+    text = result.strip()
+    if text.startswith('```'):
+        text = re.sub(r'^```(?:json)?\s*|\s*```$', '', text, flags=re.IGNORECASE | re.DOTALL).strip()
+    try:
+        payload = json.loads(text)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    if isinstance(payload, dict):
+        payload = payload.get('pages', payload)
+    if not isinstance(payload, list):
+        return {}
+    parsed = {}
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        try:
+            page_index = int(item.get('page_index'))
+        except (TypeError, ValueError):
+            continue
+        segments = item.get('segments')
+        if isinstance(segments, list):
+            parsed[page_index] = segments
     return parsed
 
 
@@ -288,6 +330,8 @@ You can organize the content in two ways:
 
 {_OUTLINE_JSON_FORMAT}
 
+{_OUTLINE_TAKEAWAY_RULE}
+
 Choose the format that best fits the content. Use parts when the PPT has clear major sections.
 Unless otherwise specified, the first page should be kept simplest, containing only the title, subtitle, and presenter information.
 
@@ -314,7 +358,7 @@ Output formats:
 1. Simple format, for short PPTs without major sections:
 
 ## Slide title
-One concise sentence describing what this slide should cover. The sentence may include the slide’s role, main idea, key supporting points, examples, data, or transition logic when relevant.
+For content pages: one complete assertion sentence stating the conclusion the audience should remember, optionally followed by 1-2 evidence points. For functional pages: one sentence describing what the page contains.
 
 ## Slide title
 One concise sentence describing what this slide should cover.
@@ -339,6 +383,8 @@ Constraints:
 - Choose the format that best fits the content. Use parts when the PPT has clear major sections.
 - Unless otherwise specified, the first page should be kept simplest, containing only the title, subtitle, and presenter information.
 - Keep content at the outline level: focus on intent, topic, and logic, not polished final wording.
+- Takeaway assertions must be complete sentences that state the actual conclusion, never topic phrases or sentences that merely announce an analysis.
+- Read in order, the page takeaways should form a coherent storyline.
 - Each outline page will eventually be converted into an actual slide. Therefore, if a slide should not appear in the final deck, do not output that page from the beginning.
 
 The user's request: {idea_prompt}.
@@ -561,6 +607,8 @@ You are a helpful assistant that modifies PPT outlines based on user requirement
 
 选择最适合内容的格式。当 PPT 有清晰的主要章节时使用章节格式。
 
+{_OUTLINE_TAKEAWAY_RULE}
+
 现在请根据用户要求修改大纲，只输出 JSON 格式的大纲，不要包含其他文字。
 {get_language_instruction(language)}
 """)
@@ -733,6 +781,76 @@ Now split the description text into individual page descriptions. Return only th
     return prompt
 
 
+def get_dialogue_narration_generation_prompt(
+    pages: list,
+    language: str = 'zh',
+    config: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Generate structured multi-speaker narration segments for video export."""
+    normalized = normalize_narration_generation_config(config)
+    speakers = normalized.get('speakers') or [
+        {'id': 'host', 'name': '主持人'},
+        {'id': 'expert', 'name': '专家'},
+    ]
+    speaker_text = '\n'.join(
+        f"- {speaker.get('id')}: {speaker.get('name')}"
+        for speaker in speakers
+    )
+    example_segments = [
+        {
+            'speaker_id': speaker.get('id'),
+            'text': '...',
+            'delivery': 'question' if index == 0 else 'emphasis',
+            'pause_after_ms': 360 if index == 0 else 520,
+            'rate_delta': '+2%' if index == 0 else '-3%',
+            'pitch_delta': '+2Hz' if index == 0 else '-2Hz',
+        }
+        for index, speaker in enumerate(speakers)
+    ]
+    example_json = json.dumps(
+        {'pages': [{'page_index': 1, 'segments': example_segments}]},
+        ensure_ascii=False,
+        separators=(',', ':'),
+    )
+    slides = []
+    for page in pages:
+        slides.append({
+            'page_index': page.get('page_index'),
+            'title': page.get('title', ''),
+            'points': page.get('points', []),
+            'description_text': page.get('description_text', ''),
+        })
+    language_instruction = LANGUAGE_CONFIG.get(language, LANGUAGE_CONFIG['zh'])['instruction']
+    return f"""你正在为演示讲解视频创作多人对话旁白。
+角色：
+{speaker_text}
+
+演示主题：{normalized.get('presentation_topic', '')}
+目标听众：{normalized.get('target_audience', '')}
+语气：{normalized.get('speech_tone', '')}
+{language_instruction}
+
+要求：
+1. 每页生成 {len(speakers)} 到 {max(4, len(speakers) + 2)} 段自然对话，角色必须来自上面的角色列表，并且每个角色至少发言一次。
+2. 第一个角色负责引入、提问和承接；其他角色根据各自名称承担不同视角的解释和补充，避免重复同一观点。
+3. 只使用页面提供的事实，不要虚构数据、来源或结论。
+4. 不要机械重复页面标题，不要输出 Markdown。
+5. 每页总字数控制在 {normalized.get('min_words')} 到 {normalized.get('max_words')} 之间。
+6. 每段必须额外返回 delivery、pause_after_ms、rate_delta、pitch_delta：
+   - delivery 只能是 question、statement、emphasis、conclusion、transition、reflective 之一；
+   - pause_after_ms 根据语义返回 160 到 900 的整数，提问后、强调前和角色切换可适当加长；
+   - rate_delta 使用如 "+3%" 或 "-4%"，pitch_delta 使用如 "+2Hz" 或 "-2Hz"，不要把控制标记写进 text；
+   - text 必须是自然口语，使用短句、连接词和真实的承接语，避免每句都用相同句式。
+7. 结论页要给出明确总结，不要继续提出无关问题。
+
+只返回 JSON，不要返回解释文字：
+{example_json}
+
+页面数据：
+{json.dumps(slides, ensure_ascii=False)}
+"""
+
+
 def get_descriptions_refinement_prompt(current_descriptions: List[Dict], user_requirement: str,
                                        project_context: 'ProjectContext',
                                        outline: List[Dict] = None,
@@ -844,9 +962,11 @@ def get_image_generation_prompt(page_desc: str, outline_text: str,
 </page_description>
 
 <design_guidelines>
-- 要求文字清晰锐利, 画面为4K分辨率，{aspect_ratio}比例。
+- 画面为 {aspect_ratio}比例，文字清晰锐利，适合演示文稿观看距离。
 {template_style_guideline}
-- 根据内容和要求自动设计最完美的构图，不重不漏地渲染"页面文字"段落中的文本。
+- 不重不漏地渲染“页面文字”段落中的文本，不得擅自增加装饰性英文、乱码或水印。
+- 保持单一清晰的视觉焦点、明确层级和足够留白；默认次要物体不超过三个，背景元素弱化，除非页面描述明确要求，否则不添加无意义小物件、光点、屏幕和装饰线。
+- 摄影或真实场景必须符合现实尺度、统一光源、自然接触阴影与材质逻辑，避免广告式完美。
 - 如非必要，禁止出现 markdown 格式符号（如 # 和 * 等）。
 {forbidden_template_text_guidline}
 </design_guidelines>
@@ -1288,6 +1408,48 @@ Output format — use exactly this delimiter before each narration:
         normalized_config,
     )
     return prompt
+
+
+def get_narration_candidate_prompt(
+    *,
+    operation: str,
+    base_text: str,
+    source: Dict[str, Any],
+    instruction: str = '',
+    selection: Optional[Dict[str, Any]] = None,
+    generation_config: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Build a provider-independent, non-destructive narration edit request."""
+    operation_rules = {
+        'generate': '根据页面事实生成自然、可口述的讲解稿。',
+        'polish': '润色表达与节奏，不增加原材料中不存在的事实、数字或结论。',
+        'shorten': '压缩冗余表达，保留所有关键事实、数字和结论。',
+        'expand': '补充解释和过渡，但不得创造原材料中不存在的事实。',
+        'convert_single': '转换为一位讲述者的连续讲稿，保留原意。',
+        'convert_dialogue': '转换为有明确角色分工的自然对话，不要机械轮流拆句。',
+    }
+    rule = operation_rules.get(operation, operation_rules['polish'])
+    payload = {
+        'page_source': source,
+        'base_text': base_text,
+        'selection': selection,
+        'generation_config': generation_config or {},
+        'user_instruction': instruction,
+    }
+    return f"""你是演示讲解视频的文案编辑。当前操作：{operation}。
+要求：{rule}
+只返回一个合法 JSON 对象，不要 Markdown，不要解释，不要输出 Fish Audio 或其他供应商控制标记。
+JSON schema:
+{{
+  "mode": "single 或 dialogue",
+  "language": "zh-CN/en-US/ja-JP/auto",
+  "text": "合并后的可搜索文本",
+  "segments": [
+    {{"speaker_id":"host","text":"口述内容","delivery":{{"emotion":"warm","intensity":0.5,"rate":"+0%","pitch":"+0Hz","pause_before_ms":0,"pause_after_ms":180}}}}
+  ]
+}}
+单人模式也必须返回 segments；每个 segment 必须有非空 speaker_id 和 text。
+输入：{json.dumps(payload, ensure_ascii=False)}"""
 def get_native_slide_prompt(outline, layout_candidates, style_hint=None, design_intent=None):
     """Build a constrained prompt for one native slide."""
     style_section = f"\n文字描述风格：\n{style_hint}\n" if style_hint else ""
@@ -1310,6 +1472,13 @@ Huashu 设计规划：
     return f"""你正在生成一页结构化、可编辑的演示文稿页面。
 只能从候选布局中选择一个 layout，并且 props 只能包含该布局 propShapes 声明的字段。
 严格遵守 copyBudgets 和 arrayLimits。不要返回 HTML、CSS、className 或解释文字。
+
+质量门槛（输出前逐项自检）：
+- layout 不得与 deck_position.recent_layouts 中最后一个布局相同。
+- 页面只表达一个核心信息；页面大纲 points 至少一半要在可见文案中原样出现，优先全部覆盖。
+- props 内所有可见文本合计不得超过 650 个字符，每个字段仍须遵守 copyBudgets。
+- 所有可见列表项不得重复。
+- 若布局存在 required: true 的媒体槽，必须填入有效内容；无法填写时改选没有必填媒体槽的候选布局。
 {style_section}
 {design_section}
 

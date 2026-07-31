@@ -155,15 +155,16 @@ export const ProjectResourcesList: React.FC<ProjectResourcesListProps> = ({
         <div className="mb-4">
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
-              <FileText size={16} className="text-gray-500 dark:text-foreground-tertiary" />
-              <span className="text-sm font-medium text-gray-700 dark:text-foreground-secondary">
+              <FileText size={16} className="text-[var(--app-text-tertiary)]" />
+              <span className="text-sm font-medium text-[var(--app-text-secondary)]">
                 {t('projectResources.uploadedFiles')} ({files.length})
               </span>
             </div>
             <button
               onClick={loadFiles}
               disabled={isLoadingFiles}
-              className="p-1 text-gray-400 hover:text-gray-600 disabled:opacity-50"
+              className="flex h-10 w-10 items-center justify-center rounded-[var(--app-radius-control)] text-[var(--app-text-tertiary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text)] disabled:opacity-50"
+              aria-label={t('projectResources.refreshList')}
               title={t('projectResources.refreshList')}
             >
               <RefreshCw size={14} className={isLoadingFiles ? 'animate-spin' : ''} />
@@ -190,15 +191,16 @@ export const ProjectResourcesList: React.FC<ProjectResourcesListProps> = ({
         <div>
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
-              <ImageIcon size={16} className="text-gray-500 dark:text-foreground-tertiary" />
-              <span className="text-sm font-medium text-gray-700 dark:text-foreground-secondary">
+              <ImageIcon size={16} className="text-[var(--app-text-tertiary)]" />
+              <span className="text-sm font-medium text-[var(--app-text-secondary)]">
                 {t('projectResources.uploadedImages')} ({materials.length})
               </span>
             </div>
             <button
               onClick={loadMaterials}
               disabled={isLoadingMaterials}
-              className="p-1 text-gray-400 hover:text-gray-600 disabled:opacity-50"
+              className="flex h-10 w-10 items-center justify-center rounded-[var(--app-radius-control)] text-[var(--app-text-tertiary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text)] disabled:opacity-50"
+              aria-label={t('projectResources.refreshList')}
               title={t('projectResources.refreshList')}
             >
               <RefreshCw size={14} className={isLoadingMaterials ? 'animate-spin' : ''} />
@@ -212,13 +214,21 @@ export const ProjectResourcesList: React.FC<ProjectResourcesListProps> = ({
               return (
                 <div
                   key={material.id}
-                  className="relative flex-shrink-0 group cursor-pointer"
+                  className="group relative flex-shrink-0 cursor-pointer rounded-[var(--app-radius-card)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)]"
+                  role={onImageClick ? 'button' : undefined}
+                  tabIndex={onImageClick ? 0 : undefined}
                   onClick={() => onImageClick?.(material)}
+                  onKeyDown={(event) => {
+                    if (onImageClick && (event.key === 'Enter' || event.key === ' ')) {
+                      event.preventDefault();
+                      onImageClick(material);
+                    }
+                  }}
                 >
                   {/* 图片容器 */}
-                  <div className="relative w-32 h-32 bg-gray-100 dark:bg-background-secondary rounded-lg overflow-hidden border-2 border-gray-200 dark:border-border-primary hover:border-banana-400 transition-colors">
+                  <div className="relative h-32 w-32 overflow-hidden rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface-muted)] transition-colors hover:border-[var(--app-accent)]">
                     {failedImageUrls.has(material.url) ? (
-                      <div className="w-full h-full flex items-center justify-center text-gray-400 text-xs text-center p-2">
+                      <div className="flex h-full w-full items-center justify-center p-2 text-center text-xs text-[var(--app-text-tertiary)]">
                         {t('projectResources.imageLoadFailed')}
                       </div>
                     ) : (
@@ -234,8 +244,9 @@ export const ProjectResourcesList: React.FC<ProjectResourcesListProps> = ({
                     <button
                       onClick={(e) => handleDeleteMaterial(e, material.id)}
                       disabled={isDeleting}
-                      className="absolute top-1 right-1 p-1 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 active:scale-95 disabled:opacity-60"
+                      className="absolute right-1 top-1 flex h-10 w-10 items-center justify-center rounded-[var(--app-radius-control)] bg-[var(--app-error)] text-[var(--app-on-color)] opacity-100 transition-opacity hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 disabled:opacity-60 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
                       title={t('projectResources.deleteThisMaterial')}
+                      aria-label={t('projectResources.deleteThisMaterial')}
                     >
                       {isDeleting ? (
                         <RefreshCw size={14} className="animate-spin" />
@@ -245,7 +256,7 @@ export const ProjectResourcesList: React.FC<ProjectResourcesListProps> = ({
                     </button>
 
                     {/* 悬浮时显示文件名 */}
-                    <div className="absolute inset-x-0 bottom-0 bg-black/70 text-white text-xs p-1 opacity-0 group-hover:opacity-100 transition-opacity truncate">
+                    <div className="absolute inset-x-0 bottom-0 bg-[color:var(--app-surface)]/85 text-[var(--app-text)] text-xs p-1 opacity-0 group-hover:opacity-100 transition-opacity truncate">
                       {getMaterialDisplayName(material)}
                     </div>
                   </div>

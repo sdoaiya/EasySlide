@@ -16,6 +16,8 @@ extraResources:
     to: icon.png
   - from: resources/bootstrap-settings.json
     to: bootstrap-settings.json
+  - from: resources/hyperframes-browser
+    to: hyperframes-browser
 win:
   target:
     - nsis

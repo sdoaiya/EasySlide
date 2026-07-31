@@ -37,7 +37,7 @@ try {
   & $python scripts\prepare_desktop_credentials.py --source $credentialSource --output (Join-Path $stagingRoot 'bootstrap-settings.json')
   @"
 from pathlib import Path
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 
 source = Path(r"frontend\public\logo.png")
 if not source.exists():
@@ -45,17 +45,50 @@ if not source.exists():
 png_target = Path(r"desktop\resources\icon.png")
 ico_target = Path(r"desktop\resources\icon.ico")
 image = Image.open(source).convert("RGBA")
-image.thumbnail((256, 256), Image.LANCZOS)
+pixels = image.load()
+edge = max(4, image.width // 5)
+for y in range(image.height):
+    for x in range(image.width):
+        red, green, blue, alpha_value = pixels[x, y]
+        near_edge = x < edge or y < edge or x >= image.width - edge or y >= image.height - edge
+        if near_edge and alpha_value and min(red, green, blue) > 180 and max(red, green, blue) - min(red, green, blue) < 40:
+            pixels[x, y] = (0, 0, 0, 0)
+
+# Resize premultiplied channels so transparent white source pixels cannot create a halo.
+alpha = image.getchannel("A").resize((256, 256), Image.LANCZOS)
+premultiplied = [
+    ImageChops.multiply(image.getchannel(channel), image.getchannel("A")).resize((256, 256), Image.LANCZOS)
+    for channel in ("R", "G", "B")
+]
 canvas = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
-canvas.paste(image, ((256 - image.width) // 2, (256 - image.height) // 2), image)
+canvas.putdata([
+    (0, 0, 0, 0) if a == 0 else tuple(min(255, round(value * 255 / a)) for value in rgb) + (a,)
+    for rgb, a in zip(zip(*(channel.getdata() for channel in premultiplied)), alpha.getdata())
+])
 mask = Image.new("L", (256, 256), 0)
-ImageDraw.Draw(mask).rounded_rectangle((0, 0, 256, 256), radius=48, fill=255)
-canvas.putalpha(mask)
+ImageDraw.Draw(mask).rounded_rectangle((0, 0, 255, 255), radius=48, fill=255)
+canvas.putalpha(ImageChops.multiply(canvas.getchannel("A"), mask))
+pixels = canvas.load()
+for y in range(256):
+    for x in range(256):
+        red, green, blue, alpha_value = pixels[x, y]
+        near_edge = x < 24 or y < 24 or x >= 232 or y >= 232
+        if near_edge and alpha_value and min(red, green, blue) > 180 and max(red, green, blue) - min(red, green, blue) < 40:
+            pixels[x, y] = (0, 0, 0, 0)
+canvas.putdata([(0, 0, 0, 0) if a == 0 else (r, g, b, a) for r, g, b, a in canvas.getdata()])
+assert not any(
+    a and min(r, g, b) > 220
+    for y in range(256)
+    for x in range(256)
+    if x < 24 or y < 24 or x >= 232 or y >= 232
+    for r, g, b, a in [canvas.getpixel((x, y))]
+)
 canvas.save(png_target)
 canvas.save(ico_target, sizes=[(256, 256), (128, 128), (64, 64), (48, 48), (32, 32), (16, 16)])
 "@ | & $python -
 
   npm --prefix desktop install
+  node scripts\stage-hyperframes-browser.mjs desktop\resources\hyperframes-browser
   npm --prefix desktop pkg delete dependencies.easyslide
   $desktopPackageLink = Join-Path $desktopRoot 'node_modules\easyslide'
   if (Test-Path $desktopPackageLink) {
@@ -101,14 +134,13 @@ canvas.save(ico_target, sizes=[(256, 256), (128, 128), (64, 64), (48, 48), (32, 
   }
 
   # Keep the Electron builder cache separate from the user-facing delivery folder.
-  # Default to a timestamped folder under the current checkout so Codex worktree
-  # builds are easy to find and never mix with stale artifacts.
+  # Publish to the stable release folder by default; override when needed.
   # Set EASLIDE_RELEASE_DIR explicitly when publishing to an exact location.
   $releaseRoot = Join-Path (Join-Path $PSScriptRoot '..') 'release'
   $finalDesktopDist = if ($env:EASLIDE_RELEASE_DIR) {
     $env:EASLIDE_RELEASE_DIR
   } else {
-    Join-Path $releaseRoot ("codex-build-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+    $releaseRoot
   }
   try {
     if (Test-Path $finalDesktopDist) {

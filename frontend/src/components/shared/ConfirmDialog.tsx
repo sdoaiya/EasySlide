@@ -36,9 +36,9 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   };
 
   const variantStyles = {
-    danger: 'text-red-600 dark:text-red-400',
-    warning: 'text-yellow-600 dark:text-yellow-400',
-    info: 'text-blue-600 dark:text-blue-400',
+    danger: 'text-[var(--app-error)]',
+    warning: 'text-[var(--app-index-yellow)]',
+    info: 'text-[var(--app-link)]',
   };
 
   return (
@@ -49,7 +49,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
             size={24}
             className={`flex-shrink-0 mt-0.5 ${variantStyles[variant]}`}
           />
-          <p className="text-gray-700 dark:text-foreground-secondary flex-1">{message}</p>
+          <p className="flex-1 text-[var(--app-text-secondary)]">{message}</p>
         </div>
         {checkboxLabel && (
           <label className="flex items-center gap-2 cursor-pointer">
@@ -57,9 +57,9 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
               type="checkbox"
               checked={checkboxChecked}
               onChange={(e) => setCheckboxChecked(e.target.checked)}
-              className="w-4 h-4 rounded border-gray-300 dark:border-gray-600"
+              className="h-4 w-4 rounded border-[var(--app-border)] accent-[var(--app-primary-action)]"
             />
-            <span className="text-sm text-gray-700 dark:text-foreground-secondary">{checkboxLabel}</span>
+            <span className="text-sm text-[var(--app-text-secondary)]">{checkboxLabel}</span>
           </label>
         )}
         <div className="flex justify-end gap-3 pt-4">

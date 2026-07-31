@@ -6,12 +6,16 @@ declare global {
       getBackendPort: () => Promise<number>;
       openExternal: (url: string) => Promise<void>;
       openDataDir: () => Promise<string>;
+      getDataDir: () => Promise<string>;
+      chooseDataDir: () => Promise<string>;
       getExportDir: () => Promise<string>;
       chooseExportDir: () => Promise<string>;
       openExportDir: () => Promise<string>;
       saveDownload: (url: string, filename?: string) => Promise<string | null>;
       minimizeWindow: () => void;
       maximizeWindow: () => void;
+      setFullscreen: (enabled: boolean) => Promise<boolean>;
+      onFullscreenChange?: (listener: (enabled: boolean) => void) => () => void;
       closeWindow: () => void;
       checkForUpdates: () => Promise<{ version: string; url: string; notes?: string } | null>;
     };

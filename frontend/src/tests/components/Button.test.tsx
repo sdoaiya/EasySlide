@@ -28,8 +28,9 @@ describe('Button Component', () => {
   it('uses a solid semantic primary style without hover lift', () => {
     render(<Button>Primary</Button>)
     const button = screen.getByText('Primary')
-    expect(button).toHaveClass('bg-[var(--app-accent)]')
+    expect(button).toHaveClass('bg-[var(--app-primary-action)]')
     expect(button).not.toHaveClass('bg-gradient-to-r')
+    expect(button).not.toHaveClass('before:bg-white/20')
     expect(button).not.toHaveClass('hover:-translate-y-0.5')
   })
 
@@ -37,6 +38,7 @@ describe('Button Component', () => {
     render(<Button variant="secondary">Secondary</Button>)
     const button = screen.getByText('Secondary')
     expect(button).toHaveClass('border-[var(--app-border)]')
+    expect(button).toHaveClass('bg-[var(--app-surface)]')
   })
 
   it('shows loading state and disables button', () => {
@@ -59,4 +61,3 @@ describe('Button Component', () => {
     expect(screen.getByTestId('test-icon')).toBeInTheDocument()
   })
 })
-

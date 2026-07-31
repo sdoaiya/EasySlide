@@ -26,8 +26,12 @@ vi.mock('@/hooks/useTheme', () => ({
 }));
 
 vi.mock('@/components/shared/TemplateSelector', () => ({
-  TemplateSelector: ({ onSelect }: { onSelect: (templateFile: File | null, templateId?: string) => void }) => (
+  TemplateSelector: ({ onSelect, selectedTemplateDetails }: {
+    onSelect: (templateFile: File | null, templateId?: string) => void;
+    selectedTemplateDetails?: React.ReactNode;
+  }) => (
     <div data-testid="template-selector">
+      {selectedTemplateDetails}
       <button type="button" onClick={() => onSelect(null, 'gorden-data-viz-deck')}>
         选择数据可视化合辑
       </button>
@@ -78,11 +82,11 @@ describe('Home render mode selection', () => {
     expect(screen.getAllByText('轻拟态风').some((element) => element.offsetParent !== null || element.isConnected)).toBe(true);
   });
 
-  it('uses a single cyan border focus treatment for the create textarea', () => {
+  it('uses a single semantic border focus treatment for the create textarea', () => {
     renderHome();
 
     const frame = screen.getByRole('textbox', { name: /生成一份关于/ }).parentElement?.parentElement;
-    expect(frame).toHaveClass('focus-within:!border-cyan-500', 'focus-within:!ring-0');
+    expect(frame).toHaveClass('focus-within:!border-[var(--app-accent)]', 'focus-within:!ring-0');
     expect(frame).not.toHaveClass('focus-within:ring-banana-500', 'border-2');
   });
 
@@ -109,7 +113,29 @@ describe('Home render mode selection', () => {
       'native',
       'theme03',
       undefined,
+      undefined,
+      'ppt',
     ]);
+  });
+
+  it('sends image-mode template visual settings when creating a project', async () => {
+    const user = userEvent.setup();
+    renderHome();
+
+    await user.selectOptions(screen.getByRole('combobox', { name: '模板配色' }), 'enterprise_blue');
+    await user.selectOptions(screen.getByRole('combobox', { name: '模板图表风格' }), 'consulting');
+    await user.selectOptions(screen.getByRole('combobox', { name: '模板图片策略' }), 'photo');
+    await user.selectOptions(screen.getByRole('combobox', { name: '模板文案语气' }), 'research');
+    await user.type(screen.getByRole('textbox', { name: /生成一份关于/ }), '图片模式视觉系统项目');
+    await user.click(screen.getByRole('button', { name: '下一步' }));
+    await waitFor(() => expect(initializeProject).toHaveBeenCalledOnce());
+
+    expect(initializeProject.mock.calls[0][9]).toEqual(expect.objectContaining({
+      palette: 'enterprise_blue',
+      chart_theme: 'consulting',
+      media_style: 'photo',
+      tone: 'research',
+    }));
   });
 
   it('sends core01 when classic native generation is selected', async () => {
@@ -125,7 +151,7 @@ describe('Home render mode selection', () => {
     expect(initializeProject.mock.calls[0].slice(6, 8)).toEqual(['native', 'core01']);
   });
 
-  it('places native generation choices before the prompt editor and keeps text style collapsed', async () => {
+  it('places the native prompt editor before text style and preset styles', async () => {
     const user = userEvent.setup();
     renderHome();
 
@@ -133,7 +159,9 @@ describe('Home render mode selection', () => {
 
     const themeGroup = screen.getByRole('radiogroup', { name: '原生主题' });
     const promptEditor = screen.getByRole('textbox', { name: /生成一份关于/ });
-    expect(themeGroup.compareDocumentPosition(promptEditor) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const textStyle = screen.getByTestId('native-text-style');
+    expect(promptEditor.compareDocumentPosition(textStyle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(textStyle.compareDocumentPosition(themeGroup) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByPlaceholderText(/描述您想要的 PPT 风格/)).not.toBeInTheDocument();
   });
 
@@ -145,6 +173,7 @@ describe('Home render mode selection', () => {
     await user.click(screen.getByRole('radio', { name: '原生可编辑' }));
 
     expect(screen.queryByTestId('template-selector')).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: '模板配色' })).not.toBeInTheDocument();
     await user.click(screen.getByRole('checkbox', { name: '使用文字描述风格' }));
     await user.type(screen.getByPlaceholderText(/描述您想要的 PPT 风格/), '科技蓝风格');
     await user.type(screen.getByRole('textbox', { name: /生成一份关于/ }), '原生项目');
@@ -199,5 +228,18 @@ describe('Home render mode selection', () => {
     expect(call[3]).toContain('深蓝与砖红数据视觉');
     expect(call[3]).toContain('更偏高端咨询风');
     expect(call[8]).toBe('gorden-data-viz-deck');
+  });
+
+  it('places image text style above templates and visual controls inside the template selector', async () => {
+    const user = userEvent.setup();
+    renderHome();
+
+    await user.click(screen.getByRole('button', { name: '选择数据可视化合辑' }));
+    await user.click(screen.getByRole('checkbox', { name: '使用文字描述风格' }));
+
+    const styleEditor = screen.getByPlaceholderText(/描述您想要的 PPT 风格/);
+    const templateSelector = screen.getByTestId('template-selector');
+    expect(styleEditor.compareDocumentPosition(templateSelector) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(templateSelector).getByRole('region', { name: '模板视觉调节' })).toBeInTheDocument();
   });
 });

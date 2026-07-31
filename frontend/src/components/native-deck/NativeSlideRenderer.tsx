@@ -2,6 +2,7 @@ import { Component, memo, useEffect, useMemo, useRef, useState, type ErrorInfo, 
 import { layoutRegistry } from '@/native-deck/layoutRegistry'
 import { isDashiLayout, loadDashiRuntimePage, pruneDashiProps, type DashiRuntimePage } from '@/native-deck/dashiThemeRuntime'
 import { disposeDashiRuntime, prepareDashiRuntime, resolveDashiAssetProps } from '@/native-deck/dashiRuntimeEffects'
+import { annotateNativeMotionElements } from '@/native-deck/nativeSceneAdapter'
 import type { NativeSlideSpec } from '@/native-deck/types'
 import '@/native-deck/native-deck.css'
 
@@ -155,6 +156,7 @@ function DashiSlide({ slide, initializeEffects = true, animate = true }: NativeS
 }
 
 const SlideFrame = ({ slide, ready, animate = true, initializeEffects = true, elementAnimation, elementAnimationStep = 1, elementAnimationStyle, children, frameRef }: NativeSlideRendererProps & { ready?: boolean; children: ReactNode; frameRef?: Ref<HTMLDivElement>; elementAnimation?: string; elementAnimationStep?: number; elementAnimationStyle?: React.CSSProperties }) => {
+  const motionRef = useRef<HTMLDivElement | null>(null)
   const intent = slide.props.__design_intent
   const visualSystem = intent && typeof intent === 'object' && typeof (intent as Record<string, unknown>).page_plan === 'object'
     ? String(((intent as Record<string, unknown>).page_plan as Record<string, unknown>).visual_system || '')
@@ -162,9 +164,17 @@ const SlideFrame = ({ slide, ready, animate = true, initializeEffects = true, el
   const designEngine = intent && typeof intent === 'object'
     ? String((intent as Record<string, unknown>).design_engine || '')
     : ''
+  useEffect(() => {
+    if (!ready || !motionRef.current) return
+    annotateNativeMotionElements(motionRef.current, slide.props)
+  })
   return (
     <div
-      ref={frameRef}
+      ref={(element) => {
+        motionRef.current = element
+        if (typeof frameRef === 'function') frameRef(element)
+        else if (frameRef) (frameRef as { current: HTMLDivElement | null }).current = element
+      }}
       className="native-slide"
       data-layout={slide.layout}
       data-visual-system={visualSystem || undefined}

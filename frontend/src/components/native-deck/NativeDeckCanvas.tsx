@@ -49,6 +49,7 @@ export function NativeDeckCanvas({ slide, zoom = 1, pageIndex = 0, pageCount = 1
   const [textEdit, setTextEdit] = useState<TextEditState>()
   const [textSelection, setTextSelection] = useState<TextSelectionState>()
 
+  const hasSlide = Boolean(slide)
   const elementTrigger = (slide?.props.__animation as { elementTrigger?: string } | undefined)?.elementTrigger
 
   useEffect(() => {
@@ -93,7 +94,7 @@ export function NativeDeckCanvas({ slide, zoom = 1, pageIndex = 0, pageCount = 1
     const observer = new ResizeObserver(resize)
     observer.observe(frame)
     return () => observer.disconnect()
-  }, [])
+  }, [hasSlide])
 
   useEffect(() => {
     if (!slide) return
@@ -179,15 +180,15 @@ export function NativeDeckCanvas({ slide, zoom = 1, pageIndex = 0, pageCount = 1
 
   if (!slide) {
     return (
-      <div className="flex h-full items-center justify-center bg-[#eef7fb] p-6 dark:bg-background-primary">
-        <div className="flex max-w-md flex-col items-center rounded-2xl border border-sky-100 bg-white px-8 py-10 text-center shadow-[0_14px_38px_rgba(15,23,42,0.10)] dark:border-border-primary dark:bg-background-secondary">
-          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-sky-50 text-sky-500 dark:bg-sky-900/20 dark:text-sky-300">
+      <div className="flex h-full items-center justify-center bg-[var(--app-canvas)] p-6">
+        <div className="flex max-w-md flex-col items-center rounded-lg border border-[var(--app-border)] bg-[var(--app-surface)] px-8 py-10 text-center shadow-[var(--app-shadow-soft)]">
+          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-md bg-[var(--app-surface-muted)] text-[var(--app-accent)]">
             <FilePlus2 size={28} aria-hidden="true" />
           </div>
-          <h2 className="text-base font-semibold text-slate-800 dark:text-foreground-primary">还没有原生页面</h2>
-          <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-foreground-secondary">先生成页面，之后可以在这里逐页编辑、配图和导出。</p>
+          <h2 className="text-base font-semibold text-[var(--app-text)]">还没有原生页面</h2>
+          <p className="mt-2 text-sm leading-6 text-[var(--app-text-secondary)]">先生成页面，之后可以在这里逐页编辑、配图和导出。</p>
           {emptyAction && (
-            <button type="button" onClick={emptyAction.onClick} className="mt-6 inline-flex h-10 items-center gap-2 rounded-lg bg-gradient-to-r from-sky-500 to-emerald-400 px-5 text-sm font-semibold text-white shadow-md shadow-sky-200/60 transition hover:brightness-105">
+            <button type="button" onClick={emptyAction.onClick} className="mt-6 inline-flex h-10 items-center gap-2 rounded-md bg-[var(--app-primary-action)] px-5 text-sm font-semibold text-[var(--app-surface)] transition-colors hover:bg-[var(--app-primary-action-hover)] active:scale-[0.98]">
               <FilePlus2 size={17} aria-hidden="true" />{emptyAction.label}
             </button>
           )}
@@ -195,7 +196,8 @@ export function NativeDeckCanvas({ slide, zoom = 1, pageIndex = 0, pageCount = 1
       </div>
     )
   }
-  const scale = fitScale * zoom
+  const renderScale = fitScale * zoom
+  const textEditStyle = textEdit ? scaleCanvasTextStyle(textEdit.textStyle, renderScale) : undefined
   const hasGenerationStatus = Boolean(generationStatus && generationStatus.status !== 'COMPLETED')
   const generationText = !generationStatus ? ''
     : generationStatus.status === 'FAILED' ? `生成失败：${generationStatus.error || '请稍后重试'}`
@@ -290,23 +292,23 @@ export function NativeDeckCanvas({ slide, zoom = 1, pageIndex = 0, pageCount = 1
   }
 
   return (
-    <div ref={frameRef} className="relative flex h-full min-w-0 w-full items-center justify-center overflow-hidden bg-[#eef7fb] p-6 pb-20 dark:bg-background-primary">
-      <div className={`relative shrink-0 overflow-hidden rounded-xl bg-white shadow-[0_14px_38px_rgba(15,23,42,0.14)] ring-1 ring-sky-100/70 ${transitionClass}`} style={{ width: 1920 * scale, height: 1080 * scale }}>
+    <div ref={frameRef} data-testid="native-canvas-viewport" className="relative flex h-full min-w-0 w-full items-center justify-center overflow-auto p-6 pb-20" style={{ background: 'var(--app-canvas)' }}>
+      <div data-testid="native-canvas-footprint" className={`relative shrink-0 overflow-visible rounded-lg bg-[var(--app-surface)] shadow-[var(--app-shadow-soft)] ring-1 ring-[var(--app-border)] ${transitionClass}`} style={{ width: 1920 * fitScale, height: 1080 * fitScale }}>
         {outgoingSlide && (
           <div aria-hidden="true" className="absolute inset-0 z-0 native-page-outgoing">
-            <div className="absolute left-0 top-0 origin-top-left" style={{ transform: `scale(${scale})` }}>
+            <div className="absolute left-1/2 top-1/2 origin-center" style={{ transform: `translate(-50%, -50%) scale(${renderScale})` }}>
               <NativeSlideRenderer slide={outgoingSlide} initializeEffects={false} animate={false} />
             </div>
           </div>
         )}
-        <div className="absolute left-0 top-0 z-[1] origin-top-left" style={{ transform: `scale(${scale})` }} onClick={handleCanvasClick} onDoubleClick={beginTextEdit} onDragOver={(event) => event.preventDefault()} onDrop={handleCanvasDrop}>
+        <div data-testid="native-canvas-render-layer" className="absolute left-1/2 top-1/2 z-[1] origin-center" style={{ transform: `translate(-50%, -50%) scale(${renderScale})` }} onClick={handleCanvasClick} onDoubleClick={beginTextEdit} onDragOver={(event) => event.preventDefault()} onDrop={handleCanvasDrop}>
           <NativeSlideRenderer key={`${slide.pageId}:${slide.layout}`} slide={slide} elementAnimationStep={elementAnimationStep} />
         </div>
       </div>
       {textSelection && !textEdit && (
         <div
           data-testid="native-canvas-text-selection"
-          className="pointer-events-none absolute z-20 rounded-md border-2 border-cyan-400/90 bg-cyan-100/10"
+          className="pointer-events-none absolute z-20 rounded-md border-2 border-[var(--app-accent)] bg-[color:var(--app-accent-soft)]"
           style={{
             left: textSelection.rect.left,
             top: textSelection.rect.top,
@@ -337,24 +339,24 @@ export function NativeDeckCanvas({ slide, zoom = 1, pageIndex = 0, pageCount = 1
                 commitTextEdit()
               }
             }}
-            className="absolute z-30 box-border resize-none rounded-md border-2 border-cyan-500 bg-white/95 px-2 py-1 text-slate-900 shadow-xl outline-none ring-2 ring-cyan-200"
+            className="absolute z-30 box-border resize-none rounded-md border-2 border-[var(--app-accent)] bg-[var(--app-surface)]/95 px-2 py-1 text-[var(--app-text)] shadow-[var(--app-shadow-soft)] outline-none"
             style={{
               left: textEdit.rect.left,
               top: textEdit.rect.top,
               width: textEdit.rect.width,
               minHeight: textEdit.rect.height,
-              ...textEdit.textStyle,
+              ...textEditStyle,
             }}
           />
           <div
             ref={editorToolbarRef}
-            className="absolute z-30 flex h-9 items-center gap-1 rounded-lg border border-cyan-100 bg-white/95 p-1 shadow-lg backdrop-blur"
+            className="absolute z-30 flex h-9 items-center gap-1 rounded-md border border-[var(--app-border)] bg-[var(--app-surface)]/95 p-1 shadow-[var(--app-shadow-soft)] backdrop-blur"
             style={{
               left: textEdit.rect.left,
               top: textEdit.rect.top + Math.max(44, textEdit.rect.height) + 8,
             }}
           >
-            <span className="text-[11px] tabular-nums text-slate-500" aria-label={textLimit ? `文字长度 ${textEdit.value.length}/${textLimit}` : undefined}>{textLimit ? `${textEdit.value.length}/${textLimit}` : ''}</span>
+            <span className="text-[11px] tabular-nums text-[var(--app-text-tertiary)]" aria-label={textLimit ? `文字长度 ${textEdit.value.length}/${textLimit}` : undefined}>{textLimit ? `${textEdit.value.length}/${textLimit}` : ''}</span>
             <span className="sr-only">Ctrl Enter 保存文字修改，Escape 取消文字修改</span>
             <button
               type="button"
@@ -364,7 +366,7 @@ export function NativeDeckCanvas({ slide, zoom = 1, pageIndex = 0, pageCount = 1
                 event.preventDefault()
               }}
               onClick={commitTextEdit}
-              className="flex h-7 w-7 items-center justify-center rounded-md text-cyan-700 transition hover:bg-cyan-50"
+              className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--app-accent)] transition hover:bg-[var(--app-surface-hover)]"
             >
               <Check size={15} aria-hidden="true" />
             </button>
@@ -376,7 +378,7 @@ export function NativeDeckCanvas({ slide, zoom = 1, pageIndex = 0, pageCount = 1
                 event.preventDefault()
               }}
               onClick={cancelTextEdit}
-              className="flex h-7 w-7 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100"
+              className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--app-text-tertiary)] transition hover:bg-[var(--app-surface-hover)]"
             >
               <X size={15} aria-hidden="true" />
             </button>
@@ -384,18 +386,18 @@ export function NativeDeckCanvas({ slide, zoom = 1, pageIndex = 0, pageCount = 1
         </>
       )}
       {(pageCount > 1 || hasGenerationStatus) && (
-        <div data-testid="native-page-navigator" className="absolute bottom-5 left-1/2 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2 rounded-xl border border-black/5 bg-white/95 px-3 py-2 text-sm shadow-lg backdrop-blur">
+        <div data-testid="native-page-navigator" className="absolute bottom-5 left-1/2 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2 rounded-md border border-[var(--app-border)] bg-[var(--app-surface)]/95 px-3 py-2 text-sm shadow-[var(--app-shadow-soft)] backdrop-blur">
           {pageCount > 1 && <>
-            <button type="button" aria-label="上一页" title="上一页" disabled={pageIndex <= 0} onClick={onPrevious} className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-slate-100 disabled:opacity-30"><ChevronLeft size={18} /></button>
-            <span className="min-w-14 text-center font-mono text-xs font-semibold text-slate-700">{String(pageIndex + 1).padStart(2, '0')} / {String(pageCount).padStart(2, '0')}</span>
-            <button type="button" aria-label="下一页" title="下一页" disabled={pageIndex >= pageCount - 1} onClick={onNext} className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-slate-100 disabled:opacity-30"><ChevronRight size={18} /></button>
+            <button type="button" aria-label="上一页" title="上一页" disabled={pageIndex <= 0} onClick={onPrevious} className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-[var(--app-surface-hover)] disabled:opacity-30"><ChevronLeft size={18} /></button>
+            <span className="min-w-14 text-center font-mono text-xs font-semibold text-[var(--app-text-secondary)]">{String(pageIndex + 1).padStart(2, '0')} / {String(pageCount).padStart(2, '0')}</span>
+            <button type="button" aria-label="下一页" title="下一页" disabled={pageIndex >= pageCount - 1} onClick={onNext} className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-[var(--app-surface-hover)] disabled:opacity-30"><ChevronRight size={18} /></button>
           </>}
           {hasGenerationStatus && generationStatus && <>
-            {pageCount > 1 && <span className="h-4 w-px bg-slate-200" aria-hidden="true" />}
-            <span role={generationStatus.status === 'FAILED' ? 'alert' : 'status'} className={`whitespace-nowrap text-xs font-semibold ${generationStatus.status === 'FAILED' ? 'text-red-600' : 'text-sky-700'}`}>{generationText}{generationStatus.failed > 0 && `，失败 ${generationStatus.failed}`}</span>
-            {generationStatus.status === 'FAILED' && generationStatus.onResume && <button type="button" onClick={generationStatus.onResume} className="rounded-md bg-cyan-600 px-2 py-1 text-xs font-semibold text-white">重试失败页</button>}
-            {generationStatus.status === 'PAUSED' && generationStatus.onResume && <button type="button" onClick={generationStatus.onResume} className="rounded-md bg-cyan-600 px-2 py-1 text-xs font-semibold text-white">继续</button>}
-            {(generationStatus.status === 'PENDING' || generationStatus.status === 'PROCESSING') && generationStatus.onPause && <button type="button" onClick={generationStatus.onPause} className="rounded-md px-2 py-1 text-xs font-semibold text-sky-700 hover:bg-sky-50">暂停</button>}
+            {pageCount > 1 && <span className="h-4 w-px bg-[var(--app-border)]" aria-hidden="true" />}
+            <span role={generationStatus.status === 'FAILED' ? 'alert' : 'status'} className={`whitespace-nowrap text-xs font-semibold ${generationStatus.status === 'FAILED' ? 'text-[var(--app-error)]' : 'text-[var(--app-accent)]'}`}>{generationText}{generationStatus.failed > 0 && `，失败 ${generationStatus.failed}`}</span>
+          {generationStatus.status === 'FAILED' && generationStatus.onResume && <button type="button" onClick={generationStatus.onResume} className="rounded-md bg-[var(--app-primary-action)] px-2 py-1 text-xs font-semibold text-[var(--app-surface)]">重试失败页</button>}
+          {generationStatus.status === 'PAUSED' && generationStatus.onResume && <button type="button" onClick={generationStatus.onResume} className="rounded-md bg-[var(--app-primary-action)] px-2 py-1 text-xs font-semibold text-[var(--app-surface)]">继续</button>}
+            {(generationStatus.status === 'PENDING' || generationStatus.status === 'PROCESSING') && generationStatus.onPause && <button type="button" onClick={generationStatus.onPause} className="rounded-md px-2 py-1 text-xs font-semibold text-[var(--app-accent)] hover:bg-[var(--app-surface-hover)]">暂停</button>}
           </>}
         </div>
       )}
@@ -448,6 +450,28 @@ function writeTextPath(props: Record<string, unknown>, path: Array<string | numb
     return { ...object, [key]: write(object[key], cursor + 1) }
   }
   return write(props, 0) as Record<string, unknown>
+}
+
+function scaleCanvasTextStyle(style: TextEditState['textStyle'] | undefined, scale: number): CSSProperties {
+  if (!style) return {}
+  if (!Number.isFinite(scale) || scale <= 0 || scale === 1) return { ...style }
+  return {
+    ...style,
+    fontSize: scaleCssPxValue(style.fontSize, scale),
+    lineHeight: scaleCssPxValue(style.lineHeight, scale),
+    letterSpacing: scaleCssPxValue(style.letterSpacing, scale),
+  }
+}
+
+function scaleCssPxValue(value: CSSProperties['fontSize'] | CSSProperties['lineHeight'] | CSSProperties['letterSpacing'] | undefined, scale: number) {
+  if (typeof value === 'number') return value * scale
+  if (typeof value !== 'string') return value
+  if (value === 'normal') return value
+  const numeric = Number.parseFloat(value)
+  if (!Number.isFinite(numeric)) return value
+  if (value.endsWith('px')) return `${numeric * scale}px`
+  if (/^-?\d+(\.\d+)?$/.test(value)) return `${numeric * scale}`
+  return value
 }
 
 function isMediaString(value: string) {

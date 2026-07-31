@@ -32,14 +32,15 @@ export const Loading: React.FC<LoadingProps> = ({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const defaultMessage = message || t('common.loading');
   const defaultBackgroundLabel = backgroundButtonLabel || t('common.runInBackground');
-  
+
   // 自动滚动到最新消息
   useEffect(() => {
     if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+      const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      messagesEndRef.current.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth' });
     }
   }, [progress?.messages]);
-  
+
   // 计算进度百分比
   const getPercent = () => {
     if (!progress) return 0;
@@ -47,30 +48,30 @@ export const Loading: React.FC<LoadingProps> = ({
     if (progress.total > 0) return Math.round((progress.completed / progress.total) * 100);
     return 0;
   };
-  
+
   const percent = getPercent();
   const hasMessages = progress?.messages && progress.messages.length > 0;
-  
+
   const content = (
-    <div className="flex flex-col items-center justify-center max-w-md w-full px-4">
+    <div className="flex w-full max-w-md flex-col items-center justify-center px-4" role="status" aria-live="polite">
       {/* 加载图标 */}
       <div className="relative w-12 h-12 mb-4">
-        <div className="absolute inset-0 border-4 border-banana-100 rounded-full" />
-        <div className="absolute inset-0 border-4 border-banana-500 rounded-full border-t-transparent animate-spin" />
+        <div className="absolute inset-0 rounded-full border-4 border-[var(--app-surface-hover)]" />
+        <div className="absolute inset-0 animate-spin rounded-full border-4 border-[var(--app-accent)] border-t-transparent" />
       </div>
-      
+
       {/* 消息 */}
-      <p className="text-lg text-gray-700 dark:text-foreground-secondary mb-4 text-center">{defaultMessage}</p>
+      <p className="text-lg text-[var(--app-text-secondary)] mb-4 text-center">{defaultMessage}</p>
 
       {/* 进度条 */}
       {progress && (
         <div className="w-full">
-          <div className="flex justify-end text-sm text-gray-600 dark:text-foreground-tertiary mb-2">
+          <div className="flex justify-end text-sm text-[var(--app-text-tertiary)] mb-2">
             <span className="font-medium">{percent}%</span>
           </div>
-          <div className="h-2 bg-gray-200 dark:bg-background-hover rounded-full overflow-hidden">
+          <div className="h-2 overflow-hidden rounded-full bg-[var(--app-surface-hover)]" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}>
             <div
-              className="h-full bg-gradient-to-r from-banana-500 to-banana-600 transition-all duration-300"
+              className="h-full bg-[var(--app-accent)] transition-[width] duration-300"
               style={{ width: `${percent}%` }}
             />
           </div>
@@ -80,18 +81,18 @@ export const Loading: React.FC<LoadingProps> = ({
       {/* 滚动消息日志 */}
       {hasMessages && (
         <div className="w-full mt-4">
-          <div className="bg-banana-50 dark:bg-background-secondary border border-banana-200 dark:border-border-primary rounded-lg p-3 h-32 overflow-y-auto text-xs">
+          <div className="h-32 overflow-y-auto rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-3 text-xs">
             {progress.messages!.map((msg, index) => (
               <div
                 key={index}
                 className={cn(
                   "py-0.5",
                   index === progress.messages!.length - 1
-                    ? "text-banana-700 dark:text-banana-400 font-medium"
-                    : "text-gray-500 dark:text-foreground-tertiary"
+                    ? "font-medium text-[var(--app-accent)]"
+                    : "text-[var(--app-text-tertiary)]"
                 )}
               >
-                <span className="text-banana-400 mr-2">›</span>
+                <span className="mr-2 text-[var(--app-text-tertiary)]">›</span>
                 {msg}
               </div>
             ))}
@@ -104,12 +105,12 @@ export const Loading: React.FC<LoadingProps> = ({
 
   if (fullscreen) {
     return (
-      <div className="fixed inset-0 bg-white/90 dark:bg-background-primary/90 backdrop-blur-sm flex items-center justify-center z-50">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--app-surface)]">
         {/* Background button - top left corner */}
         {onBackgroundClick && (
           <button
             onClick={onBackgroundClick}
-            className="absolute top-4 left-4 flex items-center gap-2 px-4 py-2 text-sm text-gray-600 dark:text-foreground-tertiary hover:text-banana-600 bg-white/80 dark:bg-background-secondary/80 hover:bg-banana-50 dark:hover:bg-background-hover rounded-lg border border-gray-200 dark:border-border-primary shadow-sm transition-colors"
+            className="absolute left-4 top-4 flex items-center gap-2 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)]/90 px-4 py-2 text-sm text-[var(--app-text-secondary)] transition-colors hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)]"
           >
             <ArrowLeft size={16} />
             {defaultBackgroundLabel}
@@ -128,11 +129,9 @@ export const Skeleton: React.FC<{ className?: string }> = ({ className }) => {
   return (
     <div
       className={cn(
-        'animate-shimmer bg-gradient-to-r from-gray-200 dark:from-background-hover via-banana-50 dark:via-background-elevated to-gray-200 dark:to-background-hover',
-        'bg-[length:200%_100%]',
+        'animate-pulse bg-[var(--app-surface-hover)]',
         className
       )}
     />
   );
 };
-

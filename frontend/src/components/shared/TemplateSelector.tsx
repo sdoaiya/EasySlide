@@ -57,7 +57,7 @@ const templateI18n = {
 import { listUserTemplates, uploadUserTemplate, deleteUserTemplate, type UserTemplate } from '@/api/endpoints';
 import { materialUrlToFile } from '@/components/shared/MaterialSelector';
 import type { Material } from '@/api/endpoints';
-import { ImagePlus, X } from 'lucide-react';
+import { ImagePlus, Plus, X } from 'lucide-react';
 import { GORDEN_TEMPLATE_PACKS, findGordenTemplatePack } from '@/config/gordenTemplatePacks';
 
 const presetTemplateAssets = [
@@ -87,6 +87,7 @@ interface TemplateSelectorProps {
   onSelect: (templateFile: File | null, templateId?: string) => void;
   selectedTemplateId?: string | null;
   selectedPresetTemplateId?: string | null;
+  selectedTemplateDetails?: React.ReactNode;
   showUpload?: boolean;
   projectId?: string | null;
   mode?: 'all' | 'preset' | 'mine' | 'material';
@@ -95,7 +96,7 @@ interface TemplateSelectorProps {
 export const TemplateSelector: React.FC<TemplateSelectorProps> = ({
   onSelect,
   selectedTemplateId,
-  selectedPresetTemplateId,
+  selectedTemplateDetails,
   showUpload = true,
   projectId,
   mode = 'all',
@@ -107,14 +108,8 @@ export const TemplateSelector: React.FC<TemplateSelectorProps> = ({
   const [deletingTemplateId, setDeletingTemplateId] = useState<string | null>(null);
   const [saveToLibrary, setSaveToLibrary] = useState(true);
   const [selectedGordenCategory, setSelectedGordenCategory] = useState('all');
+  const [showAllGordenTemplates, setShowAllGordenTemplates] = useState(false);
   const { show, ToastContainer } = useToast();
-
-  const presetTemplates = presetTemplateAssets.map((template) => ({
-    id: template.id,
-    nameKey: `template.presets.${template.key}`,
-    preview: getStaticAssetUrl(`/templates/${template.file}`),
-    thumb: getStaticAssetUrl(`/templates/${template.file.replace('.png', '-thumb.webp')}`),
-  }));
 
   const gordenTemplates = GORDEN_TEMPLATE_PACKS;
   const selectedGordenTemplate = findGordenTemplatePack(selectedTemplateId);
@@ -125,6 +120,8 @@ export const TemplateSelector: React.FC<TemplateSelectorProps> = ({
       const searchable = [template.name, template.style, ...template.tags].join(' ');
       return activeGordenCategory.keywords.some((keyword) => searchable.includes(keyword));
     });
+  const shouldLimitGordenTemplates = activeGordenCategory.id === 'all' && !selectedGordenTemplate && !showAllGordenTemplates;
+  const displayedGordenTemplates = shouldLimitGordenTemplates ? visibleGordenTemplates.slice(0, 7) : visibleGordenTemplates;
 
   useEffect(() => {
     if (mode === 'all' || mode === 'mine') {
@@ -181,11 +178,6 @@ export const TemplateSelector: React.FC<TemplateSelectorProps> = ({
 
   const handleSelectUserTemplate = (template: UserTemplate) => {
     onSelect(null, template.template_id);
-  };
-
-  const handleSelectPresetTemplate = (templateId: string, preview: string) => {
-    if (!preview) return;
-    onSelect(null, templateId);
   };
 
   const materialSelectButton = (
@@ -248,16 +240,16 @@ export const TemplateSelector: React.FC<TemplateSelectorProps> = ({
       <div className="space-y-4">
         {(mode === 'all' || mode === 'mine') && userTemplates.length > 0 && (
           <div>
-            <h4 className="text-sm font-medium text-gray-700 dark:text-foreground-secondary mb-2">{t('template.myTemplates')}</h4>
+            <h4 className="mb-2 text-sm font-medium text-[var(--app-text-secondary)]">{t('template.myTemplates')}</h4>
             <div className="grid grid-cols-4 gap-4 mb-4">
               {userTemplates.map((template) => (
                 <div
                   key={template.template_id}
                   onClick={() => handleSelectUserTemplate(template)}
-                  className={`aspect-[4/3] rounded-lg border-2 cursor-pointer transition-all relative group ${
+                  className={`aspect-[4/3] rounded-[var(--app-radius-card)] border-2 cursor-pointer transition-all relative group ${
                     selectedTemplateId === template.template_id
-                      ? 'border-cyan-500 ring-2 ring-cyan-200'
-                      : 'border-gray-200 dark:border-border-primary hover:border-cyan-300'
+                      ? 'border-[var(--app-accent)]'
+                      : 'border-[var(--app-border)] hover:border-[var(--app-border-strong)]'
                   }`}
                 >
                   <img
@@ -270,7 +262,7 @@ export const TemplateSelector: React.FC<TemplateSelectorProps> = ({
                       type="button"
                       onClick={(e) => handleDeleteUserTemplate(template, e)}
                       disabled={deletingTemplateId === template.template_id}
-                      className={`absolute -top-2 -right-2 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center shadow z-20 opacity-0 group-hover:opacity-100 transition-opacity ${
+                      className={`absolute -top-2 -right-2 w-10 h-10 bg-[var(--app-error)] text-[var(--app-surface)] rounded-full flex items-center justify-center shadow-[var(--app-shadow-control)] z-20 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)] transition-opacity ${
                         deletingTemplateId === template.template_id ? 'opacity-60 cursor-not-allowed' : ''
                       }`}
                       aria-label={t('template.deleteTemplate')}
@@ -279,8 +271,8 @@ export const TemplateSelector: React.FC<TemplateSelectorProps> = ({
                     </button>
                   )}
                   {selectedTemplateId === template.template_id && (
-                    <div className="absolute inset-0 bg-cyan-500 bg-opacity-20 flex items-center justify-center pointer-events-none">
-                      <span className="text-white font-semibold text-sm">{t('template.templateSelected')}</span>
+                    <div className="absolute inset-0 bg-[color:var(--app-accent-soft)] flex items-center justify-center pointer-events-none">
+                      <span className="text-sm font-semibold text-[var(--app-accent)]">{t('template.templateSelected')}</span>
                     </div>
                   )}
                 </div>
@@ -291,15 +283,16 @@ export const TemplateSelector: React.FC<TemplateSelectorProps> = ({
 
         {(mode === 'all' || mode === 'preset') && (
         <div>
-          <div className="mb-5">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-2">
+          <div className="mb-3">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-1">
               <div>
-                <h4 className="text-sm font-semibold text-gray-700 dark:text-foreground-secondary">Gorden 模板</h4>
-                <p className="mt-0.5 text-xs text-gray-500 dark:text-foreground-tertiary">21 套中文场景模板，按视觉风格作为图片生成参考</p>
+                <h4 className="text-sm font-semibold text-[var(--app-text)]">预设模板</h4>
+                <p className="mt-0.5 text-xs text-[var(--app-text-tertiary)]">系统预设模板，按视觉风格作为图片生成参考</p>
               </div>
+              {mode === 'all' && materialSelectButton}
             </div>
 
-            <div className="mb-3 flex flex-wrap gap-2">
+            <div className="mb-2 flex flex-wrap gap-1.5">
               {gordenTemplateCategories.map((category) => {
                 const selected = selectedGordenCategory === category.id;
                 return (
@@ -307,11 +300,14 @@ export const TemplateSelector: React.FC<TemplateSelectorProps> = ({
                     key={category.id}
                     type="button"
                     aria-pressed={selected}
-                    onClick={() => setSelectedGordenCategory(category.id)}
-                    className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                    onClick={() => {
+                      setSelectedGordenCategory(category.id);
+                      setShowAllGordenTemplates(false);
+                    }}
+                    className={`min-h-8 rounded-[var(--app-radius-control)] border px-3 py-1 text-xs font-medium transition-colors ${
                       selected
-                        ? 'border-cyan-500 bg-cyan-50 text-cyan-700 dark:bg-cyan-500/15 dark:text-cyan-200'
-                        : 'border-gray-200 bg-white text-gray-600 hover:border-cyan-300 hover:text-cyan-700 dark:border-border-primary dark:bg-background-secondary dark:text-foreground-secondary'
+                        ? 'border-[var(--app-accent)] bg-[color:var(--app-accent-soft)] text-[var(--app-accent)]'
+                        : 'border-[var(--app-border)] bg-[var(--app-surface)] text-[var(--app-text-secondary)] hover:border-[var(--app-border-strong)] hover:text-[var(--app-text)]'
                     }`}
                   >
                     {category.label}
@@ -323,116 +319,96 @@ export const TemplateSelector: React.FC<TemplateSelectorProps> = ({
             {selectedGordenTemplate && (
               <div
                 role="region"
-                aria-label="已选 Gorden 模板"
-                className="mb-3 rounded-lg border border-cyan-200 bg-cyan-50/70 p-3 dark:border-cyan-500/30 dark:bg-cyan-500/10"
+                aria-label="已选 系统预设模板"
+                className="mb-2 rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface-hover)] p-2.5"
               >
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="rounded bg-cyan-600 px-2 py-0.5 text-[11px] font-semibold text-white">已选模板</span>
-                  <span className="text-sm font-semibold text-gray-900 dark:text-white">{selectedGordenTemplate.name}</span>
-                  <span className="text-xs text-gray-500 dark:text-foreground-tertiary">{selectedGordenTemplate.pageCount} 页</span>
-                  <span className="text-xs text-gray-500 dark:text-foreground-tertiary">{selectedGordenTemplate.aspectRatio}</span>
+                  <span className="rounded bg-[var(--app-focus)] px-2 py-0.5 text-[11px] font-semibold text-[var(--app-surface)]">已选模板</span>
+                  <span className="text-sm font-semibold text-[var(--app-text)]">{selectedGordenTemplate.name}</span>
+                  <span className="text-xs text-[var(--app-text-tertiary)]">{selectedGordenTemplate.pageCount} 页</span>
+                  <span className="text-xs text-[var(--app-text-tertiary)]">{selectedGordenTemplate.aspectRatio}</span>
                 </div>
-                <p className="mt-2 text-xs leading-relaxed text-gray-600 dark:text-foreground-secondary">{selectedGordenTemplate.style}</p>
-                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                <p className="mt-1.5 text-xs leading-relaxed text-[var(--app-text-secondary)]">{selectedGordenTemplate.style}</p>
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                   {selectedGordenTemplate.colors.map((color) => (
                     <span
                       key={color}
-                      className="h-4 w-4 rounded-full border border-white shadow-sm ring-1 ring-black/10"
+                      className="h-4 w-4 rounded-full border border-[var(--app-surface)] shadow-[var(--app-shadow-control)] ring-1 ring-[var(--app-border)]"
                       style={{ backgroundColor: color }}
                       title={color}
                     />
                   ))}
                   {selectedGordenTemplate.tags.map((tag) => (
-                    <span key={tag} className="rounded-full bg-white/80 px-2 py-0.5 text-[11px] text-gray-600 dark:bg-white/10 dark:text-foreground-secondary">
+                    <span key={tag} className="rounded-[var(--app-radius-control)] bg-[var(--app-surface)] px-2 py-0.5 text-[11px] text-[var(--app-text-secondary)]">
                       {tag}
                     </span>
                   ))}
                 </div>
+                {selectedTemplateDetails}
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              {visibleGordenTemplates.map((template) => (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <label className="group relative flex aspect-[16/9] cursor-pointer flex-col items-center justify-center gap-1 overflow-hidden rounded-[var(--app-radius-card)] border border-dashed border-[var(--app-border-strong)] bg-[var(--app-surface-muted)] text-[var(--app-text-tertiary)] transition-colors hover:border-[var(--app-accent)] hover:text-[var(--app-accent)]">
+                <Plus size={20} />
+                <span className="text-xs font-medium">{t('template.uploadTemplate')}</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleTemplateUpload}
+                  className="hidden"
+                  disabled={isLoadingTemplates}
+                />
+              </label>
+              {displayedGordenTemplates.map((template) => (
                 <button
                   type="button"
                   key={template.id}
                   onClick={() => onSelect(null, template.id)}
                   title={`${template.name} · ${template.style}`}
-                  className={`group relative aspect-[16/9] overflow-hidden rounded-lg border-2 text-left transition-all ${
+                  className={`group relative aspect-[16/9] overflow-hidden rounded-[var(--app-radius-card)] border-2 text-left transition-colors ${
                     selectedTemplateId === template.id
-                      ? 'border-cyan-500 ring-2 ring-cyan-200'
-                      : 'border-gray-200 dark:border-border-primary hover:border-cyan-500'
+                      ? 'border-[var(--app-accent)]'
+                      : 'border-[var(--app-border)] hover:border-[var(--app-border-strong)]'
                   }`}
                 >
-                  <img src={template.reference} alt={template.name} className="absolute inset-0 h-full w-full object-cover" />
-                  <span className="absolute inset-x-0 bottom-0 bg-black/65 px-2 py-1.5 text-[11px] font-medium leading-tight text-white backdrop-blur-sm">
+                  <img src={template.reference} alt={template.name} className="absolute inset-0 h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.03]" />
+                  <span className={`absolute inset-x-0 bottom-0 border-t px-2.5 py-2 text-xs font-semibold leading-tight ${
+                    selectedTemplateId === template.id
+                      ? 'border-[var(--app-accent)] bg-[var(--app-accent)] text-[var(--app-surface)]'
+                      : 'border-[var(--app-border)] bg-[var(--app-surface)] text-[var(--app-text)]'
+                  }`}>
                     {template.name}
                   </span>
                   {selectedTemplateId === template.id && (
-                    <span className="absolute right-1.5 top-1.5 rounded bg-cyan-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">已选择</span>
+                    <span className="absolute right-1.5 top-1.5 rounded bg-[var(--app-focus)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--app-surface)]">已选择</span>
                   )}
                 </button>
               ))}
             </div>
-          </div>
-
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-2">
-            <h4 className="text-sm font-medium text-gray-700 dark:text-foreground-secondary">{t('template.presetTemplates')}</h4>
-            {mode === 'all' && materialSelectButton}
-          </div>
-          <div className="grid grid-cols-4 gap-4">
-            <label className="aspect-[4/3] rounded-lg border-2 border-dashed border-gray-300 dark:border-border-primary hover:border-cyan-500 cursor-pointer transition-all flex flex-col items-center justify-center gap-2 relative overflow-hidden">
-              <span className="text-2xl">+</span>
-              <span className="text-sm text-gray-500 dark:text-foreground-tertiary">{t('template.uploadTemplate')}</span>
-              <input
-                type="file"
-                accept="image/*"
-                onChange={handleTemplateUpload}
-                className="hidden"
-                disabled={isLoadingTemplates}
-              />
-            </label>
-
-            {presetTemplates.map((template) => (
-              <div
-                key={template.id}
-                onClick={() => template.preview && handleSelectPresetTemplate(template.id, template.preview)}
-                className={`aspect-[4/3] rounded-lg border-2 cursor-pointer transition-all bg-gray-100 dark:bg-background-secondary flex items-center justify-center relative ${
-                  selectedPresetTemplateId === template.id
-                    ? 'border-cyan-500 ring-2 ring-cyan-200'
-                    : 'border-gray-200 dark:border-border-primary hover:border-cyan-500'
-                }`}
-              >
-                {template.preview ? (
-                  <>
-                    <img
-                      src={template.thumb || template.preview}
-                      alt={t(template.nameKey)}
-                      className="absolute inset-0 w-full h-full object-cover"
-                    />
-                    {selectedPresetTemplateId === template.id && (
-                      <div className="absolute inset-0 bg-cyan-500 bg-opacity-20 flex items-center justify-center pointer-events-none">
-                        <span className="text-white font-semibold text-sm">{t('template.templateSelected')}</span>
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <span className="text-sm text-gray-500 dark:text-foreground-tertiary">{t(template.nameKey)}</span>
-                )}
+            {shouldLimitGordenTemplates && visibleGordenTemplates.length > displayedGordenTemplates.length && (
+              <div className="mt-3 flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => setShowAllGordenTemplates(true)}
+                  className="min-h-8 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-1.5 text-xs font-medium text-[var(--app-text-secondary)] transition-colors hover:border-[var(--app-border-strong)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text)]"
+                >
+                  查看全部 {visibleGordenTemplates.length} 个模板
+                </button>
               </div>
-            ))}
+            )}
           </div>
-          
+
           {!showUpload && (
-            <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/30 rounded-lg border border-blue-200 dark:border-blue-700">
+            <div className="mt-3 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-3">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={saveToLibrary}
                   onChange={(e) => setSaveToLibrary(e.target.checked)}
-                  className="w-4 h-4 text-cyan-600 border-gray-300 dark:border-border-primary rounded focus:ring-cyan-500"
+                  className="h-4 w-4 rounded accent-[var(--app-accent)]"
                 />
-                <span className="text-sm text-gray-700 dark:text-foreground-secondary">
+                <span className="text-sm text-[var(--app-text-secondary)]">
                   {t('template.saveToLibraryOnUpload')}
                 </span>
               </label>
@@ -443,7 +419,7 @@ export const TemplateSelector: React.FC<TemplateSelectorProps> = ({
 
         {mode === 'material' && (
           <div className="mt-4">
-            <h4 className="text-sm font-medium text-gray-700 dark:text-foreground-secondary mb-2">{t('template.selectFromMaterials')}</h4>
+            <h4 className="mb-2 text-sm font-medium text-[var(--app-text-secondary)]">{t('template.selectFromMaterials')}</h4>
             {materialSelectButton}
           </div>
         )}
@@ -456,6 +432,7 @@ export const TemplateSelector: React.FC<TemplateSelectorProps> = ({
         onSelect={handleSelectMaterials}
         multiple={false}
         showSaveAsTemplateOption={true}
+        mediaKindFilter={['image']}
       />
     </>
   );
@@ -493,7 +470,7 @@ export const getTemplateFile = async (
     try {
       return await fetchImageFile(gordenTemplate.reference, `${gordenTemplate.slug}-reference.webp`);
     } catch (error) {
-      console.error('Failed to load Gorden template:', error);
+      console.error('Failed to load system preset template:', error);
       return null;
     }
   }

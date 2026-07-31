@@ -11,6 +11,34 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 from conftest import assert_success_response, assert_error_response
+from content_project_factory import add_content_project
+
+
+def _add_project_with_ppt_workspace(project, settings=None, stage='DRAFT'):
+    add_content_project(
+        project,
+        source_fields={'idea_prompt': 'test'},
+        ppt_settings=settings,
+        ppt_stage=stage,
+    )
+
+
+def test_template_visual_preferences_prompt_targets_image_generation():
+    from controllers.project_controller import _build_template_visual_preferences_prompt
+
+    prompt = _build_template_visual_preferences_prompt({
+        'palette': 'enterprise_blue',
+        'custom_palette': {},
+        'chart_theme': 'consulting',
+        'media_style': 'photo',
+        'tone': 'research',
+    })
+
+    assert '图片模式模板视觉偏好' in prompt
+    assert '企业蓝' in prompt
+    assert '咨询报告风格' in prompt
+    assert '写实商业照片' in prompt
+    assert '研究报告' in prompt
 
 
 class TestProjectCreate:
@@ -41,6 +69,7 @@ class TestProjectCreate:
         
         data = assert_success_response(response, 201)
         assert 'project_id' in data['data']
+        assert data['data']['initialization_task'] is None
         assert data['data']['status'] == 'DRAFT'
 
     def test_create_and_update_template_pack_id(self, client):
@@ -134,6 +163,34 @@ class TestProjectCreate:
         assert project['render_mode'] == 'native'
         assert project['native_theme'] == 'core01'
 
+    def test_create_image_project_accepts_template_visual_settings(self, client):
+        response = client.post('/api/projects', json={
+            'creation_type': 'idea',
+            'idea_prompt': '测试视觉系统',
+            'render_mode': 'image',
+            'native_image_settings': {
+                'density': 'standard',
+                'style': 'theme',
+                'composition': 'auto',
+                'palette': 'enterprise_blue',
+                'custom_palette': {},
+                'chart_theme': 'consulting',
+                'media_style': 'photo',
+                'tone': 'research',
+                'custom_prompt': '',
+                'custom_counts': {},
+            },
+        })
+
+        created = assert_success_response(response, 201)['data']
+        assert created['render_mode'] == 'image'
+        assert created['native_image_settings']['palette'] == 'enterprise_blue'
+        project = assert_success_response(
+            client.get(f"/api/projects/{created['project_id']}")
+        )['data']
+        assert project['native_image_settings']['chart_theme'] == 'consulting'
+        assert project['native_image_settings']['tone'] == 'research'
+
     def test_create_project_rejects_invalid_render_mode(self, client):
         response = client.post('/api/projects', json={
             'creation_type': 'idea',
@@ -166,6 +223,11 @@ class TestProjectCreate:
             'density': 'custom',
             'style': 'custom',
             'composition': 'text-right',
+            'palette': 'default',
+            'custom_palette': {},
+            'chart_theme': 'clean',
+            'media_style': 'auto',
+            'tone': 'strategy',
             'custom_prompt': '水彩质感，留出标题空间',
             'custom_counts': {'page-1': 2},
         }
@@ -187,13 +249,13 @@ class TestProjectCreate:
 class TestProjectGet:
     """项目获取测试"""
 
-    def test_legacy_project_without_render_mode_defaults_to_image(self):
+    def test_project_without_workspace_is_rejected(self):
         from models import Project
 
-        project = Project(idea_prompt='旧项目')
-        project.render_mode = None
+        project = Project(status='active')
 
-        assert project.to_dict()['render_mode'] == 'image'
+        with pytest.raises(ValueError, match='ppt workspace is missing'):
+            project.to_dict()
     
     def test_get_project_success(self, client, sample_project):
         """测试获取项目成功"""
@@ -221,11 +283,53 @@ class TestProjectGet:
 
 
 class TestProjectList:
+    def test_project_stats_include_video_and_podcast_workspace_statuses(self, client):
+        from models import db, Project, Task
+
+        video_ready = Project(
+            id='stats-video-ready', creation_type='idea', status='active',
+        )
+        _add_project_with_ppt_workspace(video_ready, stage='DRAFT')
+        video_workspace = next(item for item in video_ready.workspaces if item.kind == 'video')
+        video_workspace.state = 'ready'
+
+        podcast_generating = Project(
+            id='stats-podcast-generating', creation_type='idea', status='active',
+        )
+        _add_project_with_ppt_workspace(podcast_generating, stage='DRAFT')
+        podcast_workspace = next(item for item in podcast_generating.workspaces if item.kind == 'podcast')
+        podcast_workspace.stage = 'GENERATING_AUDIO'
+
+        video_exported = Project(
+            id='stats-video-exported', creation_type='idea', status='active',
+        )
+        _add_project_with_ppt_workspace(video_exported, stage='DRAFT')
+        db.session.add(Task(
+            id='stats-video-export-task',
+            project_id=video_exported.id,
+            task_type='EXPORT_VIDEO_WORKSPACE',
+            status='COMPLETED',
+        ))
+
+        draft = Project(id='stats-media-draft', creation_type='idea', status='active')
+        _add_project_with_ppt_workspace(draft, stage='DRAFT')
+        db.session.commit()
+
+        data = assert_success_response(client.get('/api/projects?limit=20'))['data']
+
+        assert data['total'] == 4
+        assert data['stats'] == {
+            'total': 4,
+            'completed': 2,
+            'generating': 1,
+            'in_progress': 1,
+        }
+
     def test_project_stats_cover_all_projects_not_only_current_page(self, app, client):
         from PIL import Image
         from models import db, Page, Project
 
-        completed = Project(id='stats-completed', creation_type='idea', status='COMPLETED')
+        completed = Project(id='stats-completed', creation_type='idea', status='active')
         completed_page = Page(
             id='stats-completed-page',
             project_id=completed.id,
@@ -233,23 +337,23 @@ class TestProjectList:
             status='COMPLETED',
             generated_image_path='generated/completed.png',
         )
-        generating = Project(id='stats-generating', creation_type='idea', status='GENERATING_IMAGES')
+        generating = Project(id='stats-generating', creation_type='idea', status='active')
         generating_page = Page(
             id='stats-generating-page',
             project_id=generating.id,
             order_index=0,
             status='QUEUED',
         )
-        draft = Project(id='stats-draft', creation_type='idea', status='DRAFT')
+        draft = Project(id='stats-draft', creation_type='idea', status='active')
         draft_page = Page(id='stats-draft-page', project_id=draft.id, order_index=0, status='DRAFT')
-        described = Project(id='stats-described', creation_type='idea', status='DESCRIPTIONS_GENERATED')
+        described = Project(id='stats-described', creation_type='idea', status='active')
         described_page = Page(
             id='stats-described-page',
             project_id=described.id,
             order_index=0,
             status='DESCRIPTION_GENERATED',
         )
-        partial = Project(id='stats-partial', creation_type='idea', status='DESCRIPTIONS_GENERATED')
+        partial = Project(id='stats-partial', creation_type='idea', status='active')
         partial_page_with_image = Page(
             id='stats-partial-image-page',
             project_id=partial.id,
@@ -267,12 +371,17 @@ class TestProjectList:
             image_path = Path(app.config['UPLOAD_FOLDER']) / page.generated_image_path
             image_path.parent.mkdir(parents=True, exist_ok=True)
             Image.new('RGB', (16, 9), 'white').save(image_path)
+        for project, stage in (
+            (completed, 'COMPLETED'),
+            (generating, 'GENERATING_IMAGES'),
+            (draft, 'DRAFT'),
+            (described, 'DESCRIPTIONS_GENERATED'),
+            (partial, 'DESCRIPTIONS_GENERATED'),
+        ):
+            _add_project_with_ppt_workspace(project, stage=stage)
         db.session.add_all([
-            completed, completed_page,
-            generating, generating_page,
-            draft, draft_page,
-            described, described_page,
-            partial, partial_page_with_image, partial_page_without_image,
+            completed_page, generating_page, draft_page, described_page,
+            partial_page_with_image, partial_page_without_image,
         ])
         db.session.commit()
 
@@ -290,7 +399,7 @@ class TestProjectList:
     def test_missing_image_downgrades_completed_project_before_counting(self, client):
         from models import db, Page, Project
 
-        project = Project(id='stats-missing-image', creation_type='idea', status='COMPLETED')
+        project = Project(id='stats-missing-image', creation_type='idea', status='active')
         page = Page(
             id='stats-missing-image-page',
             project_id=project.id,
@@ -299,7 +408,8 @@ class TestProjectList:
             generated_image_path='generated/missing-from-disk.png',
         )
         page.set_description_content({'text': 'ready to regenerate'})
-        db.session.add_all([project, page])
+        _add_project_with_ppt_workspace(project, stage='COMPLETED')
+        db.session.add(page)
         db.session.commit()
 
         data = assert_success_response(client.get('/api/projects?limit=10&offset=0'))['data']
@@ -308,14 +418,16 @@ class TestProjectList:
         db.session.refresh(page)
         assert data['stats']['completed'] == 0
         assert data['stats']['in_progress'] == 1
-        assert project.status == 'DESCRIPTIONS_GENERATED'
+        from services.ppt_workspace_service import get_ppt_status
+        assert project.status == 'active'
+        assert get_ppt_status(project) == 'DESCRIPTIONS_GENERATED'
         assert page.status == 'DESCRIPTION_GENERATED'
         assert page.generated_image_path is None
 
     def test_project_list_pauses_stale_image_generation_tasks_before_counting(self, client):
         from models import db, Page, Project, Task
 
-        project = Project(id='stats-stale-image-task', creation_type='idea', status='GENERATING_IMAGES')
+        project = Project(id='stats-stale-image-task', creation_type='idea', status='active')
         page = Page(
             id='stats-stale-image-page',
             project_id=project.id,
@@ -334,7 +446,8 @@ class TestProjectList:
             'image_options': {'use_template': False},
             'pages': [{'page_id': page.id, 'status': 'running'}],
         })
-        db.session.add_all([project, page, task])
+        _add_project_with_ppt_workspace(project, stage='GENERATING_IMAGES')
+        db.session.add_all([page, task])
         db.session.commit()
 
         data = assert_success_response(client.get('/api/projects?limit=10&offset=0'))['data']
@@ -347,7 +460,9 @@ class TestProjectList:
         assert task.status == 'PAUSED'
         assert task.get_progress()['status'] == 'paused'
         assert page.status == 'DESCRIPTION_GENERATED'
-        assert project.status == 'DESCRIPTIONS_GENERATED'
+        from services.ppt_workspace_service import get_ppt_status
+        assert project.status == 'active'
+        assert get_ppt_status(project) == 'DESCRIPTIONS_GENERATED'
         assert listed_project['active_image_tasks'][0]['status'] == 'PAUSED'
         assert data['stats'] == {
             'total': 1,
@@ -362,8 +477,7 @@ class TestProjectList:
         project = Project(
             id='native-project-image-calibration-boundary',
             creation_type='idea',
-            render_mode='native',
-            status='NATIVE_DECK_GENERATED',
+            status='active',
         )
         page = Page(
             id='native-page-image-calibration-boundary',
@@ -372,7 +486,10 @@ class TestProjectList:
             status='NATIVE_GENERATED',
             generated_image_path='native/not-an-image-mode-result.html',
         )
-        db.session.add_all([project, page])
+        _add_project_with_ppt_workspace(
+            project, {'render_mode': 'native'}, stage='NATIVE_DECK_GENERATED'
+        )
+        db.session.add(page)
         db.session.commit()
 
         data = assert_success_response(client.get(f'/api/projects/{project.id}'))['data']
@@ -400,10 +517,8 @@ class TestImageGenerationConcurrency:
             project = Project(
                 id='proj-skip-existing-images',
                 creation_type='idea',
-                idea_prompt='test',
                 template_style='clean',
-                image_aspect_ratio='16:9',
-                status='DESCRIPTIONS_GENERATED',
+                status='active',
             )
             completed_page = Page(
                 id='page-already-generated',
@@ -424,7 +539,8 @@ class TestImageGenerationConcurrency:
             existing_path = Path(app.config['UPLOAD_FOLDER']) / completed_page.generated_image_path
             existing_path.parent.mkdir(parents=True, exist_ok=True)
             Image.new('RGB', (16, 9), 'white').save(existing_path)
-            db.session.add_all([project, completed_page, pending_page])
+            _add_project_with_ppt_workspace(project, stage='DESCRIPTIONS_GENERATED')
+            db.session.add_all([completed_page, pending_page])
             db.session.commit()
 
             with (
@@ -468,10 +584,8 @@ class TestImageGenerationConcurrency:
             project = Project(
                 id='proj-reuse-active-image-task',
                 creation_type='idea',
-                idea_prompt='test',
                 template_style='clean',
-                image_aspect_ratio='16:9',
-                status='GENERATING_IMAGES',
+                status='active',
             )
             page = Page(
                 id='page-claimed-by-task',
@@ -488,7 +602,8 @@ class TestImageGenerationConcurrency:
                 status='PROCESSING',
             )
             active_task.set_progress({'page_ids': [page.id], 'total': 1, 'completed': 0, 'failed': 0})
-            db.session.add_all([project, page, active_task])
+            _add_project_with_ppt_workspace(project, stage='GENERATING_IMAGES')
+            db.session.add_all([page, active_task])
             db.session.commit()
 
             with (
@@ -513,10 +628,8 @@ class TestImageGenerationConcurrency:
             project = Project(
                 id='proj-recover-missing-image',
                 creation_type='idea',
-                idea_prompt='test',
                 template_style='clean',
-                image_aspect_ratio='16:9',
-                status='COMPLETED',
+                status='active',
             )
             page = Page(
                 id='page-missing-file',
@@ -528,7 +641,8 @@ class TestImageGenerationConcurrency:
             )
             page.set_outline_content({'title': page.id, 'points': []})
             page.set_description_content({'text': page.id})
-            db.session.add_all([project, page])
+            _add_project_with_ppt_workspace(project, stage='COMPLETED')
+            db.session.add(page)
             db.session.commit()
 
             with (
@@ -556,10 +670,8 @@ class TestImageGenerationConcurrency:
             project = Project(
                 id='proj-recover-corrupt-image',
                 creation_type='idea',
-                idea_prompt='test',
                 template_style='clean',
-                image_aspect_ratio='16:9',
-                status='COMPLETED',
+                status='active',
             )
             page = Page(
                 id='page-corrupt-file',
@@ -573,7 +685,8 @@ class TestImageGenerationConcurrency:
             corrupt_path = Path(app.config['UPLOAD_FOLDER']) / page.generated_image_path
             corrupt_path.parent.mkdir(parents=True, exist_ok=True)
             corrupt_path.write_bytes(b'not an image')
-            db.session.add_all([project, page])
+            _add_project_with_ppt_workspace(project, stage='COMPLETED')
+            db.session.add(page)
             db.session.commit()
 
             with (
@@ -596,10 +709,8 @@ class TestImageGenerationConcurrency:
             project = Project(
                 id='proj-batch-gorden-pack-only',
                 creation_type='idea',
-                idea_prompt='test',
                 template_pack_id='gorden-data-viz-deck',
-                image_aspect_ratio='16:9',
-                status='DESCRIPTIONS_GENERATED',
+                status='active',
             )
             page = Page(
                 id='page-gorden-pack-only',
@@ -609,7 +720,8 @@ class TestImageGenerationConcurrency:
             )
             page.set_outline_content({'title': page.id, 'points': []})
             page.set_description_content({'text': page.id})
-            db.session.add_all([project, page])
+            _add_project_with_ppt_workspace(project, stage='DESCRIPTIONS_GENERATED')
+            db.session.add(page)
             db.session.commit()
 
             with (
@@ -628,6 +740,42 @@ class TestImageGenerationConcurrency:
             assert task.get_progress()['style_snapshot']['template_pack_id'] == 'gorden-data-viz-deck'
             submit_task.assert_called_once()
 
+    def test_batch_image_generation_accepts_page_template_style_without_project_template(self, app):
+        from models import db, Page, Project
+        from controllers import project_controller as project_controller_module
+
+        with app.app_context():
+            project = Project(
+                id='proj-page-template-style-only',
+                creation_type='idea',
+                status='active',
+            )
+            page = Page(
+                id='page-template-style-only',
+                project_id=project.id,
+                order_index=0,
+                status='DESCRIPTION_GENERATED',
+                template_style_text='Use this page-specific visual system.',
+            )
+            page.set_outline_content({'title': page.id, 'points': []})
+            page.set_description_content({'text': page.id})
+            _add_project_with_ppt_workspace(project, stage='DESCRIPTIONS_GENERATED')
+            db.session.add(page)
+            db.session.commit()
+
+            with (
+                patch.object(project_controller_module, 'get_ai_service', return_value=object()),
+                patch.object(project_controller_module.task_manager, 'submit_task') as submit_task,
+            ):
+                response = app.test_client().post(
+                    f'/api/projects/{project.id}/generate/images',
+                    json={'page_ids': [page.id]},
+                )
+
+            data = assert_success_response(response, 202)['data']
+            assert data['total_pages'] == 1
+            submit_task.assert_called_once()
+
     def test_batch_image_generation_applies_image_generation_settings_to_prompt(self, app):
         from models import db, Page, Project, Task
         from controllers import project_controller as project_controller_module
@@ -636,10 +784,8 @@ class TestImageGenerationConcurrency:
             project = Project(
                 id='proj-image-settings',
                 creation_type='idea',
-                idea_prompt='test',
                 template_style='clean',
-                image_aspect_ratio='16:9',
-                status='DESCRIPTIONS_GENERATED',
+                status='active',
             )
             page = Page(
                 id='page-image-settings',
@@ -649,7 +795,8 @@ class TestImageGenerationConcurrency:
             )
             page.set_outline_content({'title': page.id, 'points': []})
             page.set_description_content({'text': page.id})
-            db.session.add_all([project, page])
+            _add_project_with_ppt_workspace(project, stage='DESCRIPTIONS_GENERATED')
+            db.session.add(page)
             db.session.commit()
 
             with (
@@ -662,6 +809,8 @@ class TestImageGenerationConcurrency:
                         'page_ids': [page.id],
                         'image_density': 'rich',
                         'image_style': 'tech',
+                        'image_composition': 'text-left',
+                        'image_restraint': 'documentary',
                         'image_style_prompt': '蓝绿色科技感，少量发光线条',
                     },
                 )
@@ -673,9 +822,16 @@ class TestImageGenerationConcurrency:
 
             assert progress['image_options']['image_density'] == 'rich'
             assert progress['image_options']['image_style'] == 'tech'
+            assert progress['image_options']['image_composition'] == 'text-left'
+            assert progress['image_options']['image_restraint'] == 'documentary'
             assert progress['image_options']['image_style_prompt'] == '蓝绿色科技感，少量发光线条'
-            assert '信息密度：丰富' in submit_args[11]
-            assert '视觉风格：科技感' in submit_args[11]
+            assert '用途：productivity-visual' in submit_args[11]
+            assert '资产类型：PPT 页面视觉素材' in submit_args[11]
+            assert '视觉密度：丰富' in submit_args[11]
+            assert '辅助元素不超过四个' in submit_args[11]
+            assert '视觉风格：科技编辑风' in submit_args[11]
+            assert '构图安全区：左文右图' in submit_args[11]
+            assert 'AI 味抑制：纪实' in submit_args[11]
             assert '蓝绿色科技感，少量发光线条' in submit_args[11]
 
     def test_single_page_image_generation_applies_image_generation_settings_to_prompt(self, app):
@@ -690,10 +846,8 @@ class TestImageGenerationConcurrency:
             project = Project(
                 id='proj-single-image-settings',
                 creation_type='idea',
-                idea_prompt='test',
-                template_style='clean',
-                image_aspect_ratio='16:9',
-                status='DESCRIPTIONS_GENERATED',
+                template_style='',
+                status='active',
             )
             page = Page(
                 id='page-single-image-settings',
@@ -703,7 +857,8 @@ class TestImageGenerationConcurrency:
             )
             page.set_outline_content({'title': page.id, 'points': []})
             page.set_description_content({'text': page.id})
-            db.session.add_all([project, page])
+            _add_project_with_ppt_workspace(project, stage='DESCRIPTIONS_GENERATED')
+            db.session.add(page)
             db.session.commit()
 
             with (
@@ -716,7 +871,10 @@ class TestImageGenerationConcurrency:
                         'force_regenerate': True,
                         'image_density': 'rich',
                         'image_style': 'tech',
+                        'image_composition': 'text-left',
+                        'image_restraint': 'documentary',
                         'image_style_prompt': '蓝绿色科技感，少量发光线条',
+                        'quality_issues': ['near_blank', 'resolution_mismatch', 'unknown_issue'],
                     },
                 )
 
@@ -727,10 +885,19 @@ class TestImageGenerationConcurrency:
 
             assert progress['image_options']['image_density'] == 'rich'
             assert progress['image_options']['image_style'] == 'tech'
+            assert progress['image_options']['image_composition'] == 'text-left'
+            assert progress['image_options']['image_restraint'] == 'documentary'
             assert progress['image_options']['image_style_prompt'] == '蓝绿色科技感，少量发光线条'
-            assert '信息密度：丰富' in submit_args[11]
-            assert '视觉风格：科技感' in submit_args[11]
+            assert progress['image_options']['quality_issues'] == ['near_blank', 'resolution_mismatch']
+            assert '视觉密度：丰富' in submit_args[11]
+            assert '视觉风格：科技编辑风' in submit_args[11]
+            assert '构图安全区：左文右图' in submit_args[11]
+            assert 'AI 味抑制：纪实' in submit_args[11]
             assert '蓝绿色科技感，少量发光线条' in submit_args[11]
+            assert '质量检测修复要求' in submit_args[11]
+            assert '不要输出空白页' in submit_args[11]
+            assert '低分辨率' in submit_args[11]
+            assert 'unknown_issue' not in submit_args[11]
 
     def test_single_page_image_generation_accepts_gorden_template_pack_without_style_text(self, app):
         from models import db, Page, Project
@@ -744,10 +911,8 @@ class TestImageGenerationConcurrency:
             project = Project(
                 id='proj-single-gorden-pack-only',
                 creation_type='idea',
-                idea_prompt='test',
                 template_pack_id='gorden-data-viz-deck',
-                image_aspect_ratio='16:9',
-                status='DESCRIPTIONS_GENERATED',
+                status='active',
             )
             page = Page(
                 id='page-single-gorden-pack-only',
@@ -757,7 +922,8 @@ class TestImageGenerationConcurrency:
             )
             page.set_outline_content({'title': page.id, 'points': []})
             page.set_description_content({'text': page.id})
-            db.session.add_all([project, page])
+            _add_project_with_ppt_workspace(project, stage='DESCRIPTIONS_GENERATED')
+            db.session.add(page)
             db.session.commit()
 
             with (
@@ -786,10 +952,8 @@ class TestImageGenerationConcurrency:
             project = Project(
                 id='proj-single-missing-image',
                 creation_type='idea',
-                idea_prompt='test',
                 template_style='clean',
-                image_aspect_ratio='16:9',
-                status='COMPLETED',
+                status='active',
             )
             page = Page(
                 id='page-single-missing-image',
@@ -801,7 +965,8 @@ class TestImageGenerationConcurrency:
             )
             page.set_outline_content({'title': page.id, 'points': []})
             page.set_description_content({'text': page.id})
-            db.session.add_all([project, page])
+            _add_project_with_ppt_workspace(project, stage='COMPLETED')
+            db.session.add(page)
             db.session.commit()
 
             with (
@@ -847,11 +1012,9 @@ class TestImageGenerationConcurrency:
             project = Project(
                 id='proj-batch-template-pack',
                 creation_type='idea',
-                idea_prompt='test',
                 template_style='clean',
                 template_pack_id='gorden-data-viz-deck',
-                image_aspect_ratio='16:9',
-                status='DESCRIPTIONS_GENERATED',
+                status='active',
             )
             previous_page = Page(project_id=project.id, order_index=0, status='DESCRIPTION_GENERATED')
             previous_page.set_outline_content({'title': 'Page 1', 'points': []})
@@ -859,10 +1022,14 @@ class TestImageGenerationConcurrency:
             page = Page(project_id=project.id, order_index=1, status='DESCRIPTION_GENERATED')
             page.set_outline_content({'title': 'Page 1', 'points': []})
             page.set_description_content({'text': 'Description 1'})
-            db.session.add_all([project, previous_page, page])
+            _add_project_with_ppt_workspace(project, stage='DESCRIPTIONS_GENERATED')
+            db.session.add_all([previous_page, page])
             db.session.commit()
 
-            def fake_save_image_with_version(_image, _project_id, _page_id, _file_service, page_obj=None, image_format='PNG'):
+            def fake_save_image_with_version(
+                _image, _project_id, _page_id, _file_service,
+                page_obj=None, image_format='PNG', **_kwargs,
+            ):
                 if page_obj:
                     page_obj.generated_image_path = f'generated/{_page_id}.png'
                     page_obj.status = 'COMPLETED'
@@ -978,12 +1145,10 @@ class TestResourceConcurrency:
             project = Project(
                 id='proj-concurrency',
                 creation_type='idea',
-                idea_prompt='test',
                 template_style='clean',
-                image_aspect_ratio='16:9',
-                status='DRAFT',
+                status='active',
             )
-            db.session.add(project)
+            _add_project_with_ppt_workspace(project)
 
             pages = []
             for i in range(5):
@@ -998,7 +1163,10 @@ class TestResourceConcurrency:
             client = app.test_client()
             task_ids = []
 
-            def fake_save_image_with_version(_image, _project_id, _page_id, _file_service, page_obj=None, image_format='PNG'):
+            def fake_save_image_with_version(
+                _image, _project_id, _page_id, _file_service,
+                page_obj=None, image_format='PNG', **_kwargs,
+            ):
                 if page_obj:
                     page_obj.generated_image_path = f"generated/{_page_id}.png"
                     page_obj.status = 'COMPLETED'

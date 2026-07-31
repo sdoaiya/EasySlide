@@ -39,6 +39,23 @@ def test_existing_plaintext_secret_is_migrated_on_settings_load(app):
         assert raw_value.startswith("dpapi:v1:")
 
 
+def test_undecryptable_secret_is_cleared_without_blocking_settings_load(app):
+    with app.app_context():
+        settings = Settings.get_settings()
+        settings.output_language = "zh"
+        db.session.execute(
+            text("UPDATE settings SET mineru_token = :value WHERE id = :id"),
+            {"value": "dpapi:v1:not-valid", "id": settings.id},
+        )
+        db.session.commit()
+        db.session.expire_all()
+
+        recovered = Settings.get_settings()
+
+        assert recovered.mineru_token is None
+        assert recovered.output_language == "zh"
+
+
 def test_packaged_encrypted_credentials_only_import_into_empty_settings(app, tmp_path):
     from bootstrap_settings import import_packaged_credentials
 
@@ -48,7 +65,6 @@ def test_packaged_encrypted_credentials_only_import_into_empty_settings(app, tmp
         "credentials": {
             "mineru_token": encrypt_portable_secret("package-mineru-token"),
             "baidu_api_key": encrypt_portable_secret("package-baidu-key"),
-            "elevenlabs_api_key": encrypt_portable_secret("package-elevenlabs-key"),
         },
     }), encoding="utf-8")
 
@@ -56,14 +72,12 @@ def test_packaged_encrypted_credentials_only_import_into_empty_settings(app, tmp
         settings = Settings.get_settings()
         settings.mineru_token = None
         settings.baidu_api_key = None
-        settings.elevenlabs_api_key = None
         db.session.commit()
 
         assert import_packaged_credentials(str(bundle_path)) is True
         imported = Settings.get_settings()
         assert imported.mineru_token == "package-mineru-token"
         assert imported.baidu_api_key == "package-baidu-key"
-        assert imported.elevenlabs_api_key == "package-elevenlabs-key"
 
         imported.mineru_token = "user-managed-token"
         db.session.commit()

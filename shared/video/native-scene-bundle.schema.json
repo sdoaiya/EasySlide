@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cozyslide.local/schemas/native-scene-bundle.schema.json",
+  "title": "Native scene bundle",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "page_id",
+    "scene_manifest_sha256",
+    "width",
+    "height",
+    "html",
+    "css",
+    "assets",
+    "warnings"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "page_id": {"type": "string", "minLength": 1},
+    "scene_manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "width": {"const": 1920},
+    "height": {"const": 1080},
+    "html": {"type": "string", "minLength": 1},
+    "css": {"type": "string"},
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["asset_id", "source", "data_url", "mime_type"],
+        "properties": {
+          "asset_id": {"type": "string", "minLength": 1},
+          "source": {"type": "string"},
+          "data_url": {"type": "string", "pattern": "^data:"},
+          "mime_type": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {"type": "string"}
+    }
+  },
+  "additionalProperties": false
+}

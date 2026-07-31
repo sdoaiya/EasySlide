@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
-import { ArrowLeft, Download, Home, ListTodo, Maximize2, MonitorPlay, Redo2, RefreshCw, Settings2, Sparkles, Undo2, X, ZoomIn, ZoomOut } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MutableRefObject } from 'react'
+import { ArrowLeft, Download, FileText, Home, ListTodo, Maximize2, MonitorPlay, Plus, Redo2, RefreshCw, Settings2, Sparkles, Trash2, Undo2, X, ZoomIn, ZoomOut } from 'lucide-react'
 import type { NativeSlideSpec } from '@/native-deck/types'
+import type { FishAudioVoice, NarrationPreferences, NarrationSpeaker, ProjectNarrationSummary, PronunciationEntry } from '@/types'
 import { useNativeDeckStore } from '@/store/useNativeDeckStore'
 import { useProjectStore } from '@/store/useProjectStore'
 import { WorkspaceShell } from '@/components/workspace/WorkspaceShell'
+import { WorkspaceStatusBar } from '@/components/workspace/WorkspaceStatusBar'
 import { NativeDeckCanvas } from './NativeDeckCanvas'
 import { NativeDeckPageRail } from './NativeDeckPageRail'
 import { NativeDeckPropertyPanel, type NativeLayoutContract } from './NativeDeckPropertyPanel'
@@ -11,14 +13,17 @@ import { NativeDeckExportSurface } from './NativeDeckExportSurface'
 import { exportNativeDeck } from '@/native-deck/exportNativeDeck'
 import { exportNativeDeckHtml } from '@/native-deck/exportNativeDeckHtml'
 import { exportNativeDeckPdf } from '@/native-deck/exportNativeDeckPdf'
-import { captureNativeDeckFrameSequences } from '@/native-deck/exportNativeDeckFrames'
+import { captureNativeDeckFrameSequences, captureNativeSceneManifests } from '@/native-deck/exportNativeDeckFrames'
+import { captureNativeMotionBundles } from '@/native-deck/exportNativeMotionBundle'
 import { migrateNativeProps } from '@/native-deck/nativeLayoutMigration'
 import { useExportTasksStore, type ExportTask } from '@/store/useExportTasksStore'
-import { addPage, completeNativePptxExport, createNativePptxExport, deletePage, exportNativeVideo, getNativePageVersions, getTaskStatus, restoreNativePageVersion, type NativePageVersion, updateNativePptxProgress, updatePagesOrder } from '@/api/endpoints'
+import { addPage, completeNativePptxExport, createNativePptxExport, createNativeSceneManifestRefs, deletePage, exportNativeVideo, getFishAudioVoices, getNativePageVersions, getProjectNarrations, getTaskStatus, handoffVideoWorkspaceFrames, preflightExportVideo, restoreNativePageVersion, type NativePageVersion, updateNativePptxProgress, updatePagesOrder, updateProject } from '@/api/endpoints'
 import { ExportTasksPanel } from '@/components/shared/ExportTasksPanel'
 import { MaterialSelector } from '@/components/shared/MaterialSelector'
 import { NativeImageSettingsDialog } from './NativeImageSettingsDialog'
 import { useNativeMediaGeneration } from './useNativeMediaGeneration'
+import { FishNarrationAdvancedPanel, DEFAULT_NARRATION_PREFERENCES } from '@/components/shared/FishNarrationAdvancedPanel'
+import { NarrationWorkbench } from '@/components/narration/NarrationWorkbench'
 
 export type NativeDeckWorkspaceProps = {
   projectId: string
@@ -56,6 +61,18 @@ const NATIVE_VIDEO_PRESET_LABELS: Record<NativeVideoPreset, string> = {
   brief: '简洁播报',
 }
 
+const NATIVE_EDGE_VOICES = [
+  { id: 'zh-CN-XiaoxiaoNeural', label: '晓晓（中文 · 女声）' },
+  { id: 'zh-CN-YunxiNeural', label: '云希（中文 · 男声）' },
+  { id: 'zh-CN-YunjianNeural', label: '云健（中文 · 男声）' },
+  { id: 'zh-CN-XiaoyiNeural', label: '晓伊（中文 · 女声）' },
+]
+
+const NATIVE_VIDEO_SPEAKERS: NarrationSpeaker[] = [
+  { id: 'host', name: '主持人', voice: NATIVE_EDGE_VOICES[0].id, rate: '+0%' },
+  { id: 'expert', name: '专家', voice: NATIVE_EDGE_VOICES[1].id, rate: '+0%' },
+]
+
 function validate(slide: NativeSlideSpec, contract: NativeLayoutContract | undefined) {
   if (!contract) return { layout: `未找到布局契约：${slide.layout}` }
   const errors: Record<string, string> = {}
@@ -89,12 +106,29 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
   const activeProjectId = useRef<string>()
   const [saveError, setSaveError] = useState('')
   const [showTasks, setShowTasks] = useState(false)
+  const taskButtonRef = useRef<HTMLButtonElement>(null)
+  const [taskPopoverStyle, setTaskPopoverStyle] = useState<CSSProperties>({ right: 16, top: 64 })
   const [exporting, setExporting] = useState(false)
   const [exportSurfaceVisible, setExportSurfaceVisible] = useState(false)
   const [exportFormat, setExportFormat] = useState<'PPTX' | 'PDF' | '离线 HTML' | '讲解视频'>('PPTX')
   const [exportError, setExportError] = useState('')
   const [showVideoSettings, setShowVideoSettings] = useState(false)
+  const [showNarrationWorkbench, setShowNarrationWorkbench] = useState(false)
+  const [videoNarrationSummary, setVideoNarrationSummary] = useState<ProjectNarrationSummary>()
   const [videoPreset, setVideoPreset] = useState<NativeVideoPreset>('business')
+  const [videoTtsProvider, setVideoTtsProvider] = useState<'edge' | 'fish_audio'>('edge')
+  const [videoNarrationMode, setVideoNarrationMode] = useState<'single' | 'dialogue'>('single')
+  const [videoEdgeVoice, setVideoEdgeVoice] = useState(NATIVE_EDGE_VOICES[0].id)
+  const [videoFishVoice, setVideoFishVoice] = useState('')
+  const [videoSpeed, setVideoSpeed] = useState(1)
+  const [videoSpeakers, setVideoSpeakers] = useState<NarrationSpeaker[]>(NATIVE_VIDEO_SPEAKERS)
+  const [videoAutoEmotion, setVideoAutoEmotion] = useState(true)
+  const [videoPronunciationLexicon, setVideoPronunciationLexicon] = useState<PronunciationEntry[]>([])
+  const [videoNarrationPreferences, setVideoNarrationPreferences] = useState<NarrationPreferences>(DEFAULT_NARRATION_PREFERENCES)
+  const [videoUsageEstimate, setVideoUsageEstimate] = useState<{ characters: number; estimated_seconds: number; requests: number; roles: number; free_model_notice: string }>()
+  const [fishVoices, setFishVoices] = useState<FishAudioVoice[]>([])
+  const [fishVoicesLoading, setFishVoicesLoading] = useState(false)
+  const [fishVoicesError, setFishVoicesError] = useState('')
   const [zoom, setZoom] = useState(1)
   const [presenting, setPresenting] = useState(false)
   const [pageVersions, setPageVersions] = useState<NativePageVersion[]>([])
@@ -175,7 +209,8 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
   const startPresentation = async () => {
     setPresenting(true)
     try {
-      if (!document.fullscreenElement) await document.documentElement.requestFullscreen?.()
+      if (window.electronAPI?.setFullscreen) await window.electronAPI.setFullscreen(true)
+      else if (!document.fullscreenElement) await document.documentElement.requestFullscreen?.()
     } catch {
       // The in-app presentation layer remains available when system fullscreen is unavailable.
     }
@@ -184,7 +219,8 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
   const stopPresentation = async () => {
     setPresenting(false)
     try {
-      if (document.fullscreenElement) await document.exitFullscreen?.()
+      if (window.electronAPI?.setFullscreen) await window.electronAPI.setFullscreen(false)
+      else if (document.fullscreenElement) await document.exitFullscreen?.()
     } catch {
       // The in-app presentation layer has already been closed.
     }
@@ -434,15 +470,73 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
     setShowTasks(true)
     try {
       if (formatSelection === '讲解视频') {
+        const pageIds = slides.map((slide) => slide.pageId)
+        const summaryResponse = await getProjectNarrations(projectId)
+        const summary = summaryResponse.data
+        if (!summary) throw new Error('无法读取视频文案状态')
+        setVideoNarrationSummary(summary)
+        const versionByPage = new Map(summary.pages.map((page) => [page.page_id, page.current_version_id]))
+        const missingPageIds = pageIds.filter((pageId) => !versionByPage.get(pageId))
+        if (missingPageIds.length) {
+          setShowVideoSettings(false)
+          setShowNarrationWorkbench(true)
+          setExportError(`还有 ${missingPageIds.length} 页没有确认稿，请先完成视频文案`)
+          return
+        }
+        const narrationVersionMap = Object.fromEntries(pageIds.map((pageId) => [pageId, versionByPage.get(pageId)!]))
+        const activeVoice = videoNarrationMode === 'single'
+          ? (videoTtsProvider === 'edge' ? videoEdgeVoice : videoFishVoice)
+          : videoSpeakers[0]?.voice
+        const activeSpeakers = videoNarrationMode === 'dialogue' ? videoSpeakers : undefined
+        const preflight = await preflightExportVideo(projectId, {
+          pageIds,
+          generateNarration: false,
+          includeNoImagePages: true,
+          ttsProvider: videoTtsProvider,
+          voice: activeVoice,
+          speed: videoSpeed,
+          narrationMode: videoNarrationMode,
+          speakers: activeSpeakers,
+          narrationPolicy: 'confirmed_only',
+          narrationVersionMap,
+        })
+        if (!preflight.data?.can_export) throw new Error(preflight.data?.errors?.join('；') || '视频导出预检失败')
+        if (videoTtsProvider === 'fish_audio') {
+          await updateProject(projectId, {
+            pronunciation_lexicon: videoPronunciationLexicon,
+            narration_preferences: videoNarrationPreferences,
+          })
+        }
         await showExportSurface()
         addTask({ id, taskId: '', projectId, type: 'video', status: 'PROCESSING', progress: { total: slides.length, completed: 0, percent: 1, current_step: '正在截取页面帧' } })
+        const sceneManifests = captureNativeSceneManifests(slides)
+        const sceneManifestRefs = await createNativeSceneManifestRefs(sceneManifests, pageIds)
+        const sceneBundles = await captureNativeMotionBundles(slides, sceneManifestRefs)
         const frames = await captureNativeDeckFrameSequences()
+        await handoffVideoWorkspaceFrames(projectId, frames, pageIds)
         const created = await exportNativeVideo(
           projectId,
           frames,
-          slides.map((slide) => slide.pageId),
+          pageIds,
           nativeExportFilename(exportTitle, 'mp4'),
           directorConfig || NATIVE_VIDEO_PRESETS[videoPreset],
+          {
+            ttsProvider: videoTtsProvider,
+            voice: activeVoice,
+            rate: '+0%',
+            speed: videoSpeed,
+            language: 'zh',
+            generateNarration: false,
+            narrationMode: videoNarrationMode,
+            speakers: activeSpeakers,
+            autoEmotion: videoAutoEmotion,
+            pronunciationLexicon: videoPronunciationLexicon,
+            narrationPreferences: videoNarrationPreferences,
+            narrationPolicy: 'confirmed_only',
+            narrationVersionMap,
+          },
+          sceneManifests,
+          sceneBundles,
         )
         const taskId = created.data?.task_id
         if (!taskId) throw new Error('创建视频导出任务失败')
@@ -492,6 +586,92 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
     task.projectId === projectId && task.type.startsWith('native-') && task.status === 'PENDING',
   )
 
+  const updateTaskPopoverPosition = useCallback(() => {
+    const trigger = taskButtonRef.current
+    if (!trigger) return
+    const rect = trigger.getBoundingClientRect()
+    const width = Math.min(380, Math.max(280, window.innerWidth - 32))
+    const left = Math.min(Math.max(16, rect.right - width), Math.max(16, window.innerWidth - width - 16))
+    setTaskPopoverStyle({ left, top: Math.min(rect.bottom + 8, Math.max(16, window.innerHeight - 420)) })
+  }, [])
+
+  useEffect(() => {
+    if (!showTasks) return
+    updateTaskPopoverPosition()
+    window.addEventListener('resize', updateTaskPopoverPosition)
+    window.addEventListener('scroll', updateTaskPopoverPosition, true)
+    return () => {
+      window.removeEventListener('resize', updateTaskPopoverPosition)
+      window.removeEventListener('scroll', updateTaskPopoverPosition, true)
+    }
+  }, [showTasks, updateTaskPopoverPosition])
+
+  useEffect(() => {
+    if (!showVideoSettings) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowVideoSettings(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [showVideoSettings])
+
+  useEffect(() => {
+    if (!showVideoSettings) return
+    void getProjectNarrations(projectId)
+      .then((response) => setVideoNarrationSummary(response.data))
+      .catch(() => setVideoNarrationSummary(undefined))
+  }, [projectId, showVideoSettings])
+
+  useEffect(() => {
+    if (!showVideoSettings || videoTtsProvider !== 'fish_audio') return
+    let cancelled = false
+    setFishVoicesLoading(true)
+    setFishVoicesError('')
+    void getFishAudioVoices({ scope: 'all' })
+      .then((response) => {
+        if (cancelled) return
+        const voices = response.data?.voices || []
+        setFishVoices(voices)
+        if (!voices.length) {
+          setFishVoicesError('暂无可用的 Fish 声音，请先在设置中刷新官方社区或克隆声音')
+          return
+        }
+        setVideoFishVoice((current) => voices.some((voice) => voice.id === current) ? current : voices[0].id)
+        setVideoSpeakers((current) => current.map((speaker, index) => (
+          voices.some((voice) => voice.id === speaker.voice)
+            ? speaker
+            : { ...speaker, voice: voices[index % voices.length].id }
+        )))
+      })
+      .catch(() => {
+        if (!cancelled) setFishVoicesError('私有声音加载失败，请检查 Fish Audio Key')
+      })
+      .finally(() => {
+        if (!cancelled) setFishVoicesLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [showVideoSettings, videoTtsProvider])
+
+  useEffect(() => {
+    setVideoPronunciationLexicon(currentProject?.pronunciation_lexicon || [])
+    setVideoNarrationPreferences(currentProject?.narration_preferences || DEFAULT_NARRATION_PREFERENCES)
+  }, [currentProject?.project_id])
+
+  useEffect(() => {
+    if (!showVideoSettings || videoTtsProvider !== 'fish_audio') return
+    const narrationVersionMap = Object.fromEntries(
+      (videoNarrationSummary?.pages || [])
+        .filter((page) => page.current_version_id)
+        .map((page) => [page.page_id, page.current_version_id!]),
+    )
+    void preflightExportVideo(projectId, {
+      pageIds: slides.map((slide) => slide.pageId), generateNarration: false, includeNoImagePages: true,
+      ttsProvider: videoTtsProvider, voice: videoNarrationMode === 'single' ? videoFishVoice : videoSpeakers[0]?.voice,
+      speed: videoSpeed, narrationMode: videoNarrationMode, speakers: videoNarrationMode === 'dialogue' ? videoSpeakers : undefined,
+      narrationPolicy: 'confirmed_only', narrationVersionMap,
+    }).then((response) => setVideoUsageEstimate(response.data?.estimate)).catch(() => setVideoUsageEstimate(undefined))
+  }, [projectId, showVideoSettings, slides, videoFishVoice, videoNarrationMode, videoNarrationSummary, videoSpeakers, videoSpeed, videoTtsProvider])
+
   useEffect(() => {
     if (pendingRestartTask && !exporting && !dirtyPageIds.size && slides.length) {
       const format = pendingRestartTask.type === 'native-pdf' ? 'pdf' : pendingRestartTask.type === 'native-html' ? 'html' : 'pptx'
@@ -499,60 +679,81 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
     }
   }, [pendingRestartTask?.taskId, slides.length, dirtyPageIds.size, exporting])
 
+  useEffect(() => {
+    const handleBrowserFullscreenChange = () => {
+      if (!document.fullscreenElement) setPresenting(false)
+    }
+    document.addEventListener('fullscreenchange', handleBrowserFullscreenChange)
+    const unsubscribeDesktopFullscreen = window.electronAPI?.onFullscreenChange?.((enabled) => {
+      if (!enabled) setPresenting(false)
+    })
+    return () => {
+      document.removeEventListener('fullscreenchange', handleBrowserFullscreenChange)
+      unsubscribeDesktopFullscreen?.()
+    }
+  }, [])
+
   return (
     <WorkspaceShell
-      hideSidebarToggle
-      hideStatusBar
       softBorders
-      sidebarWidth="264px"
+      sidebarWidth="216px"
+      presenting={presenting}
       toolbar={(
         <div className="flex min-w-0 items-center justify-between gap-3">
           <div className="flex min-w-0 flex-1 items-center gap-3">
-            {onHome && <button type="button" onClick={onHome} className="inline-flex h-10 items-center gap-2 rounded-lg px-2 text-sm font-semibold hover:bg-background-hover"><Home size={18} aria-hidden="true" />主页</button>}
-            {onBack && <button type="button" onClick={onBack} className="inline-flex h-10 items-center gap-2 rounded-lg px-2 text-sm font-semibold hover:bg-background-hover"><ArrowLeft size={18} aria-hidden="true" />返回</button>}
+            {onHome && <button type="button" onClick={onHome} className="inline-flex h-10 items-center gap-2 rounded-lg px-2 text-sm font-semibold text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]"><Home size={18} aria-hidden="true" />首页</button>}
+            {onBack && <button type="button" onClick={onBack} className="inline-flex h-10 items-center gap-2 rounded-lg px-2 text-sm font-semibold text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]"><ArrowLeft size={18} aria-hidden="true" />返回</button>}
             <div className="hidden min-w-0 flex-col leading-tight md:flex">
               <div className="flex min-w-0 items-center gap-2">
                 <strong className="truncate text-lg">预览</strong>
-                <span className="rounded-full border border-blue-100 bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-600">Step 3 · 视觉成稿</span>
+                <span className="rounded-[var(--app-radius-control)] border border-[var(--app-accent-soft)] bg-[var(--app-accent-soft)] px-2 py-0.5 text-[11px] font-semibold text-[var(--app-accent)]">Step 3 · 视觉成稿</span>
               </div>
-              <span className="truncate text-[11px] text-foreground-secondary">生成内容、预览并导出交付</span>
+              <span className="truncate text-[11px] text-[var(--app-text-tertiary)]">生成内容、预览并导出交付</span>
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            <button type="button" aria-label="撤销" title="撤销" disabled={!historyPast.current.length} onClick={undo} className="hidden h-10 w-9 items-center justify-center rounded-lg hover:bg-background-hover disabled:opacity-30 md:inline-flex"><Undo2 size={17} aria-hidden="true" /></button>
-            <button type="button" aria-label="重做" title="重做" disabled={!historyFuture.current.length} onClick={redo} className="hidden h-10 w-9 items-center justify-center rounded-lg hover:bg-background-hover disabled:opacity-30 md:inline-flex"><Redo2 size={17} aria-hidden="true" /></button>
-            <button type="button" onClick={() => media.setSettingsOpen(true)} className="hidden h-10 items-center gap-2 rounded-lg px-3 text-sm font-semibold hover:bg-background-hover lg:inline-flex"><Settings2 size={17} />项目设置</button>
+            <button type="button" aria-label="撤销" title="撤销" disabled={!historyPast.current.length} onClick={undo} className="hidden h-10 w-9 items-center justify-center rounded-lg text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] disabled:opacity-30 md:inline-flex"><Undo2 size={17} aria-hidden="true" /></button>
+            <button type="button" aria-label="重做" title="重做" disabled={!historyFuture.current.length} onClick={redo} className="hidden h-10 w-9 items-center justify-center rounded-lg text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] disabled:opacity-30 md:inline-flex"><Redo2 size={17} aria-hidden="true" /></button>
+            <button type="button" aria-label="项目设置" title="配图设置" onClick={() => media.setSettingsOpen(true)} className="hidden h-10 items-center gap-2 rounded-lg px-3 text-sm font-semibold text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] lg:inline-flex"><Settings2 size={17} />配图设置</button>
             {media.pages.length > 0 && (
-              <button type="button" aria-label={media.running ? (media.paused ? '继续生成' : '暂停生成') : '批量生成'} title={media.remaining > 0 ? `批量生成 ${media.remaining} 个内容位` : '没有待生成内容'} disabled={!media.running && media.remaining === 0} onClick={media.running ? (media.paused ? media.resume : media.pause) : media.start} className="hidden h-10 items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 text-sm font-semibold text-sky-700 hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-45 lg:inline-flex"><Sparkles size={17} />{media.running ? (media.paused ? '继续生成' : '暂停生成') : '批量生成'}</button>
+              <button type="button" aria-label={media.running ? (media.paused ? '继续生成' : '暂停生成') : '批量生成'} title={media.remaining > 0 ? `批量生成 ${media.remaining} 个内容位` : '没有待生成内容'} disabled={!media.running && media.remaining === 0} onClick={media.running ? (media.paused ? media.resume : media.pause) : media.start} className="hidden h-10 items-center gap-2 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface)] px-3 text-sm font-semibold text-[var(--app-accent)] hover:bg-[var(--app-surface-hover)] disabled:cursor-not-allowed disabled:opacity-45 lg:inline-flex"><Sparkles size={17} />{media.running ? (media.paused ? '继续生成' : '暂停生成') : '批量生成'}</button>
             )}
-            <button type="button" onClick={() => window.location.reload()} className="hidden h-10 items-center gap-2 rounded-lg px-3 text-sm font-semibold hover:bg-background-hover md:inline-flex"><RefreshCw size={17} />刷新</button>
-            <button type="button" aria-label={presenting ? '退出演示模式' : '演示模式'} title={presenting ? '退出演示模式' : '演示模式'} onClick={() => void (presenting ? stopPresentation() : startPresentation())} className="hidden h-10 items-center gap-2 rounded-lg px-3 text-sm font-semibold hover:bg-background-hover md:inline-flex"><MonitorPlay size={17} />{presenting ? '退出演示' : '演示'}</button>
+            <button type="button" onClick={() => window.location.reload()} className="hidden h-10 items-center gap-2 rounded-lg px-3 text-sm font-semibold text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] md:inline-flex"><RefreshCw size={17} />刷新</button>
+            <button type="button" aria-label={presenting ? '退出演示模式' : '演示模式'} title={presenting ? '退出演示模式' : '演示模式'} onClick={() => void (presenting ? stopPresentation() : startPresentation())} className="hidden h-10 items-center gap-2 rounded-lg px-3 text-sm font-semibold text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] md:inline-flex"><MonitorPlay size={17} />{presenting ? '退出演示' : '演示'}</button>
+            <button type="button" aria-label="视频文案" title="编辑视频文案" onClick={() => setShowNarrationWorkbench(true)} className="hidden h-10 items-center gap-2 rounded-lg px-3 text-sm font-semibold text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] lg:inline-flex"><FileText size={17} />视频文案</button>
             <div className="relative">
-              <button type="button" aria-label="导出任务" title="导出任务" onClick={() => setShowTasks((value) => !value)} className="relative flex h-10 items-center gap-1 rounded-lg px-2 text-sm font-semibold hover:bg-background-hover">
+              <button ref={taskButtonRef} type="button" aria-label="导出任务" title="导出任务" onClick={() => setShowTasks((value) => !value)} className="relative flex h-10 items-center gap-1 rounded-[var(--app-radius-control)] px-2 text-sm font-semibold hover:bg-[var(--app-surface-hover)] active:scale-[0.98]">
                 <ListTodo size={17} aria-hidden="true" />{tasks.filter((task) => task.projectId === projectId).length || 0}
               </button>
-              {showTasks && <div className="absolute right-0 top-full z-50 mt-2 w-[min(380px,calc(100vw-2rem))]"><ExportTasksPanel projectId={projectId} onRetry={(task) => void retryExport(task)} /></div>}
+              {showTasks && <div data-testid="native-export-task-popover" className="fixed z-[120] w-[min(380px,calc(100vw-2rem))]" style={taskPopoverStyle}><ExportTasksPanel projectId={projectId} onRetry={(task) => void retryExport(task)} /></div>}
             </div>
-            <div className="hidden items-center gap-1 rounded-lg border border-slate-200 bg-white px-1 dark:border-border-primary dark:bg-background-secondary md:flex">
-              <button type="button" aria-label="缩小画布" title="缩小画布" disabled={zoom <= 0.5} onClick={() => setZoom((value) => Math.max(0.5, value - 0.1))} className="flex h-8 w-8 items-center justify-center rounded hover:bg-background-hover disabled:opacity-35"><ZoomOut size={15} /></button>
-              <span className="w-12 text-center text-xs text-foreground-secondary">{Math.round(zoom * 100)}%</span>
-              <button type="button" aria-label="放大画布" title="放大画布" disabled={zoom >= 2} onClick={() => setZoom((value) => Math.min(2, value + 0.1))} className="flex h-8 w-8 items-center justify-center rounded hover:bg-background-hover disabled:opacity-35"><ZoomIn size={15} /></button>
-              <button type="button" aria-label="适应窗口" title="适应窗口" onClick={() => setZoom(1)} className="flex h-8 w-8 items-center justify-center rounded hover:bg-background-hover"><Maximize2 size={15} /></button>
+            <div className="hidden items-center gap-1 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-1 md:flex">
+              <button type="button" aria-label="缩小画布" title="缩小画布" disabled={zoom <= 0.5} onClick={() => setZoom((value) => Math.max(0.5, value - 0.1))} className="flex h-8 w-8 items-center justify-center rounded-[var(--app-radius-control)] hover:bg-[var(--app-surface-hover)] disabled:opacity-35"><ZoomOut size={15} /></button>
+              <span className="w-12 text-center text-xs text-[var(--app-text-secondary)]">{Math.round(zoom * 100)}%</span>
+              <button type="button" aria-label="放大画布" title="放大画布" disabled={zoom >= 2} onClick={() => setZoom((value) => Math.min(2, value + 0.1))} className="flex h-8 w-8 items-center justify-center rounded-[var(--app-radius-control)] hover:bg-[var(--app-surface-hover)] disabled:opacity-35"><ZoomIn size={15} /></button>
+              <button type="button" aria-label="适应窗口" title="适应窗口" onClick={() => setZoom(1)} className="flex h-8 w-8 items-center justify-center rounded-[var(--app-radius-control)] hover:bg-[var(--app-surface-hover)]"><Maximize2 size={15} /></button>
             </div>
-            <select aria-label="导出格式" value={exportFormat} onChange={(event) => setExportFormat(event.target.value as typeof exportFormat)} className="hidden h-10 rounded-xl border border-border bg-background px-3 text-sm md:block">
+            <select aria-label="导出格式" value={exportFormat} onChange={(event) => setExportFormat(event.target.value as typeof exportFormat)} className="hidden h-10 rounded-md border border-[var(--app-border)] bg-[var(--app-surface)] px-3 text-sm md:block">
               <option>PPTX</option><option>PDF</option><option>离线 HTML</option><option>讲解视频</option>
             </select>
-            <button type="button" aria-label={`导出${exportFormat}`} title={dirtyPageIds.size ? '请等待页面保存完成' : `导出${exportFormat}`} disabled={exporting || Boolean(dirtyPageIds.size) || !slides.length} onClick={() => void exportSelectedFormat()} className="flex h-11 items-center gap-2 rounded-xl bg-gradient-to-r from-sky-500 to-emerald-400 px-5 text-sm font-semibold text-white shadow-md shadow-sky-200/70 disabled:cursor-not-allowed disabled:opacity-50">
+          <button type="button" aria-label={`导出${exportFormat}`} title={dirtyPageIds.size ? '请等待页面保存完成' : `导出${exportFormat}`} disabled={exporting || Boolean(dirtyPageIds.size) || !slides.length} onClick={() => void exportSelectedFormat()} className="flex h-10 items-center gap-2 rounded-md bg-[var(--app-primary-action)] px-4 text-sm font-semibold text-[var(--app-surface)] transition-colors hover:bg-[var(--app-primary-action-hover)] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50">
               <Download size={18} aria-hidden="true" />{exporting ? '导出中' : '导出'}
             </button>
           </div>
         </div>
       )}
+      statusBar={(
+        <WorkspaceStatusBar className="gap-4">
+          <span className="inline-flex items-center gap-2" role="status" aria-live="polite"><span className={`h-1.5 w-1.5 rounded-full ${dirtyPageIds.size || exportError || saveError ? 'bg-[var(--app-warning)]' : 'bg-[var(--app-success)]'}`} aria-hidden="true" />{saveStatus}</span>
+          <span>{slides.length ? `第 ${selectedIndex + 1} / ${slides.length} 页` : '0 页'}</span>
+          <span className="hidden sm:inline">{currentProject?.image_aspect_ratio || '16:9'}</span>
+          <span className="ml-auto whitespace-nowrap">{Math.round(zoom * 100)}% · 原生可编辑模式</span>
+        </WorkspaceStatusBar>
+      )}
       sidebar={<NativeDeckPageRail slides={slides} selectedPageId={selectedPageId} onSelect={selectPage} onAdd={() => void createSlide()} onDuplicate={(pageId) => void createSlide(slides.find((slide) => slide.pageId === pageId))} onDelete={(pageId) => void removeSlide(pageId)} onMove={(pageId, direction) => void moveSlide(pageId, direction)} pageAction={pageGenerationAction} pageGenerationAction={singlePageGenerationAction || (media.pages.length > 0 ? { label: '生成本页', disabled: media.running, onClick: media.runPage } : undefined)} />}
       inspector={<NativeDeckPropertyPanel slide={selectedSlide} contract={contract} contracts={layoutContracts} errors={errors} onChange={updateProps} onLayoutChange={changeLayout} onRegenerate={selectedSlide && singlePageGenerationAction ? () => singlePageGenerationAction.onClick(selectedSlide.pageId) : undefined} versions={pageVersions} onRestoreVersion={(versionId) => void restorePageVersion(versionId)} onApplyAnimation={applyAnimationToAll} mediaActions={media.mediaActions} />}
     >
       <div className="relative flex h-full min-w-0 flex-col">
-        <span className="sr-only" role="status" aria-live="polite">{saveStatus}</span>
         <div className="min-h-0 flex-1">
           <NativeDeckCanvas
             slide={selectedSlide}
@@ -572,40 +773,119 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
         </div>
       </div>
       {exportSurfaceVisible && <NativeDeckExportSurface slides={slides} />}
-      {presenting && selectedSlide && <div role="dialog" aria-label="演示模式" className="fixed inset-0 z-[100] bg-[#eef7fb]">
-        <button type="button" aria-label="退出演示模式" title="退出演示" onClick={() => void stopPresentation()} className="absolute right-5 top-5 z-10 flex h-10 w-10 items-center justify-center rounded-lg bg-black/50 text-white hover:bg-black/70"><X size={20} /></button>
+      {presenting && selectedSlide && <div role="dialog" aria-label="演示模式" className="fixed inset-0 z-[100] bg-[var(--app-canvas)]">
+        <button type="button" aria-label="退出演示模式" title="退出演示" onClick={() => void stopPresentation()} className="absolute right-5 top-5 z-10 flex h-10 w-10 items-center justify-center rounded-lg bg-[color:var(--app-surface)]/85 text-[var(--app-text)] hover:bg-[color:var(--app-surface)]/95"><X size={20} /></button>
         <NativeDeckCanvas slide={selectedSlide} pageIndex={selectedIndex} pageCount={slides.length} onPrevious={() => slides[selectedIndex - 1] && selectPage(slides[selectedIndex - 1].pageId)} onNext={() => slides[selectedIndex + 1] && selectPage(slides[selectedIndex + 1].pageId)} presenting mediaContract={contract} />
       </div>}
       <NativeImageSettingsDialog open={media.settingsOpen} settings={media.settings} pages={media.pages} saving={media.savingSettings} onClose={() => media.setSettingsOpen(false)} onSave={(settings) => void media.saveSettings(settings)} />
-      <MaterialSelector projectId={projectId} isOpen={Boolean(media.selectedSlot)} multiple={false} maxSelection={1} onClose={media.closeSelector} onSelect={(materials) => { if (materials[0]) media.useSelectedMaterial(materials[0].url) }} />
+      <MaterialSelector projectId={projectId} isOpen={Boolean(media.selectedSlot)} multiple={false} maxSelection={1} onClose={media.closeSelector} onSelect={(materials) => { if (materials[0]) media.useSelectedMaterial(materials[0].url) }} mediaKindFilter={['image']} />
       {showVideoSettings && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/35 p-4" onMouseDown={() => setShowVideoSettings(false)}>
-          <section role="dialog" aria-modal="true" aria-label="讲解视频设置" className="w-full max-w-lg rounded-lg border border-slate-200 bg-white p-5 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-[color:var(--app-surface)]/80 p-4" onMouseDown={() => setShowVideoSettings(false)}>
+          <section role="dialog" aria-modal="true" aria-label="讲解视频设置" className="max-h-[88vh] w-full max-w-xl overflow-y-auto rounded-[var(--app-radius-panel)] border border-[var(--app-border)] bg-[var(--app-surface)] p-5 text-[var(--app-text)] shadow-[var(--app-shadow-elevated)]" onMouseDown={(event) => event.stopPropagation()}>
             <div className="flex items-start justify-between gap-4">
               <div>
-                <h2 className="text-lg font-semibold text-slate-900">讲解视频设置</h2>
-                <p className="mt-1 text-sm text-slate-500">选择成片节奏，原生元素会按页面动效分阶段呈现。</p>
+                <h2 className="text-lg font-semibold text-[var(--app-text)]">讲解视频设置</h2>
+                <p className="mt-1 text-sm text-[var(--app-text-secondary)]">选择成片节奏，原生元素会按页面动效分阶段呈现。</p>
               </div>
-              <button type="button" aria-label="关闭讲解视频设置" onClick={() => setShowVideoSettings(false)} className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"><X size={18} /></button>
+              <button type="button" aria-label="关闭讲解视频设置" onClick={() => setShowVideoSettings(false)} className="flex h-9 w-9 items-center justify-center rounded-[var(--app-radius-control)] text-[var(--app-text-tertiary)] hover:bg-[var(--app-surface-hover)]"><X size={18} /></button>
+            </div>
+            <div className="mt-4 flex items-center justify-between gap-4 border-y border-[var(--app-border)] py-3 text-sm">
+              <div>
+                <p className="font-medium text-[var(--app-text)]">视频文案</p>
+                <p className="text-[var(--app-text-secondary)]">
+                  {videoNarrationSummary
+                    ? `已确认 ${videoNarrationSummary.confirmed_pages} / ${videoNarrationSummary.total_pages} 页${videoNarrationSummary.missing_pages ? `，缺少 ${videoNarrationSummary.missing_pages} 页` : ''}`
+                    : '正在读取文案状态…'}
+                </p>
+              </div>
+              <button type="button" onClick={() => { setShowVideoSettings(false); setShowNarrationWorkbench(true) }} className="h-9 shrink-0 rounded-[var(--app-radius-control)] px-3 text-sm font-semibold text-[var(--app-accent)] hover:bg-[var(--app-surface-hover)]">编辑文案</button>
+            </div>
+            <div className="mt-5 grid grid-cols-2 gap-1 rounded-[var(--app-radius-control)] bg-[var(--app-surface-secondary)] p-1" role="group" aria-label="语音引擎">
+              {([['edge', 'Edge TTS'], ['fish_audio', 'Fish Audio s2.1-pro-free']] as const).map(([provider, label]) => (
+                <button key={provider} type="button" aria-pressed={videoTtsProvider === provider} onClick={() => {
+                  setVideoTtsProvider(provider)
+                  const voices = provider === 'edge' ? NATIVE_EDGE_VOICES : fishVoices
+                  if (voices.length) setVideoSpeakers((current) => current.map((speaker, index) => ({ ...speaker, voice: voices[index % voices.length].id })))
+                }} className={`h-9 rounded-[var(--app-radius-control)] px-3 text-sm font-semibold ${videoTtsProvider === provider ? 'bg-[var(--app-surface)] text-[var(--app-text)] shadow-[var(--app-shadow-control)]' : 'text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]'}`}>
+                  {label}
+                </button>
+              ))}
             </div>
             <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4">
               {(Object.keys(NATIVE_VIDEO_PRESETS) as NativeVideoPreset[]).map((preset) => (
-                <button key={preset} type="button" aria-pressed={videoPreset === preset} onClick={() => setVideoPreset(preset)} className={`h-10 rounded-lg border px-3 text-sm font-semibold ${videoPreset === preset ? 'border-sky-500 bg-sky-50 text-sky-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                <button key={preset} type="button" aria-pressed={videoPreset === preset} onClick={() => setVideoPreset(preset)} className={`h-10 rounded-[var(--app-radius-control)] border px-3 text-sm font-semibold transition-colors active:scale-[0.98] ${videoPreset === preset ? 'border-[var(--app-accent)] bg-[var(--app-accent-soft)] text-[var(--app-accent)]' : 'border-[var(--app-border)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]'}`}>
                   {NATIVE_VIDEO_PRESET_LABELS[preset]}
                 </button>
               ))}
             </div>
-            <div className="mt-5 flex justify-end gap-2 border-t border-slate-100 pt-4">
-              <button type="button" onClick={() => setShowVideoSettings(false)} className="h-10 rounded-lg px-4 text-sm font-semibold text-slate-600 hover:bg-slate-100">取消</button>
-              <button type="button" onClick={() => {
+            <div className="mt-5 grid grid-cols-2 gap-1 rounded-[var(--app-radius-control)] bg-[var(--app-surface-secondary)] p-1" role="group" aria-label="旁白模式">
+              {([['single', '单人讲解'], ['dialogue', '多人对话']] as const).map(([mode, label]) => (
+                <button key={mode} type="button" aria-pressed={videoNarrationMode === mode} onClick={() => setVideoNarrationMode(mode)} className={`h-9 rounded-[var(--app-radius-control)] px-3 text-sm font-semibold ${videoNarrationMode === mode ? 'bg-[var(--app-surface)] text-[var(--app-text)] shadow-[var(--app-shadow-control)]' : 'text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]'}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            {videoNarrationMode === 'single' ? (
+              <label className="mt-4 block text-sm font-medium">
+                <span className="mb-1.5 block">语音音色</span>
+                <select aria-label="语音音色" value={videoTtsProvider === 'edge' ? videoEdgeVoice : videoFishVoice} disabled={videoTtsProvider === 'fish_audio' && (fishVoicesLoading || !fishVoices.length)} onChange={(event) => videoTtsProvider === 'edge' ? setVideoEdgeVoice(event.target.value) : setVideoFishVoice(event.target.value)} className="h-10 w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 text-sm disabled:opacity-50">
+                  {(videoTtsProvider === 'edge' ? NATIVE_EDGE_VOICES : fishVoices).map((voice) => <option key={voice.id} value={voice.id}>{'label' in voice ? voice.label : voice.title}</option>)}
+                </select>
+              </label>
+            ) : (
+              <div className="mt-4 space-y-3">
+                {videoSpeakers.map((speaker, index) => (
+                  <div key={speaker.id} className="grid grid-cols-[minmax(100px,0.8fr)_minmax(150px,1.4fr)_40px] items-end gap-2 border-b border-[var(--app-border)] pb-3">
+                    <label className="block text-sm font-medium"><span className="mb-1.5 block">角色 {index + 1}</span><input aria-label={`角色 ${index + 1} 名称`} value={speaker.name} onChange={(event) => setVideoSpeakers((current) => current.map((item) => item.id === speaker.id ? { ...item, name: event.target.value } : item))} className="h-10 w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 text-sm" /></label>
+                    <label className="block text-sm font-medium"><span className="mb-1.5 block">音色</span><select aria-label={`${speaker.name}音色`} value={speaker.voice} disabled={videoTtsProvider === 'fish_audio' && (fishVoicesLoading || !fishVoices.length)} onChange={(event) => setVideoSpeakers((current) => current.map((item) => item.id === speaker.id ? { ...item, voice: event.target.value } : item))} className="h-10 w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 text-sm disabled:opacity-50">{(videoTtsProvider === 'edge' ? NATIVE_EDGE_VOICES : fishVoices).map((voice) => <option key={voice.id} value={voice.id}>{'label' in voice ? voice.label : voice.title}</option>)}</select></label>
+                    <button type="button" aria-label={`删除角色 ${index + 1}`} title="删除角色" disabled={videoSpeakers.length <= 2} onClick={() => setVideoSpeakers((current) => current.filter((item) => item.id !== speaker.id))} className="flex h-10 w-10 items-center justify-center rounded-[var(--app-radius-control)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] disabled:opacity-30"><Trash2 size={17} /></button>
+                  </div>
+                ))}
+                <button type="button" disabled={videoSpeakers.length >= 4} onClick={() => setVideoSpeakers((current) => {
+                  const voices = videoTtsProvider === 'edge' ? NATIVE_EDGE_VOICES : fishVoices
+                  const guestIndex = [3, 4].find((value) => !current.some((speaker) => speaker.id === `guest_${value}`)) || 4
+                  return [...current, { id: `guest_${guestIndex}`, name: `嘉宾 ${guestIndex}`, voice: voices[current.length % Math.max(voices.length, 1)]?.id || '', rate: '+0%' }]
+                })} className="inline-flex h-9 items-center gap-2 rounded-[var(--app-radius-control)] px-3 text-sm font-semibold text-[var(--app-accent)] hover:bg-[var(--app-surface-hover)] disabled:opacity-40"><Plus size={16} />添加角色</button>
+              </div>
+            )}
+            {videoTtsProvider === 'fish_audio' && (
+              <label className="mt-4 flex items-center justify-between gap-4 text-sm font-medium"><span>场景自动匹配语气</span><input type="checkbox" aria-label="场景自动匹配语气" checked={videoAutoEmotion} onChange={(event) => setVideoAutoEmotion(event.target.checked)} className="h-4 w-4 accent-[var(--app-accent)]" /></label>
+            )}
+            {videoTtsProvider === 'fish_audio' && <FishNarrationAdvancedPanel
+              projectId={projectId}
+              voices={fishVoices}
+              voice={videoNarrationMode === 'single' ? videoFishVoice : videoSpeakers[0]?.voice || ''}
+              speed={videoSpeed}
+              autoEmotion={videoAutoEmotion}
+              pronunciationLexicon={videoPronunciationLexicon}
+              narrationPreferences={videoNarrationPreferences}
+              estimate={videoUsageEstimate}
+              pageOptions={slides.map((slide, index) => ({ id: slide.pageId, label: `第 ${index + 1} 页` }))}
+              onVoiceChange={(voice) => videoNarrationMode === 'single' ? setVideoFishVoice(voice) : setVideoSpeakers((current) => current.map((speaker, index) => index === 0 ? { ...speaker, voice } : speaker))}
+              onSpeedChange={setVideoSpeed}
+              onPronunciationLexiconChange={setVideoPronunciationLexicon}
+              onNarrationPreferencesChange={setVideoNarrationPreferences}
+            />}
+            {videoTtsProvider === 'fish_audio' && (fishVoicesLoading || fishVoicesError) && <p className={`mt-3 text-sm ${fishVoicesError ? 'text-[var(--app-danger)]' : 'text-[var(--app-text-secondary)]'}`} role="status">{fishVoicesLoading ? '正在加载私有声音…' : fishVoicesError}</p>}
+            <div className="mt-5 flex justify-end gap-2 border-t border-[var(--app-border)] pt-4">
+              <button type="button" onClick={() => setShowVideoSettings(false)} className="h-10 rounded-[var(--app-radius-control)] px-4 text-sm font-semibold text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]">取消</button>
+              <button type="button" disabled={(videoTtsProvider === 'fish_audio' && (fishVoicesLoading || !fishVoices.length)) || (videoNarrationMode === 'dialogue' && (videoSpeakers.length < 2 || videoSpeakers.some((speaker) => !speaker.name.trim() || !speaker.voice)))} onClick={() => {
                 const config = NATIVE_VIDEO_PRESETS[videoPreset]
                 setShowVideoSettings(false)
                 void startExport('讲解视频', config).catch((error) => setExportError(error instanceof Error ? error.message : String(error)))
-              }} className="h-10 rounded-lg bg-sky-600 px-4 text-sm font-semibold text-white hover:bg-sky-700">开始导出视频</button>
+              }} className="h-10 rounded-[var(--app-radius-control)] bg-[var(--app-primary-action)] px-4 text-sm font-semibold text-[var(--app-surface)] hover:bg-[var(--app-primary-action-hover)] disabled:cursor-not-allowed disabled:opacity-45">开始导出视频</button>
             </div>
           </section>
         </div>
       )}
+      <NarrationWorkbench
+        open={showNarrationWorkbench}
+        projectId={projectId}
+        initialPageId={selectedPageId || slides[0]?.pageId}
+        pageIds={slides.map((slide) => slide.pageId)}
+        onClose={() => setShowNarrationWorkbench(false)}
+        onSummaryChange={setVideoNarrationSummary}
+      />
     </WorkspaceShell>
   )
 }

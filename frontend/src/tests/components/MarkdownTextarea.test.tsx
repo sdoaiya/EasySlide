@@ -23,6 +23,25 @@ const dropFiles = (target: HTMLElement, files: File[]) => {
 }
 
 describe('MarkdownTextarea drop handling', () => {
+  it('converts legacy html image blocks into editable image chips', () => {
+    const { container } = render(
+      <MarkdownTextarea
+        value={'其他页面素材：\n<div style="text-align: center;"><img src="/files/mineru/example.jpg" alt="Image" width="20%" /></div>'}
+        onChange={() => {}}
+      />,
+    )
+
+    const chip = container.querySelector('.md-chip')
+    expect(chip).not.toBeNull()
+    expect(chip).toHaveAttribute('data-markdown', '![Image](/files/mineru/example.jpg)')
+    expect(chip).toHaveTextContent('Image')
+    expect(chip?.className).toContain('bg-[var(--app-surface-muted)]')
+    expect(chip?.className).not.toContain('bg-gray')
+    expect(container.innerHTML).not.toContain('bg-black/60')
+    expect(container.innerHTML).not.toContain('backdrop-blur-sm')
+    expect(container.innerHTML).toContain('text-[var(--app-text)]')
+  })
+
   it('when onDocumentFiles is provided, images go to onFiles and non-images go to onDocumentFiles', () => {
     const onFiles = vi.fn()
     const onDocumentFiles = vi.fn()

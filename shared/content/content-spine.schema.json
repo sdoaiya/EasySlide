@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://easyslide.local/schemas/content/content-spine.schema.json",
+  "title": "EasySlide Content Spine Document",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "topic",
+    "audience",
+    "goal",
+    "sources",
+    "research",
+    "viewpoints",
+    "facts",
+    "sections",
+    "narrative",
+    "needs_confirmation"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "topic": { "$ref": "#/$defs/semanticField" },
+    "audience": { "$ref": "#/$defs/semanticField" },
+    "goal": { "$ref": "#/$defs/semanticField" },
+    "sources": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/source" }
+    },
+    "research": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/evidenceItem" }
+    },
+    "viewpoints": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/evidenceItem" }
+    },
+    "facts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/evidenceItem" }
+    },
+    "sections": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/section" }
+    },
+    "narrative": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["opening", "progression", "conclusion"],
+      "properties": {
+        "opening": { "type": "string" },
+        "progression": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "conclusion": { "type": "string" }
+      }
+    },
+    "needs_confirmation": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^/" }
+    }
+  },
+  "$defs": {
+    "stableId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+    "semanticField": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "needs_confirmation"],
+      "properties": {
+        "value": { "type": "string" },
+        "needs_confirmation": { "type": "boolean" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_id", "kind", "ref", "title"],
+      "properties": {
+        "source_id": { "$ref": "#/$defs/stableId" },
+        "kind": { "enum": ["prompt", "outline", "description", "reference_file", "material", "research"] },
+        "ref": { "type": "string", "minLength": 1 },
+        "title": { "type": "string" },
+        "content": { "type": "string" }
+      }
+    },
+    "evidenceItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["item_id", "statement", "source_refs", "needs_confirmation"],
+      "properties": {
+        "item_id": { "$ref": "#/$defs/stableId" },
+        "statement": { "type": "string", "minLength": 1 },
+        "source_refs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/stableId" }
+        },
+        "needs_confirmation": { "type": "boolean" }
+      }
+    },
+    "section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["section_id", "title", "summary", "key_points", "fact_refs", "source_refs"],
+      "properties": {
+        "section_id": { "$ref": "#/$defs/stableId" },
+        "title": { "type": "string", "minLength": 1 },
+        "summary": { "type": "string" },
+        "key_points": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "fact_refs": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/stableId" } },
+        "source_refs": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/stableId" } }
+      }
+    }
+  }
+}

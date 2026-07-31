@@ -1,0 +1,88 @@
+---
+title: "Fish Audio 旁白与语音克隆"
+description: "使用 s2.1-pro-free 接入语音克隆、场景语气和 2–4 人讲解视频"
+---
+
+## 当前接入范围
+
+EasySlide 将 Fish Audio 作为讲解视频的可选语音引擎，当前固定使用 `s2.1-pro-free`。图片模式和原生可编辑模式使用同一套旁白配置：
+
+- 在设置中加密保存并验证 Fish Audio API Key
+- 加载、创建和删除账号下的私有克隆声音
+- 使用 1–3 个已获授权的 WAV、MP3、M4A、OPUS 或 FLAC 样本快速克隆声音
+- 单人旁白选择一个克隆声音
+- 多人旁白配置 2–4 位角色，每位角色绑定独立声音
+- 根据页面类型和导演预设自动加入 `[curious]`、`[confident]`、`[emphasis]` 等语气标记，也可关闭
+- 每页只发起一次 Fish Audio 合成请求，并复用不含 Key 的本地音频缓存
+
+Fish Audio 请求失败时不会静默切换成 Edge 声音，以免导出视频中途改变人物音色。
+
+## 官方 API 契约
+
+所有请求使用 `Authorization: Bearer <API_KEY>`。当前集成只访问固定官方域名 `https://api.fish.audio`。
+
+### 文本转语音
+
+```http
+POST https://api.fish.audio/v1/tts
+Authorization: Bearer <API_KEY>
+model: s2.1-pro-free
+Content-Type: application/msgpack
+```
+
+单人旁白传入一个 `reference_id`。多人旁白传入按角色顺序排列的 `reference_id` 数组，并在文本中使用 Fish Audio 原生说话人标记：
+
+```text
+<|speaker:0|>[confident]欢迎来到本次讲解。
+<|speaker:1|>[curious]这组数据最值得关注的变化是什么？
+```
+
+角色顺序必须与 `reference_id` 数组一致。EasySlide 在服务端构造协议并校验实际发言角色，前端不直接拼接控制标记。
+
+### 创建私有克隆声音
+
+```http
+POST https://api.fish.audio/model
+Authorization: Bearer <API_KEY>
+Content-Type: multipart/form-data
+```
+
+EasySlide 使用 `train_mode=fast`，且只创建 `private` 声音。创建前必须确认已经获得声音所有者授权；请勿上传无权使用的录音。
+
+### 声音管理
+
+设置页通过官方模型列表接口读取当前账号可用声音，只向前端返回声音 ID、名称、状态、语言和可见性等必要字段。删除操作只接受格式合法的声音 ID。
+
+## 导出流程
+
+1. 在「设置 → Fish Audio」保存 Key 并执行连接测试。
+2. 创建私有克隆声音，或刷新并选择已有声音。
+3. 导出讲解视频时将语音引擎切换为 Fish Audio。
+4. 选择单人或多人旁白。多人模式配置 2–4 个角色及其声音。
+5. 按需设置发音词典、ASR 质检、时间戳字幕和情绪导演，然后执行导出预检。
+6. 导出任务在后台合成每页音频、字幕和视频，进度与质量报告统一显示在任务中心。
+
+## 高级旁白能力
+
+- **短句试听与 A/B**：使用同一段 20–40 字文本生成约 5–10 秒试听，对比声线、语速和默认语气后再批量导出。
+- **项目发音词典**：维护术语、人名和缩写读法；替换只作用于合成文本，不污染页面原稿和字幕。
+- **ASR 回听质检**：将合成音频回听转写并与原稿比较；普通模式失败时回退，严格模式失败时中止导出。
+- **ASR 时间戳字幕**：使用回听结果的时间边界驱动原稿字幕，减少估算时长产生的漂移。
+- **情绪导演**：统一控制强度、语速、停顿和角色关系，并支持逐页覆盖。
+- **人物声线资产**：在设置中保存角色名、声音、头像、默认语速、默认语气和使用场景；选择资产时会一起套用声音、语速与语气。
+- **用量预估与预检**：导出前显示字符数、预计时长、请求数、角色数和免费模型提示，并检查 Key、私有声线状态、单页文本长度、图片、旁白、FFmpeg 与字幕能力。
+- **质量报告**：任务中心展示 ASR 相似度、回退或失败页面等结果。
+
+发音词典会拒绝 Fish 说话人和情绪控制标记，避免项目文本注入合成协议。
+
+## 免费模型限制
+
+`s2.1-pro-free` 适合试用和轻量制作，但受 Fish Audio fair-use 策略约束，不承诺首包延迟、稳定吞吐或数据处理协议。批量生产前应先用真实脚本测量可用额度、失败率和生成耗时；商业交付需要按 Fish Audio 最新条款评估付费模型与合规要求。
+
+## 尚未启用的能力
+
+Voice Design 仅展示服务端能力状态。由于当前未确认 `s2.1-pro-free` 的官方 Voice Design 请求契约，EasySlide 不构造猜测性请求；待 Fish Audio 发布并确认契约后再开放生成入口。
+
+跨项目的质量与成本追踪面板暂不启用；当前先在单次导出质量报告中记录字符数、请求数、音频时长、合成耗时和 ASR 结果，待积累足够真实任务数据后再统计声线失败率与返工率。
+
+官方入口：[Quickstart](https://docs.fish.audio/developer-guide/getting-started/quickstart) · [Text to Speech](https://docs.fish.audio/developer-guide/core-features/text-to-speech) · [Voice Cloning](https://docs.fish.audio/developer-guide/core-features/voice-cloning)

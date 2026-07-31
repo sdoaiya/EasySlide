@@ -7,6 +7,7 @@ from models import db, Project, Material, Task
 from utils import success_response, error_response, not_found, bad_request
 from services import FileService
 from services.ai_service_manager import get_ai_service
+from services.ppt_workspace_service import get_ppt_settings
 from services.task_manager import task_manager, generate_material_image_task, process_material_image_task
 from pathlib import Path
 from werkzeug.utils import secure_filename
@@ -28,7 +29,36 @@ logger = logging.getLogger(__name__)
 material_bp = Blueprint('materials', __name__, url_prefix='/api/projects')
 material_global_bp = Blueprint('materials_global', __name__, url_prefix='/api/materials')
 
-ALLOWED_MATERIAL_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'}
+IMAGE_MATERIAL_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'}
+AUDIO_MATERIAL_EXTENSIONS = {'.mp3', '.wav', '.m4a'}
+VIDEO_MATERIAL_EXTENSIONS = {'.mp4', '.webm', '.mov'}
+TRANSCRIPT_MATERIAL_EXTENSIONS = {'.txt', '.md', '.srt', '.vtt', '.json'}
+ALLOWED_MATERIAL_EXTENSIONS = (
+    IMAGE_MATERIAL_EXTENSIONS
+    | AUDIO_MATERIAL_EXTENSIONS
+    | VIDEO_MATERIAL_EXTENSIONS
+    | TRANSCRIPT_MATERIAL_EXTENSIONS
+)
+MATERIAL_MIME_TYPES = {
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.bmp': 'image/bmp',
+    '.svg': 'image/svg+xml',
+    '.mp3': 'audio/mpeg',
+    '.wav': 'audio/wav',
+    '.m4a': 'audio/mp4',
+    '.mp4': 'video/mp4',
+    '.webm': 'video/webm',
+    '.mov': 'video/quicktime',
+    '.txt': 'text/plain',
+    '.md': 'text/markdown',
+    '.srt': 'application/x-subrip',
+    '.vtt': 'text/vtt',
+    '.json': 'application/json',
+}
 ALLOWED_ASPECT_RATIOS = frozenset({'16:9', '21:9', '4:3', '3:2', '5:4', '1:1', '4:5', '2:3', '3:4', '9:16'})
 ALLOWED_MATERIAL_OPERATIONS = frozenset({'generate', 'edit_full', 'region_edit', 'erase_region'})
 ALLOWED_REGION_APPLY_MODES = frozenset({'overlay_selection', 'replace_full'})
@@ -183,6 +213,20 @@ def _build_material_query(filter_project_id: str):
     return query.filter(Material.project_id == filter_project_id), None
 
 
+def _apply_material_filters(query):
+    media_kind = (request.args.get('media_kind') or '').strip().lower()
+    purpose = (request.args.get('purpose') or '').strip().lower()
+    if media_kind:
+        allowed = {'image', 'audio', 'video', 'transcript'}
+        requested = [item.strip() for item in media_kind.split(',') if item.strip()]
+        if any(item not in allowed for item in requested):
+            return None, bad_request(f"Invalid media_kind. Allowed values: {', '.join(sorted(allowed))}")
+        query = query.filter(Material.media_kind.in_(requested))
+    if purpose:
+        query = query.filter(Material.purpose == purpose)
+    return query, None
+
+
 def _get_materials_list(filter_project_id: str):
     """
     Common logic to get materials list.
@@ -191,7 +235,10 @@ def _get_materials_list(filter_project_id: str):
     query, error = _build_material_query(filter_project_id)
     if error:
         return None, error
-    
+    query, error = _apply_material_filters(query)
+    if error:
+        return None, error
+
     materials = query.order_by(Material.created_at.desc()).all()
     materials_list = [material.to_dict() for material in materials]
     
@@ -216,9 +263,9 @@ def _handle_material_upload(default_project_id: Optional[str] = None):
 
         result = material.to_dict()
 
-        # Generate AI caption if requested
+        # Generate AI caption only for images when requested.
         generate_caption = request.args.get('generate_caption', '').lower() in ('true', '1', 'yes')
-        if generate_caption:
+        if generate_caption and material.media_kind == 'image':
             file_service = FileService(current_app.config['UPLOAD_FOLDER'])
             filepath = file_service.get_absolute_path(material.relative_path)
             caption = _generate_image_caption(filepath)
@@ -259,7 +306,7 @@ def _save_material_file(file, target_project_id: Optional[str]):
 
     original_filename = file.filename
     try:
-        file_ext = _detect_material_file_extension(file)
+        file_ext, media_kind, mime_type = _detect_material_file(file)
     except ValueError:
         return None, bad_request(f"Unsupported file type. Allowed: {', '.join(sorted(ALLOWED_MATERIAL_EXTENSIONS))}")
 
@@ -286,7 +333,12 @@ def _save_material_file(file, target_project_id: Optional[str]):
         filename=unique_filename,
         relative_path=relative_path,
         url=image_url,
-        original_filename=original_filename
+        original_filename=original_filename,
+        media_kind=media_kind,
+        purpose=request.form.get('purpose') or media_kind,
+        mime_type=mime_type,
+        source_note=request.form.get('source_note') or None,
+        license_status=request.form.get('license_status') or None
     )
 
     try:
@@ -298,24 +350,53 @@ def _save_material_file(file, target_project_id: Optional[str]):
         raise
 
 
-def _detect_material_file_extension(file) -> str:
-    """Detect a supported material image type from uploaded content."""
+def _detect_material_file(file) -> tuple[str, str, str]:
+    """Detect supported image/audio/video/transcript uploads from content."""
     stream = file.stream
     original_position = stream.tell()
+    original_ext = Path(file.filename or '').suffix.lower()
     try:
         with Image.open(stream) as image:
             file_ext = PIL_FORMAT_EXTENSIONS.get(image.format)
-            if not file_ext or file_ext not in ALLOWED_MATERIAL_EXTENSIONS:
+            if not file_ext or file_ext not in IMAGE_MATERIAL_EXTENSIONS:
                 raise ValueError("unsupported raster image format")
             image.verify()
-            return file_ext
+            return file_ext, 'image', MATERIAL_MIME_TYPES[file_ext]
     except (UnidentifiedImageError, OSError, SyntaxError, ValueError, IndexError, struct.error):
         stream.seek(original_position)
-        if _is_svg_upload(stream) and '.svg' in ALLOWED_MATERIAL_EXTENSIONS:
-            return '.svg'
-        raise ValueError("unsupported image content")
+        if _is_svg_upload(stream):
+            return '.svg', 'image', MATERIAL_MIME_TYPES['.svg']
+        stream.seek(original_position)
+        head = stream.read(8192)
+        if _is_mp3_upload(head):
+            return '.mp3', 'audio', MATERIAL_MIME_TYPES['.mp3']
+        if head[:4] == b'RIFF' and head[8:12] == b'WAVE':
+            return '.wav', 'audio', MATERIAL_MIME_TYPES['.wav']
+        if len(head) >= 12 and head[4:8] == b'ftyp':
+            file_ext = original_ext if original_ext in {'.mp4', '.mov', '.m4a'} else '.mp4'
+            media_kind = 'audio' if file_ext == '.m4a' else 'video'
+            return file_ext, media_kind, MATERIAL_MIME_TYPES[file_ext]
+        if head.startswith(b'\x1aE\xdf\xa3') and original_ext == '.webm':
+            return '.webm', 'video', MATERIAL_MIME_TYPES['.webm']
+        if original_ext in TRANSCRIPT_MATERIAL_EXTENSIONS and _is_text_upload(head):
+            return original_ext, 'transcript', MATERIAL_MIME_TYPES[original_ext]
+        raise ValueError("unsupported material content")
     finally:
         stream.seek(original_position)
+
+
+def _is_mp3_upload(head: bytes) -> bool:
+    return head.startswith(b'ID3') or head[:2] in {b'\xff\xfb', b'\xff\xf3', b'\xff\xf2'}
+
+
+def _is_text_upload(head: bytes) -> bool:
+    if b'\x00' in head:
+        return False
+    try:
+        head.decode('utf-8')
+    except UnicodeDecodeError:
+        return False
+    return True
 
 
 def _is_svg_upload(stream) -> bool:
@@ -484,7 +565,7 @@ def generate_material_image(project_id):
                 file_service,
                 ref_path_str,
                 additional_ref_images if additional_ref_images else None,
-                aspect_ratio or (project.image_aspect_ratio if project else None) or current_app.config.get('DEFAULT_ASPECT_RATIO', '16:9'),
+                aspect_ratio or (get_ppt_settings(project)['image_aspect_ratio'] if project else None) or current_app.config.get('DEFAULT_ASPECT_RATIO', '16:9'),
                 current_app.config['DEFAULT_RESOLUTION'],
                 temp_dir_str,
                 app
@@ -630,7 +711,7 @@ def process_material_image(project_id):
                 source_image_path,
                 ref_path_str,
                 additional_ref_images if additional_ref_images else None,
-                aspect_ratio or (project.image_aspect_ratio if project else None) or current_app.config.get('DEFAULT_ASPECT_RATIO', '16:9'),
+                aspect_ratio or (get_ppt_settings(project)['image_aspect_ratio'] if project else None) or current_app.config.get('DEFAULT_ASPECT_RATIO', '16:9'),
                 current_app.config['DEFAULT_RESOLUTION'],
                 selection,
                 apply_mode,

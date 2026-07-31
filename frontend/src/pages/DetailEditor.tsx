@@ -122,7 +122,7 @@ const detailI18n = {
     }
   }
 };
-import { Button, Loading, useToast, useConfirm, AiRefineInput, FilePreviewModal, ReferenceFileList, MaterialSelector, ImportMarkdownModal } from '@/components/shared';
+import { Button, Input, Loading, useToast, useConfirm, AiRefineInput, FilePreviewModal, ReferenceFileList, MaterialSelector, ImportMarkdownModal } from '@/components/shared';
 import { DescriptionCard } from '@/components/preview/DescriptionCard';
 import { useProjectStore } from '@/store/useProjectStore';
 import { refineDescriptions, getTaskStatus, addPage, updateProject, getSettings, updateSettings } from '@/api/endpoints';
@@ -157,46 +157,49 @@ const SortableFieldPill: React.FC<{
     zIndex: isDragging ? 10 : undefined,
   };
   return (
-    <button
+    <div
       ref={setNodeRef}
       style={style}
-      {...attributes}
-      {...listeners}
-      type="button"
-      className={`group inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-full border cursor-grab active:cursor-grabbing ${
+      className={`group inline-flex min-h-8 items-center gap-1 rounded-[var(--app-radius-control)] border px-1 text-xs font-medium ${
         isDragging ? '' : 'transition-colors duration-150 '
       }${
         active
-          ? 'bg-cyan-50 dark:bg-cyan-900/20 border-cyan-300 dark:border-cyan-700 text-cyan-700 dark:text-cyan-300-400'
-          : 'bg-gray-50 dark:bg-background-hover border-gray-200 dark:border-border-primary text-gray-400 dark:text-foreground-tertiary line-through'
+          ? 'border-[var(--app-accent)] bg-[var(--app-surface)] text-[var(--app-accent)]'
+          : 'border-[var(--app-border)] bg-[var(--app-surface-muted)] text-[var(--app-text-tertiary)]'
       }`}
-      onClick={onToggle}
     >
-      {name}
+      <button
+        type="button"
+        {...attributes}
+        {...listeners}
+        onClick={onToggle}
+        className={`min-w-0 cursor-grab rounded-[var(--app-radius-control)] px-1.5 py-1 text-left active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)] ${active ? '' : 'line-through'}`}
+      >
+        {name}
+      </button>
       {active && onToggleImagePrompt && (
-        <span
-          role="button"
-          className={`relative group/img ml-0.5 transition-colors ${inImagePrompt ? 'text-cyan-500' : 'text-gray-300 dark:text-gray-600'}`}
+        <button
+          type="button"
+          aria-label={imagePromptTooltip}
+          title={imagePromptTooltip}
+          className={`relative flex h-6 w-6 items-center justify-center rounded-[var(--app-radius-control)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)] ${inImagePrompt ? 'text-[var(--app-accent)]' : 'text-[var(--app-text-tertiary)]'}`}
           onClick={e => { e.stopPropagation(); onToggleImagePrompt(); }}
         >
           <ImageIcon size={10} />
-          {imagePromptTooltip && (
-            <span className="absolute left-1/2 -translate-x-1/2 bottom-full mb-1.5 w-40 px-2 py-1 text-[10px] leading-snug text-gray-600 dark:text-foreground-secondary bg-white dark:bg-background-primary border border-gray-200 dark:border-border-primary rounded-md shadow-md opacity-0 pointer-events-none group-hover/img:opacity-100 transition-opacity z-50">
-              {imagePromptTooltip}
-            </span>
-          )}
-        </span>
+        </button>
       )}
       {!active && removable && (
-        <span
-          role="button"
-          className="opacity-0 group-hover:opacity-100 ml-0.5 text-gray-400 hover:text-red-500 transition-all"
+        <button
+          type="button"
+          aria-label={`Remove ${name}`}
+          title={`Remove ${name}`}
+          className="flex h-6 w-6 items-center justify-center rounded-[var(--app-radius-control)] text-[var(--app-text-tertiary)] hover:text-[var(--app-error)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)]"
           onClick={e => { e.stopPropagation(); onRemove(); }}
         >
           <X size={10} />
-        </span>
+        </button>
       )}
-    </button>
+    </div>
   );
 };
 
@@ -217,6 +220,7 @@ export const DetailEditor: React.FC = () => {
   const { show, ToastContainer } = useToast();
   const { confirm, ConfirmDialog } = useConfirm();
   const [isAiRefining, setIsAiRefining] = React.useState(false);
+  const [isBatchGenerating, setIsBatchGenerating] = React.useState(false);
   const [previewFileId, setPreviewFileId] = useState<string | null>(null);
   const [isRenovationProcessing, setIsRenovationProcessing] = useState(false);
   const [renovationProgress, setRenovationProgress] = useState<{ total: number; completed: number } | null>(null);
@@ -447,7 +451,13 @@ export const DetailEditor: React.FC = () => {
     );
     
     const executeGenerate = async () => {
-      await generateDescriptions(detailLevel);
+      if (isBatchGenerating) return;
+      setIsBatchGenerating(true);
+      try {
+        await generateDescriptions(detailLevel);
+      } finally {
+        setIsBatchGenerating(false);
+      }
     };
     
     if (hasDescriptions) {
@@ -463,7 +473,7 @@ export const DetailEditor: React.FC = () => {
 
   const handleNext = () => {
     if (!projectId) return;
-    navigate(`/project/${projectId}/preview`);
+    navigate(`/project/${projectId}/ppt/editor`);
   };
 
   const handleRegeneratePage = async (pageId: string) => {
@@ -583,15 +593,15 @@ export const DetailEditor: React.FC = () => {
     return <Loading fullscreen message={t('detail.messages.loadingProject')} />;
   }
 
-  const hasAllDescriptions = currentProject.pages.every(
+  const hasAllDescriptions = currentProject.pages.length > 0 && currentProject.pages.every(
     (p) => p.description_content
   );
   const missingDescCount = currentProject.pages.filter(p => !p.description_content).length;
 
   return (
-    <div data-testid="detail-editor-workspace" className="h-full min-h-0 overflow-hidden bg-gray-50 dark:bg-background-primary flex flex-col">
+    <div data-testid="detail-editor-workspace" className="relative flex h-full min-h-0 flex-col overflow-hidden bg-[var(--app-canvas)] text-[var(--app-text)]">
       {/* 顶栏 */}
-      <header className="bg-white dark:bg-background-secondary shadow-sm dark:shadow-background-primary/30 border-b border-gray-200 dark:border-border-primary px-3 md:px-6 py-2 md:py-3 flex-shrink-0">
+      <header className="shrink-0 border-b border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 md:px-6">
         <div className="flex items-center justify-between gap-2 md:gap-4">
           {/* 左侧：Logo 和标题 */}
           <div className="flex items-center gap-2 md:gap-4 flex-shrink-0">
@@ -603,7 +613,7 @@ export const DetailEditor: React.FC = () => {
                 if (fromHistory) {
                   navigate('/history');
                 } else {
-                  navigate(`/project/${projectId}/outline`);
+                  navigate(`/project/${projectId}/ppt/outline`);
                 }
               }}
               disabled={isRenovationProcessing}
@@ -615,15 +625,15 @@ export const DetailEditor: React.FC = () => {
               <img src={getStaticAssetUrl('/logo-nav.png')} alt="EasySlide Logo" className="h-7 md:h-8 w-auto" />
               <span className="text-base md:text-xl font-bold">{t('home.title')}</span>
             </div>
-            <span className="text-gray-400 hidden lg:inline">|</span>
+            <span className="hidden text-[var(--app-text-tertiary)] lg:inline">|</span>
             <div className="hidden lg:flex flex-col leading-tight">
               <div className="flex items-center gap-2">
                 <span className="text-sm md:text-lg font-semibold">{t('detail.title')}</span>
-                <span className="rounded-full border border-blue-100 bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-600">
+                <span className="rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-2 py-0.5 text-[11px] font-semibold text-[var(--app-text-secondary)]">
                   {t('detail.workflowStage')}
                 </span>
               </div>
-              <span className="text-[11px] text-gray-500 dark:text-foreground-tertiary">{t('detail.workflowHint')}</span>
+              <span className="text-[11px] text-[var(--app-text-tertiary)]">{t('detail.workflowHint')}</span>
             </div>
           </div>
           
@@ -655,22 +665,22 @@ export const DetailEditor: React.FC = () => {
       </header>
 
       {/* 操作栏 */}
-      <div className="bg-white dark:bg-background-secondary border-b border-gray-200 dark:border-border-primary px-3 md:px-6 py-2 flex-shrink-0">
+      <div className="shrink-0 border-b border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 md:px-6" aria-busy={isRenovationProcessing || isBatchGenerating}>
         {isRenovationProcessing ? (
-          <div className="max-w-xl mx-auto">
+          <div className="mx-auto max-w-xl" role="status" aria-live="polite">
             <div className="flex items-center justify-between mb-1.5">
-              <span className="text-sm font-medium text-gray-700 dark:text-foreground-secondary">
+              <span className="text-sm font-medium text-[var(--app-text-secondary)]">
                 {t('detail.renovationProcessing')}
               </span>
               {renovationProgress && renovationProgress.total > 0 && (
-                <span className="text-sm font-medium text-cyan-600 dark:text-cyan-300">
+                <span className="text-sm font-medium text-[var(--app-accent)]">
                   {t('detail.renovationProgress', { completed: String(renovationProgress.completed), total: String(renovationProgress.total) })}
                 </span>
               )}
             </div>
-            <div className="w-full h-2.5 bg-gray-200 dark:bg-background-hover rounded-full overflow-hidden">
+            <div className="h-2.5 w-full overflow-hidden rounded-full bg-[var(--app-surface-hover)]">
               <div
-                className="h-full bg-gradient-to-r from-sky-400 to-emerald-400 rounded-full transition-all duration-500 ease-out"
+                className="h-full rounded-full bg-[var(--app-accent)] transition-[width] duration-300 ease-out"
                 style={{
                   width: renovationProgress && renovationProgress.total > 0
                     ? `${Math.round((renovationProgress.completed / renovationProgress.total) * 100)}%`
@@ -690,9 +700,10 @@ export const DetailEditor: React.FC = () => {
               variant="primary"
               icon={<Sparkles size={16} className="md:w-[18px] md:h-[18px]" />}
               onClick={handleGenerateAll}
+              disabled={isBatchGenerating}
               className="flex-1 sm:flex-initial text-sm md:text-base"
             >
-              {t('detail.batchGenerate')}
+              {isBatchGenerating ? t('detail.generating') : t('detail.batchGenerate')}
             </Button>
 
             {/* 描述设置面板 */}
@@ -701,18 +712,18 @@ export const DetailEditor: React.FC = () => {
                 variant="ghost"
                 size="sm"
                 onClick={() => setSettingsOpen(!settingsOpen)}
-                icon={<span className="relative"><Settings2 size={16} />{descRequirements && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-cyan-400" />}</span>}
+                icon={<span className="relative"><Settings2 size={16} />{descRequirements && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-[var(--app-accent)]" />}</span>}
                 title={t('detail.descSettings')}
               />
               {settingsOpen && (
-                <div className="absolute top-full left-0 mt-1 z-50 w-80 rounded-xl border border-gray-200 dark:border-border-primary bg-white dark:bg-background-secondary shadow-lg dark:shadow-none p-4 space-y-4">
+                <div className="absolute top-full left-0 mt-1 z-50 w-80 rounded-[var(--app-radius-panel)] border border-[var(--app-border)] bg-[var(--app-surface)] p-4 shadow-[var(--app-shadow-soft)] space-y-4">
                   {/* 生成模式 */}
                   <div>
-                    <label className="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-foreground-tertiary mb-1.5">
+                    <label className="flex items-center gap-1 mb-1.5 text-xs font-medium text-[var(--app-text-tertiary)]">
                       {t('detail.generationMode')}
                       <span className="relative group">
-                        <HelpCircle size={12} className="text-gray-400 cursor-help" />
-                        <span className="absolute left-1/2 -translate-x-1/2 bottom-full mb-1.5 w-52 px-2.5 py-1.5 text-[11px] leading-relaxed text-gray-600 dark:text-foreground-secondary bg-white dark:bg-background-primary border border-gray-200 dark:border-border-primary rounded-md shadow-md opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity z-50">{t('detail.generationModeHint')}</span>
+                        <HelpCircle size={12} className="cursor-help text-[var(--app-text-tertiary)]" />
+                        <span className="absolute left-1/2 -translate-x-1/2 bottom-full mb-1.5 w-52 px-2.5 py-1.5 text-[11px] leading-relaxed text-[var(--app-text-secondary)] bg-[var(--app-surface)] border border-[var(--app-border)] rounded-[var(--app-radius-control)] shadow-[var(--app-shadow-soft)] opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity z-50">{t('detail.generationModeHint')}</span>
                       </span>
                     </label>
                     <div className="flex gap-1">
@@ -722,8 +733,8 @@ export const DetailEditor: React.FC = () => {
                           type="button"
                           className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
                             generationMode === mode
-                              ? 'bg-cyan-500 text-white'
-                              : 'bg-gray-100 dark:bg-background-hover text-gray-600 dark:text-foreground-tertiary hover:bg-gray-200 dark:hover:bg-background-primary'
+                              ? 'bg-[var(--app-surface)] text-[var(--app-text)] shadow-[var(--app-shadow-control)]'
+                              : 'bg-[var(--app-surface-hover)] text-[var(--app-text-secondary)] hover:bg-[var(--app-border-soft)]'
                           }`}
                           onClick={() => {
                             setGenerationMode(mode);
@@ -740,11 +751,11 @@ export const DetailEditor: React.FC = () => {
 
                   {/* 额外字段 */}
                   <div>
-                    <label className="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-foreground-tertiary mb-1.5">
+                    <label className="flex items-center gap-1 mb-1.5 text-xs font-medium text-[var(--app-text-tertiary)]">
                       {t('detail.extraFields')}
                       <span className="relative group">
-                        <HelpCircle size={12} className="text-gray-400 cursor-help" />
-                        <span className="absolute left-1/2 -translate-x-1/2 bottom-full mb-1.5 w-52 px-2.5 py-1.5 text-[11px] leading-relaxed text-gray-600 dark:text-foreground-secondary bg-white dark:bg-background-primary border border-gray-200 dark:border-border-primary rounded-md shadow-md opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity z-50">{t('detail.extraFieldsHint')}</span>
+                        <HelpCircle size={12} className="cursor-help text-[var(--app-text-tertiary)]" />
+                        <span className="absolute left-1/2 -translate-x-1/2 bottom-full mb-1.5 w-52 px-2.5 py-1.5 text-[11px] leading-relaxed text-[var(--app-text-secondary)] bg-[var(--app-surface)] border border-[var(--app-border)] rounded-[var(--app-radius-control)] shadow-[var(--app-shadow-soft)] opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity z-50">{t('detail.extraFieldsHint')}</span>
                       </span>
                     </label>
                     <DndContext sensors={fieldSensors} collisionDetection={closestCenter} onDragEnd={handleFieldDragEnd}>
@@ -786,9 +797,9 @@ export const DetailEditor: React.FC = () => {
                       </SortableContext>
                     </DndContext>
                     <div className="flex gap-1">
-                      <input
+                      <Input
                         type="text"
-                        className="flex-1 min-w-0 px-2 py-1 text-xs rounded-md border border-gray-200 dark:border-border-primary bg-white dark:bg-background-primary text-gray-700 dark:text-foreground-secondary focus:outline-none focus:ring-1 focus:ring-cyan-500/30"
+                        className="h-8 min-w-0 flex-1 px-2 text-xs"
                         placeholder={t('detail.addField')}
                         value={newFieldName}
                         onChange={e => setNewFieldName(e.target.value)}
@@ -811,7 +822,9 @@ export const DetailEditor: React.FC = () => {
                       />
                       <button
                         type="button"
-                        className="p-1 rounded-md text-gray-400 hover:text-cyan-500 hover:bg-gray-100 dark:hover:bg-background-hover transition-colors disabled:opacity-40"
+                        aria-label={t('detail.addField')}
+                        title={t('detail.addField')}
+                        className="flex h-8 w-8 items-center justify-center rounded-[var(--app-radius-control)] text-[var(--app-text-tertiary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)] disabled:opacity-40"
                         disabled={!newFieldName.trim() || availableFields.includes(newFieldName.trim()) || availableFields.length >= 10}
                         onClick={() => {
                           const trimmed = newFieldName.trim();
@@ -832,8 +845,8 @@ export const DetailEditor: React.FC = () => {
                   </div>
 
                   {/* 生成要求 */}
-                  <div className="border-t border-gray-100 dark:border-border-primary pt-3">
-                    <label className="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-foreground-tertiary mb-1.5">
+                  <div className="border-t border-[var(--app-border)] pt-3">
+                    <label className="flex items-center gap-1 mb-1.5 text-xs font-medium text-[var(--app-text-tertiary)]">
                       {t('detail.descRequirements')}
                     </label>
                     <div data-testid="desc-requirements-textarea">
@@ -862,7 +875,7 @@ export const DetailEditor: React.FC = () => {
               )}
             </div>
 
-            <div className="w-px h-6 bg-gray-200 dark:bg-border-primary flex-shrink-0" />
+            <div className="h-6 w-px flex-shrink-0 bg-[var(--app-border)]" />
             {/* 导入导出下拉菜单 */}
             <div className="relative" ref={fileMenuRef}>
               <Button
@@ -875,12 +888,12 @@ export const DetailEditor: React.FC = () => {
                 <ChevronDown size={14} className={`ml-1 transition-transform duration-200 ${fileMenuOpen ? 'rotate-180' : ''}`} />
               </Button>
               {fileMenuOpen && (
-                <div className="absolute top-full right-0 mt-1 z-50 min-w-[160px] rounded-lg border border-gray-200 dark:border-border-primary bg-white dark:bg-background-secondary shadow-lg dark:shadow-none overflow-hidden">
+                <div className="absolute right-0 top-full z-50 mt-1 min-w-[160px] overflow-hidden rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)] shadow-[var(--app-shadow-soft)]">
                   <button
                     type="button"
                     onClick={() => { handleExportDescriptions(); setFileMenuOpen(false); }}
                     disabled={!currentProject.pages.some(p => p.description_content)}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-gray-600 dark:text-foreground-tertiary hover:bg-gray-50 dark:hover:bg-background-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
+                    className="flex w-full items-center gap-2 px-3 py-2 text-xs font-medium text-[var(--app-text-secondary)] transition-colors duration-150 hover:bg-[var(--app-surface-hover)] disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <Download size={14} />
                     {t('detail.export')}
@@ -889,16 +902,16 @@ export const DetailEditor: React.FC = () => {
                     type="button"
                     onClick={() => { handleExportFull(); setFileMenuOpen(false); }}
                     disabled={!currentProject.pages.some(p => p.description_content)}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-gray-600 dark:text-foreground-tertiary hover:bg-gray-50 dark:hover:bg-background-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
+                    className="flex w-full items-center gap-2 px-3 py-2 text-xs font-medium text-[var(--app-text-secondary)] transition-colors duration-150 hover:bg-[var(--app-surface-hover)] disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <Download size={14} />
                     {t('detail.exportFull')}
                   </button>
-                  <div className="border-t border-gray-100 dark:border-border-primary" />
+                  <div className="border-t border-[var(--app-border)]" />
                   <button
                     type="button"
                     onClick={() => { setIsImportModalOpen(true); setFileMenuOpen(false); }}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-gray-600 dark:text-foreground-tertiary hover:bg-gray-50 dark:hover:bg-background-hover transition-colors duration-150"
+                    className="flex w-full items-center gap-2 px-3 py-2 text-xs font-medium text-[var(--app-text-secondary)] transition-colors duration-150 hover:bg-[var(--app-surface-hover)]"
                   >
                     <Upload size={14} />
                     {t('detail.import')}
@@ -906,7 +919,7 @@ export const DetailEditor: React.FC = () => {
                 </div>
               )}
             </div>
-            <span className="text-xs md:text-sm text-gray-500 dark:text-foreground-tertiary whitespace-nowrap">
+            <span className="whitespace-nowrap text-xs text-[var(--app-text-tertiary)] md:text-sm">
               {currentProject.pages.filter((p) => p.description_content).length} /{' '}
               {currentProject.pages.length} {t('detail.pagesCompleted')}
             </span>
@@ -916,7 +929,7 @@ export const DetailEditor: React.FC = () => {
       </div>
 
       {/* 主内容区 */}
-      <main data-testid="detail-editor-scroll-region" className="flex-1 min-h-0 overflow-y-auto p-3 pb-24 md:p-4 md:pb-24">
+      <main data-testid="detail-editor-scroll-region" className="min-h-0 flex-1 overflow-y-auto p-3 pb-20 md:p-4 md:pb-20">
         <div className="max-w-7xl mx-auto">
           <ReferenceFileList
             projectId={projectId}
@@ -926,16 +939,16 @@ export const DetailEditor: React.FC = () => {
           />
           {currentProject.pages.length === 0 && !isRenovationProcessing ? (
             <div className="text-center py-12 md:py-20">
-              <div className="flex justify-center mb-4"><FileText size={48} className="text-gray-300" /></div>
-              <h3 className="text-lg md:text-xl font-semibold text-gray-700 dark:text-foreground-secondary mb-2">
+              <div className="flex justify-center mb-4"><FileText size={48} className="text-[var(--app-text-tertiary)]" /></div>
+              <h3 className="mb-2 text-lg font-semibold text-[var(--app-text-secondary)] md:text-xl">
                 {t('detail.noPages')}
               </h3>
-              <p className="text-sm md:text-base text-gray-500 dark:text-foreground-tertiary mb-6">
+              <p className="mb-6 text-sm text-[var(--app-text-tertiary)] md:text-base">
                 {t('detail.noPagesHint')}
               </p>
               <Button
                 variant="primary"
-                onClick={() => navigate(`/project/${projectId}/outline`)}
+                onClick={() => navigate(`/project/${projectId}/ppt/outline`)}
                 className="text-sm md:text-base"
               >
                 {t('detail.backToOutline')}
@@ -988,13 +1001,13 @@ export const DetailEditor: React.FC = () => {
           )}
         </div>
       </main>
-      <footer data-testid="detail-editor-footer" className="pointer-events-none fixed bottom-5 left-1/2 z-50 w-[calc(100vw-32px)] max-w-xl -translate-x-1/2">
-        <div data-testid="detail-editor-footer-bar" className="pointer-events-auto flex min-h-[56px] items-center justify-between gap-3 rounded-2xl border border-sky-100/80 bg-white/95 px-3 py-2 shadow-[0_16px_45px_rgba(15,23,42,0.18)] backdrop-blur-xl dark:border-border-primary dark:bg-background-secondary/95 dark:shadow-none">
+      <footer data-testid="detail-editor-footer" className="pointer-events-none fixed inset-x-0 bottom-0 z-20 px-4 md:px-6">
+        <div data-testid="detail-editor-footer-bar" className="pointer-events-auto mx-auto flex min-h-[44px] max-w-5xl items-center justify-between gap-3 rounded-[var(--app-radius-panel)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 shadow-[var(--app-shadow-floating)]">
           <Button
             variant="secondary"
             size="sm"
             icon={<ArrowLeft size={16} />}
-            onClick={() => navigate(`/project/${projectId}/outline`)}
+            onClick={() => navigate(`/project/${projectId}/ppt/outline`)}
             disabled={isRenovationProcessing}
           >
             {t('common.previous')}
@@ -1007,9 +1020,7 @@ export const DetailEditor: React.FC = () => {
             disabled={!hasAllDescriptions || isRenovationProcessing}
             title={!hasAllDescriptions && !isRenovationProcessing ? t('detail.disabledNextTip', { count: missingDescCount }) : undefined}
           >
-            {currentProject.render_mode === 'native'
-              ? t('detail.generateNative')
-              : t('detail.generateImages')}
+            {t('common.next')}
           </Button>
         </div>
       </footer>
@@ -1038,8 +1049,8 @@ export const DetailEditor: React.FC = () => {
         onClose={() => setIsMaterialSelectorOpen(false)}
         onSelect={handleMaterialSelect}
         multiple
+        mediaKindFilter={['image']}
       />
     </div>
   );
 };
-

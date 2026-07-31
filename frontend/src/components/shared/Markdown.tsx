@@ -7,6 +7,7 @@ import rehypeRaw from 'rehype-raw';
 import rehypeKatex from 'rehype-katex';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import 'katex/dist/katex.min.css';
+import { getImageUrl } from '@/api/client';
 
 interface MarkdownProps {
   children: string;
@@ -53,15 +54,15 @@ export const Markdown: React.FC<MarkdownProps> = ({ children, className = '' }) 
         ol: ({ children }) => <ol className="list-decimal list-inside space-y-1">{children}</ol>,
         li: ({ children }) => <li className="text-sm">{children}</li>,
         a: ({ href, children }) => (
-          <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 underline">
+          <a href={href} target="_blank" rel="noopener noreferrer" className="text-[var(--app-link)] underline hover:text-[var(--app-accent-hover)]">
             {children}
           </a>
         ),
         img: ({ src, alt }) => (
           <img
-            src={src}
+            src={getImageUrl(src)}
             alt={alt || ''}
-            className="max-w-48 max-h-36 w-auto h-auto rounded-lg my-2"
+            className="my-2 h-auto max-h-36 w-auto max-w-48 rounded-[var(--app-radius-card)]"
             loading="lazy"
           />
         ),
@@ -71,9 +72,9 @@ export const Markdown: React.FC<MarkdownProps> = ({ children, className = '' }) 
         code: ({ className, children }) => {
           const isInline = !className;
           return isInline ? (
-            <code className="bg-gray-100 dark:bg-background-secondary px-1 py-0.5 rounded text-sm font-mono">{children}</code>
+            <code className="rounded-[var(--app-radius-control)] bg-[var(--app-surface-muted)] px-1 py-0.5 font-mono text-sm">{children}</code>
           ) : (
-            <code className={`${className} block bg-gray-100 dark:bg-background-secondary p-2 rounded text-sm font-mono overflow-x-auto`}>
+            <code className={`${className} block overflow-x-auto rounded-[var(--app-radius-control)] bg-[var(--app-surface-muted)] p-2 font-mono text-sm`}>
               {children}
             </code>
           );
@@ -83,21 +84,21 @@ export const Markdown: React.FC<MarkdownProps> = ({ children, className = '' }) 
         br: () => <br />,
         table: ({ children }) => (
           <div className="overflow-x-auto my-4">
-            <table className="min-w-full border-collapse border border-gray-300 dark:border-border-primary">
+            <table className="min-w-full border-collapse border border-[var(--app-border)]">
               {children}
             </table>
           </div>
         ),
-        thead: ({ children }) => <thead className="bg-gray-100 dark:bg-background-secondary">{children}</thead>,
+        thead: ({ children }) => <thead className="bg-[var(--app-surface-muted)]">{children}</thead>,
         tbody: ({ children }) => <tbody>{children}</tbody>,
-        tr: ({ children }) => <tr className="border-b border-gray-300 dark:border-border-primary">{children}</tr>,
+        tr: ({ children }) => <tr className="border-b border-[var(--app-border)]">{children}</tr>,
         th: ({ children }) => (
-          <th className="border border-gray-300 dark:border-border-primary px-4 py-2 text-left font-semibold">
+          <th className="border border-[var(--app-border)] px-4 py-2 text-left font-semibold">
             {children}
           </th>
         ),
         td: ({ children }) => (
-          <td className="border border-gray-300 dark:border-border-primary px-4 py-2">
+          <td className="border border-[var(--app-border)] px-4 py-2">
             {children}
           </td>
         ),

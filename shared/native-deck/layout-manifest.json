@@ -618,6 +618,29 @@
       "mediaSlots": []
     },
     {
+      "layout": "core01_chart",
+      "theme": "core01",
+      "label": "智能图表",
+      "roles": ["data", "trend", "distribution", "metrics", "comparison", "content"],
+      "copyKeys": ["title", "summary"],
+      "copyBudgets": { "title": { "maxChars": 24 }, "summary": { "maxChars": 54 } },
+      "propShapes": { "title": "string", "summary": "string", "spec": "string" },
+      "controls": [
+        { "key": "title", "label": "标题", "type": "text", "default": "季度营收保持增长" },
+        { "key": "summary", "label": "摘要", "type": "textarea", "default": "增长在下半年提速，第四季度达到全年峰值。" },
+        { "key": "spec", "label": "Flint 规格（JSON）", "type": "textarea" }
+      ],
+      "defaultProps": {
+        "title": "季度营收保持增长",
+        "summary": "增长在下半年提速，第四季度达到全年峰值。",
+        "spec": "{\"data\":{\"values\":[{\"quarter\":\"Q1\",\"revenue\":120},{\"quarter\":\"Q2\",\"revenue\":148},{\"quarter\":\"Q3\",\"revenue\":176},{\"quarter\":\"Q4\",\"revenue\":215}]},\"semantic_types\":{\"quarter\":\"Quarter\",\"revenue\":\"Amount\"},\"chart_spec\":{\"chartType\":\"Bar Chart\",\"encodings\":{\"x\":{\"field\":\"quarter\"},\"y\":{\"field\":\"revenue\"}},\"baseSize\":{\"width\":1180,\"height\":560},\"canvasSize\":{\"width\":1320,\"height\":620},\"chartProperties\":{\"cornerRadius\":6}},\"options\":{\"addTooltips\":true},\"field_display_names\":{\"quarter\":\"季度\",\"revenue\":\"营收\"}}"
+      },
+      "generationHints": {
+        "spec": "返回 JSON 字符串形式的 Flint ChartAssemblyInput；优先内联 data.values，semantic_types 使用 Flint 语义类型，chart_spec.chartType 使用 ECharts 后端支持的精确名称，并显式提供 encodings、baseSize 与 canvasSize。"
+      },
+      "mediaSlots": []
+    },
+    {
       "layout": "core01_table",
       "theme": "core01",
       "roles": ["report", "comparison", "data", "content"],

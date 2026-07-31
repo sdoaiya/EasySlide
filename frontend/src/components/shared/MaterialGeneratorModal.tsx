@@ -426,11 +426,12 @@ export const MaterialGeneratorModal: React.FC<MaterialGeneratorModalProps> = ({
       try {
         attempts += 1;
         const response = await getTaskStatus(targetProjectId, taskId);
-        const task: Task = response.data;
+        const task = response.data as Task | undefined;
+        if (!task) throw new Error(t('material.messages.generateFailed'));
 
         if (task.status === 'COMPLETED') {
-          const progress = task.progress || {};
-          const imageUrl = progress.image_url;
+          const progress = task.progress as { image_url?: string } | undefined;
+          const imageUrl = progress?.image_url;
           if (imageUrl) {
             const nextPreviewUrl = getImageUrl(imageUrl);
             setPreviewUrl(nextPreviewUrl);
@@ -668,7 +669,7 @@ export const MaterialGeneratorModal: React.FC<MaterialGeneratorModalProps> = ({
           type="button"
           data-testid="material-fullscreen-toggle"
           onClick={() => setIsFullscreen((prev) => !prev)}
-          className="w-9 h-9 rounded-xl flex items-center justify-center text-slate-400 dark:text-gray-500 hover:text-cyan-700 dark:hover:text-gray-300 hover:bg-sky-50 dark:hover:bg-white/10 transition-all duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50"
+          className="flex h-9 w-9 items-center justify-center rounded-[var(--app-radius-control)] text-[var(--app-text-tertiary)] transition-colors hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--app-accent-soft)]"
           aria-label={isFullscreen ? t('material.exitFullscreen') : t('material.enterFullscreen')}
           title={isFullscreen ? t('material.exitFullscreen') : t('material.enterFullscreen')}
         >
@@ -677,9 +678,9 @@ export const MaterialGeneratorModal: React.FC<MaterialGeneratorModalProps> = ({
       )}
     >
       <div className={`grid gap-6 ${isFullscreen ? 'xl:grid-cols-[360px_minmax(0,1fr)]' : 'lg:grid-cols-[320px_minmax(0,1fr)]'}`}>
-        <aside className="space-y-5 rounded-3xl border border-sky-100 bg-gradient-to-br from-white to-sky-50/70 p-4 shadow-sm dark:border-border-primary dark:from-background-secondary dark:to-background-tertiary lg:pr-6">
+        <aside className="space-y-5 rounded-[var(--app-radius-panel)] border border-[var(--app-border)] bg-[var(--app-surface)] p-4 shadow-[var(--app-shadow-card)] lg:pr-6">
           <section className="space-y-2">
-            <div className="text-sm font-medium text-slate-700 dark:text-gray-300">
+            <div className="text-sm font-medium text-[var(--app-text)]">
               {t('material.toolModeLabel')}
             </div>
             <div className="grid grid-cols-2 gap-1.5">
@@ -692,14 +693,14 @@ export const MaterialGeneratorModal: React.FC<MaterialGeneratorModalProps> = ({
                     if (isCompleted) setIsCompleted(false);
                   }}
                   title={t(tool.descKey)}
-                  className={`rounded-2xl border px-2.5 py-2 text-left transition-all ${
+                  className={`rounded-[var(--app-radius-control)] border px-2.5 py-2 text-left transition-colors ${
                     toolMode === tool.value
-                      ? 'border-cyan-500 bg-cyan-50 text-cyan-800 dark:bg-background-secondary shadow-sm'
-                      : 'border-sky-100 dark:border-border-primary bg-white dark:bg-background-secondary hover:border-cyan-300 dark:hover:border-gray-500'
+                      ? 'border-[var(--app-accent)] bg-[var(--app-accent-soft)] text-[var(--app-accent)] shadow-[var(--app-shadow-control)]'
+                      : 'border-[var(--app-border)] bg-[var(--app-surface)] hover:border-[var(--app-border-strong)]'
                   }`}
                 >
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-800 dark:text-foreground-primary">
-                    <span className={toolMode === tool.value ? 'text-cyan-600 dark:text-cyan-300' : 'text-slate-400 dark:text-foreground-tertiary'}>
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--app-text)]">
+                    <span className={toolMode === tool.value ? 'text-[var(--app-accent)]' : 'text-[var(--app-text-tertiary)]'}>
                       {tool.icon}
                     </span>
                     {t(tool.labelKey)}
@@ -722,7 +723,7 @@ export const MaterialGeneratorModal: React.FC<MaterialGeneratorModalProps> = ({
 
           {toolMode === 'generate' && (
             <section className="space-y-2">
-              <div className="text-sm font-medium text-slate-700 dark:text-gray-300">{t('material.aspectRatioLabel')}</div>
+              <div className="text-sm font-medium text-[var(--app-text)]">{t('material.aspectRatioLabel')}</div>
               <div className="flex flex-wrap gap-1.5">
                 {ASPECT_RATIO_OPTIONS.map((opt) => (
                   <button
@@ -734,8 +735,8 @@ export const MaterialGeneratorModal: React.FC<MaterialGeneratorModalProps> = ({
                     }}
                     className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-all ${
                       aspectRatio === opt.value
-                        ? 'border-cyan-500 bg-cyan-50 dark:bg-background-secondary text-cyan-700 dark:text-cyan-300'
-                        : 'border-sky-100 dark:border-border-primary text-slate-600 dark:text-foreground-secondary hover:border-cyan-300 dark:hover:border-gray-500 bg-white dark:bg-background-secondary'
+                        ? 'border-[var(--app-accent)] bg-[var(--app-accent-soft)] text-[var(--app-accent)]'
+                        : 'border-[var(--app-border)] bg-[var(--app-surface)] text-[var(--app-text-secondary)] hover:border-[var(--app-border-strong)]'
                     }`}
                   >
                     {opt.label}
@@ -747,38 +748,38 @@ export const MaterialGeneratorModal: React.FC<MaterialGeneratorModalProps> = ({
 
           {toolMode === 'region_edit' && (
             <section className="space-y-2">
-              <div className="text-sm font-medium text-slate-700 dark:text-gray-300">{t('material.applyModeLabel')}</div>
+              <div className="text-sm font-medium text-[var(--app-text)]">{t('material.applyModeLabel')}</div>
               <div className="grid grid-cols-1 gap-2">
                 <button
                   type="button"
                   onClick={() => setApplyMode('overlay_selection')}
-                  className={`rounded-2xl border px-3 py-2.5 text-left transition-all ${
+                  className={`rounded-[var(--app-radius-control)] border px-3 py-2.5 text-left transition-colors ${
                     applyMode === 'overlay_selection'
-                      ? 'border-cyan-500 bg-cyan-50 dark:bg-background-secondary'
-                      : 'border-sky-100 dark:border-border-primary bg-white dark:bg-background-secondary'
+                      ? 'border-[var(--app-accent)] bg-[var(--app-accent-soft)]'
+                      : 'border-[var(--app-border)] bg-[var(--app-surface)]'
                   }`}
                 >
-                  <div className="text-sm font-semibold text-slate-800 dark:text-gray-200">{t('material.applyOverlay')}</div>
+                  <div className="text-sm font-semibold text-[var(--app-text)]">{t('material.applyOverlay')}</div>
                 </button>
                 <button
                   type="button"
                   onClick={() => setApplyMode('replace_full')}
-                  className={`rounded-2xl border px-3 py-2.5 text-left transition-all ${
+                  className={`rounded-[var(--app-radius-control)] border px-3 py-2.5 text-left transition-colors ${
                     applyMode === 'replace_full'
-                      ? 'border-cyan-500 bg-cyan-50 dark:bg-background-secondary'
-                      : 'border-sky-100 dark:border-border-primary bg-white dark:bg-background-secondary'
+                      ? 'border-[var(--app-accent)] bg-[var(--app-accent-soft)]'
+                      : 'border-[var(--app-border)] bg-[var(--app-surface)]'
                   }`}
                 >
-                  <div className="text-sm font-semibold text-slate-800 dark:text-gray-200">{t('material.applyReplaceFull')}</div>
+                  <div className="text-sm font-semibold text-[var(--app-text)]">{t('material.applyReplaceFull')}</div>
                 </button>
               </div>
             </section>
           )}
 
-          <section className="pt-4 border-t border-sky-100 dark:border-border-primary space-y-3">
+          <section className="space-y-3 border-t border-[var(--app-border)] pt-4">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-sm text-slate-800 dark:text-gray-200 font-medium">
-                <ImagePlus size={17} className="text-cyan-600 dark:text-cyan-300" />
+              <div className="flex items-center gap-2 text-sm font-medium text-[var(--app-text)]">
+                <ImagePlus size={17} className="text-[var(--app-accent)]" />
                 <span>{t('material.referenceImages')}</span>
               </div>
               <Button
@@ -791,8 +792,8 @@ export const MaterialGeneratorModal: React.FC<MaterialGeneratorModalProps> = ({
 
             <div className="flex flex-wrap gap-2 items-start">
               <div className="space-y-1.5">
-                <div className="text-xs text-slate-500 dark:text-gray-400">{t('material.mainReference')}</div>
-                <div className="w-20 h-20 border border-dashed border-sky-200 dark:border-gray-600 rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:border-cyan-400 dark:hover:border-cyan-500 hover:bg-cyan-50/60 dark:hover:bg-background-hover transition-all bg-white dark:bg-background-secondary relative group">
+                <div className="text-xs text-[var(--app-text-secondary)]">{t('material.mainReference')}</div>
+                <div className="relative flex h-20 w-20 cursor-pointer flex-col items-center justify-center rounded-[var(--app-radius-control)] border border-dashed border-[var(--app-border)] bg-[var(--app-surface)] transition-colors hover:border-[var(--app-border-strong)] hover:bg-[var(--app-surface-hover)] group">
                   {refImage ? (
                     <>
                       <img
@@ -807,7 +808,7 @@ export const MaterialGeneratorModal: React.FC<MaterialGeneratorModalProps> = ({
                           e.stopPropagation();
                           setRefImage(null);
                         }}
-                        className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all shadow-sm z-10"
+                        className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-[var(--app-error)] text-[var(--app-on-color)] rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all shadow-[var(--app-shadow-control)] z-10"
                       >
                         <X size={10} strokeWidth={2.5} />
                       </button>
@@ -819,8 +820,8 @@ export const MaterialGeneratorModal: React.FC<MaterialGeneratorModalProps> = ({
                       onClick={() => refInputRef.current?.click()}
                       className="flex flex-col items-center gap-1"
                     >
-                      <ImageIcon size={20} className="text-cyan-400 dark:text-gray-500" />
-                      <span className="text-[10px] text-slate-500 dark:text-gray-400">{t('material.clickToUpload')}</span>
+                      <ImageIcon size={20} className="text-[var(--app-accent)] opacity-70" />
+                      <span className="text-[10px] text-[var(--app-text-secondary)]">{t('material.clickToUpload')}</span>
                     </button>
                   )}
                   <input
@@ -835,18 +836,18 @@ export const MaterialGeneratorModal: React.FC<MaterialGeneratorModalProps> = ({
               </div>
 
               <div className="min-w-0 space-y-1.5">
-                <div className="text-xs text-slate-500 dark:text-gray-400">{t('material.extraReference')}</div>
+                <div className="text-xs text-[var(--app-text-secondary)]">{t('material.extraReference')}</div>
                 <div className="flex flex-wrap gap-2">
                   {extraImages.map((file, idx) => (
                     <div key={`${file.name}-${idx}`} className="relative group">
                       <img
                         src={extraImageUrls[idx] || ''}
                         alt={`extra-${idx + 1}`}
-                        className="w-14 h-14 object-cover rounded-2xl border border-sky-100 dark:border-border-primary shadow-sm"
+                        className="h-14 w-14 rounded-[var(--app-radius-control)] border border-[var(--app-border)] object-cover shadow-[var(--app-shadow-card)]"
                       />
                       <button
                         onClick={() => removeExtraImage(idx)}
-                        className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all shadow-sm"
+                        className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-[var(--app-error)] text-[var(--app-on-color)] rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all shadow-[var(--app-shadow-control)]"
                       >
                         <X size={10} strokeWidth={2.5} />
                       </button>
@@ -856,9 +857,9 @@ export const MaterialGeneratorModal: React.FC<MaterialGeneratorModalProps> = ({
                     data-testid="material-extra-trigger"
                     type="button"
                     onClick={() => extraInputRef.current?.click()}
-                    className="w-14 h-14 border border-dashed border-sky-200 dark:border-gray-600 rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:border-cyan-400 dark:hover:border-cyan-500 hover:bg-cyan-50/60 dark:hover:bg-background-hover transition-all bg-white dark:bg-background-secondary"
+                    className="flex h-14 w-14 cursor-pointer flex-col items-center justify-center rounded-[var(--app-radius-control)] border border-dashed border-[var(--app-border)] bg-[var(--app-surface)] transition-colors hover:border-[var(--app-border-strong)] hover:bg-[var(--app-surface-hover)]"
                   >
-                    <Upload size={14} className="text-cyan-400 dark:text-gray-500" />
+                    <Upload size={14} className="text-[var(--app-accent)] opacity-70" />
                   </button>
                   <input
                     ref={extraInputRef}
@@ -882,7 +883,7 @@ export const MaterialGeneratorModal: React.FC<MaterialGeneratorModalProps> = ({
               variant="primary"
               onClick={handleGenerate}
               disabled={isGenerating || isCompleted || (toolMode !== 'erase_region' && !prompt.trim())}
-              className="shadow-lg shadow-cyan-500/20"
+              className="shadow-[var(--app-shadow-soft)]"
             >
               {isGenerating ? t('common.generating') : isCompleted ? t('common.completed') : t('material.runTool')}
             </Button>
@@ -891,10 +892,10 @@ export const MaterialGeneratorModal: React.FC<MaterialGeneratorModalProps> = ({
 
         <section className="min-w-0 flex flex-col">
           <div className="grid grid-cols-2 gap-4 flex-1">
-            <div className="rounded-3xl border border-sky-100 dark:border-border-primary bg-white dark:bg-background-secondary p-4 flex flex-col shadow-sm">
+            <div className="flex flex-col rounded-[var(--app-radius-panel)] border border-[var(--app-border)] bg-[var(--app-surface)] p-4 shadow-[var(--app-shadow-card)]">
               <div className="flex items-center justify-between gap-3 mb-3">
-                <h4 className="text-sm font-semibold text-slate-800 dark:text-gray-200 flex items-center gap-2">
-                  <Layers size={16} className="text-cyan-600 dark:text-cyan-300" />
+                <h4 className="flex items-center gap-2 text-sm font-semibold text-[var(--app-text)]">
+                  <Layers size={16} className="text-[var(--app-accent)]" />
                   {t('material.sourceImage')}
                 </h4>
                 <div className="flex flex-shrink-0 gap-1.5">
@@ -919,7 +920,7 @@ export const MaterialGeneratorModal: React.FC<MaterialGeneratorModalProps> = ({
 
               <div
                 data-testid="material-source-canvas"
-                className="relative rounded-2xl overflow-hidden border border-dashed border-sky-200 dark:border-gray-600 bg-sky-50/70 dark:bg-gray-800/40 flex-1 min-h-[200px]"
+                className="relative min-h-[200px] flex-1 overflow-hidden rounded-[var(--app-radius-panel)] border border-dashed border-[var(--app-border)] bg-[var(--app-surface-muted)]"
                 onMouseDown={handleSelectionMouseDown}
                 onMouseMove={handleSelectionMouseMove}
                 onMouseUp={handleSelectionMouseUp}
@@ -936,7 +937,7 @@ export const MaterialGeneratorModal: React.FC<MaterialGeneratorModalProps> = ({
                           isSelectingRegionRef.current = false;
                           setSelectionStart(null);
                         }}
-                        className="absolute top-3 left-3 z-10 px-3 py-1.5 rounded-full bg-white/90 dark:bg-black/60 text-xs font-medium text-cyan-700 dark:text-gray-100 shadow-sm flex items-center gap-1.5"
+                        className="absolute left-3 top-3 z-10 flex items-center gap-1.5 rounded-[var(--app-radius-control)] bg-[var(--app-surface)]/90 px-3 py-1.5 text-xs font-medium text-[var(--app-accent)] shadow-[var(--app-shadow-floating)]"
                       >
                         <Crop size={13} />
                         {isSelectionMode ? t('material.stopSelection') : t('material.startSelection')}
@@ -951,7 +952,7 @@ export const MaterialGeneratorModal: React.FC<MaterialGeneratorModalProps> = ({
                     />
                     {selectionRect && (
                       <div
-                        className="absolute border-2 border-cyan-500 bg-cyan-400/15 pointer-events-none"
+                        className="pointer-events-none absolute border-2 border-[var(--app-accent)] bg-[color:var(--app-accent-soft)]"
                         style={{
                           left: selectionRect.left,
                           top: selectionRect.top,
@@ -962,8 +963,8 @@ export const MaterialGeneratorModal: React.FC<MaterialGeneratorModalProps> = ({
                     )}
                   </>
                 ) : (
-                  <div className="w-full h-full flex flex-col items-center justify-center text-center text-slate-400 dark:text-gray-500 p-6">
-                    <ImagePlus size={42} className="mb-3 text-cyan-400" />
+                  <div className="flex h-full w-full flex-col items-center justify-center p-6 text-center text-[var(--app-text-tertiary)]">
+                    <ImagePlus size={42} className="mb-3 text-[var(--app-accent)] opacity-70" />
                     <div className="text-sm font-medium">{t('material.sourceImage')}</div>
                     <div className="text-xs mt-1 max-w-xs">{t('material.sourceImageHint')}</div>
                   </div>
@@ -971,11 +972,11 @@ export const MaterialGeneratorModal: React.FC<MaterialGeneratorModalProps> = ({
               </div>
 
               {selectionEnabled && (
-                <div className="mt-3 rounded-2xl border border-cyan-100 bg-cyan-50/60 p-3 dark:border-border-primary dark:bg-background-primary">
-                  <div className="text-xs font-semibold text-cyan-700 dark:text-cyan-300 mb-1">
+                <div className="mt-3 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface-hover)] p-3">
+                  <div className="mb-1 text-xs font-semibold text-[var(--app-accent)]">
                     {t('material.selectionLabel')}
                   </div>
-                  <div className="text-xs text-slate-500 dark:text-gray-400">
+                  <div className="text-xs text-[var(--app-text-secondary)]">
                     {selectionPixels
                       ? t('material.selectionReady', { width: selectionPixels.width, height: selectionPixels.height })
                       : t('material.selectionHint')}
@@ -984,10 +985,10 @@ export const MaterialGeneratorModal: React.FC<MaterialGeneratorModalProps> = ({
               )}
             </div>
 
-            <div className="rounded-3xl border border-sky-100 dark:border-border-primary bg-white dark:bg-background-secondary p-4 flex flex-col shadow-sm">
+            <div className="flex flex-col rounded-[var(--app-radius-panel)] border border-[var(--app-border)] bg-[var(--app-surface)] p-4 shadow-[var(--app-shadow-card)]">
               <div className="flex items-center justify-between gap-3 mb-3">
-                <h4 className="text-sm font-semibold text-slate-800 dark:text-gray-200 flex items-center gap-2">
-                  <Sparkles size={16} className="text-emerald-500 dark:text-emerald-300" />
+                <h4 className="flex items-center gap-2 text-sm font-semibold text-[var(--app-text)]">
+                  <Sparkles size={16} className="text-[var(--app-index-green)]" />
                   {t('material.generatedResult')}
                 </h4>
                 {previewUrl && (
@@ -1008,11 +1009,11 @@ export const MaterialGeneratorModal: React.FC<MaterialGeneratorModalProps> = ({
                 )}
               </div>
               {isGenerating ? (
-                <div className="rounded-2xl overflow-hidden border border-sky-100 dark:border-border-primary shadow-inner flex-1 min-h-[200px]">
+                <div className="min-h-[200px] flex-1 overflow-hidden rounded-[var(--app-radius-panel)] border border-[var(--app-border)] shadow-inner">
                   <Skeleton className="w-full h-full" />
                 </div>
               ) : previewUrl ? (
-                <div className="bg-white dark:bg-gray-900/50 rounded-2xl overflow-hidden border border-sky-100 dark:border-border-primary flex items-center justify-center shadow-inner flex-1 min-h-[200px]">
+                <div className="flex min-h-[200px] flex-1 items-center justify-center overflow-hidden rounded-[var(--app-radius-panel)] border border-[var(--app-border)] bg-[var(--app-surface)] shadow-inner">
                   <img
                     src={previewUrl}
                     alt={t('material.generatedResult')}
@@ -1020,8 +1021,8 @@ export const MaterialGeneratorModal: React.FC<MaterialGeneratorModalProps> = ({
                   />
                 </div>
               ) : (
-                <div className="bg-sky-50/70 dark:bg-gray-800/30 rounded-2xl flex flex-col items-center justify-center text-slate-400 dark:text-gray-500 text-sm border border-dashed border-sky-200 dark:border-gray-600 flex-1 min-h-[200px]">
-                  <ImageIcon size={48} className="mb-3 text-cyan-400 opacity-70" />
+                <div className="flex min-h-[200px] flex-1 flex-col items-center justify-center rounded-[var(--app-radius-panel)] border border-dashed border-[var(--app-border)] bg-[var(--app-surface-muted)] text-sm text-[var(--app-text-tertiary)]">
+                  <ImageIcon size={48} className="mb-3 text-[var(--app-accent)] opacity-70" />
                   <div className="font-medium">{t('material.generatedPreview')}</div>
                 </div>
               )}
@@ -1030,7 +1031,7 @@ export const MaterialGeneratorModal: React.FC<MaterialGeneratorModalProps> = ({
         </section>
       </div>
 
-      <p className="mt-4 text-xs text-slate-400 dark:text-gray-500 text-center">
+      <p className="mt-4 text-center text-xs text-[var(--app-text-tertiary)]">
         {t('material.saveToLibraryNote')}
       </p>
 
@@ -1040,6 +1041,7 @@ export const MaterialGeneratorModal: React.FC<MaterialGeneratorModalProps> = ({
         onClose={() => setIsMaterialSelectorOpen(false)}
         onSelect={handleSelectMaterials}
         multiple={selectorTarget === 'references'}
+        mediaKindFilter={['image']}
       />
     </Modal>
   );

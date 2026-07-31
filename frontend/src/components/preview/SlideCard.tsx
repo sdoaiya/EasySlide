@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo, useRef } from 'react';
 import { Edit2, Trash2 } from 'lucide-react';
 import { useT } from '@/hooks/useT';
 import { StatusBadge, Skeleton, useConfirm } from '@/components/shared';
@@ -31,23 +31,27 @@ interface SlideCardProps {
   page: Page;
   index: number;
   isSelected: boolean;
-  onClick: () => void;
-  onEdit: () => void;
-  onDelete: () => void;
+  isMultiSelectMode?: boolean;
+  onSelect: (index: number, pageId?: string) => void;
+  onEdit: (index: number) => void;
+  onDelete: (pageId: string) => void;
   isGenerating?: boolean;
   aspectRatio?: string;
 }
 
-export const SlideCard: React.FC<SlideCardProps> = ({
+export const SlideCard: React.FC<SlideCardProps> = memo(function SlideCard({
   page,
   index,
   isSelected,
-  onClick,
+  isMultiSelectMode = false,
+  onSelect,
   onEdit,
   onDelete,
   isGenerating = false,
   aspectRatio = '16:9',
-}) => {
+}) {
+  const renderCount = useRef(0);
+  renderCount.current += 1;
   const t = useT(slideCardI18n);
   const { confirm, ConfirmDialog } = useConfirm();
   const imageUrl = page.generated_image_path
@@ -58,13 +62,16 @@ export const SlideCard: React.FC<SlideCardProps> = ({
 
   return (
     <div
-      className={`group cursor-pointer transition-all ${
-        isSelected ? 'ring-2 ring-cyan-500' : ''
+      className={`group cursor-pointer rounded-[var(--app-radius-card)] border transition-colors ${
+        isSelected ? 'border-[var(--app-accent)]' : 'border-transparent'
       }`}
-      onClick={onClick}
+      data-testid={`ppt-slide-card-${page.id || index}`}
+      data-render-count={import.meta.env.MODE === 'test' ? renderCount.current : undefined}
+      data-multiselect={import.meta.env.MODE === 'test' ? isMultiSelectMode : undefined}
+      onClick={() => onSelect(index, page.id)}
     >
       {/* 缩略图 */}
-      <div className="relative bg-gray-100 dark:bg-background-secondary rounded-lg overflow-hidden mb-2" style={{ aspectRatio: aspectRatio.replace(':', '/') }}>
+      <div className="relative mb-2 overflow-hidden rounded-[var(--app-radius-card)] bg-[var(--app-surface-muted)]" style={{ aspectRatio: aspectRatio.replace(':', '/') }}>
         {generating ? (
           <Skeleton className="w-full h-full" />
         ) : page.generated_image_path ? (
@@ -75,13 +82,14 @@ export const SlideCard: React.FC<SlideCardProps> = ({
               className="w-full h-full object-cover"
             />
             {/* 悬停操作 */}
-            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+            <div className="absolute inset-0 bg-[color:var(--app-surface)]/80 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  onEdit();
+                  onEdit(index);
                 }}
-                className="p-2 bg-white dark:bg-background-secondary rounded-lg hover:bg-cyan-50 dark:hover:bg-background-hover transition-colors"
+                className="flex h-10 w-10 items-center justify-center rounded-[var(--app-radius-control)] bg-[var(--app-surface)] transition-colors hover:bg-[var(--app-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)]"
+                aria-label="编辑页面"
               >
                 <Edit2 size={18} />
               </button>
@@ -90,18 +98,19 @@ export const SlideCard: React.FC<SlideCardProps> = ({
                   e.stopPropagation();
                   confirm(
                     t('slideCard.confirmDeletePage'),
-                    onDelete,
+                    () => page.id && onDelete(page.id),
                     { title: t('slideCard.confirmDeleteTitle'), variant: 'danger' }
                   );
                 }}
-                className="p-2 bg-white dark:bg-background-secondary rounded-lg hover:bg-red-50 transition-colors"
+                className="flex h-10 w-10 items-center justify-center rounded-[var(--app-radius-control)] bg-[var(--app-surface)] transition-colors hover:bg-[var(--app-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-error-soft)]"
+                aria-label="删除页面"
               >
-                <Trash2 size={18} className="text-red-600" />
+                <Trash2 size={18} className="text-[var(--app-error)]" />
               </button>
             </div>
           </>
         ) : (
-          <div className="w-full h-full flex items-center justify-center text-gray-400">
+          <div className="flex h-full w-full items-center justify-center text-[var(--app-text-tertiary)]">
             <div className="text-center">
               <img src={getStaticAssetUrl('/logo-nav.png')} alt="EasySlide Logo" className="h-8 w-auto mx-auto mb-1 opacity-70" />
               <div className="text-xs">{t('slideCard.notGenerated')}</div>
@@ -119,14 +128,14 @@ export const SlideCard: React.FC<SlideCardProps> = ({
       <div className="flex items-center gap-2">
         <span
           className={`text-sm font-medium ${
-            isSelected ? 'text-cyan-600' : 'text-gray-700 dark:text-foreground-secondary'
+            isSelected ? 'text-[var(--app-accent)]' : 'text-[var(--app-text-secondary)]'
           }`}
         >
           {index + 1}. {page.outline_content?.title}
         </span>
         {index === 0 && (
           <span
-            className="text-xs px-1.5 py-0.5 bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-300 rounded flex-shrink-0"
+            className="flex-shrink-0 rounded px-1.5 py-0.5 text-xs text-[var(--app-text-secondary)] bg-[var(--app-surface-muted)]"
             title={t('slideCard.coverPageTooltip')}
           >
             {t('slideCard.coverPage')}
@@ -136,5 +145,11 @@ export const SlideCard: React.FC<SlideCardProps> = ({
       {ConfirmDialog}
     </div>
   );
-};
-
+}, (previous, next) => (
+  previous.page === next.page
+  && previous.index === next.index
+  && previous.isSelected === next.isSelected
+  && previous.isMultiSelectMode === next.isMultiSelectMode
+  && previous.isGenerating === next.isGenerating
+  && previous.aspectRatio === next.aspectRatio
+));

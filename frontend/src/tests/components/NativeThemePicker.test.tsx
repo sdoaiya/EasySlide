@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { NativeThemePicker } from '@/components/native-deck/NativeThemePicker'
@@ -11,9 +11,10 @@ vi.mock('@/api/client', () => ({ getStaticAssetUrl }))
 
 describe('NativeThemePicker', () => {
   it('uses a desktop-safe relative URL for the selected theme preview', () => {
-    render(<NativeThemePicker value="theme01" onChange={vi.fn()} />)
+    const { container } = render(<NativeThemePicker value="theme01" onChange={vi.fn()} />)
 
     expect(getStaticAssetUrl).toHaveBeenCalledWith('/assets/native-theme-previews/theme01.jpg')
+    expect(container.innerHTML).not.toContain('shadow-sm')
     expect(screen.getByAltText('轻拟态风主题预览')).toHaveAttribute(
       'src',
       './desktop-assets/assets/native-theme-previews/theme01.jpg',
@@ -47,24 +48,52 @@ describe('NativeThemePicker', () => {
     await user.click(screen.getByRole('button', { name: '放大 轻拟态风 主题预览' }))
     expect(screen.getByRole('dialog', { name: '轻拟态风主题预览' })).toBeInTheDocument()
     expect(screen.getByAltText('轻拟态风主题放大预览')).toBeInTheDocument()
+    expect(document.body.innerHTML).not.toContain('bg-black/60')
+    expect(document.body.innerHTML).toContain('bg-[color:var(--app-surface)]/85')
     await user.click(screen.getByRole('button', { name: '关闭主题预览' }))
-    expect(screen.queryByRole('dialog', { name: '轻拟态风主题预览' })).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '轻拟态风主题预览' })).not.toBeInTheDocument())
   })
 
   it('selects classic native generation without showing Dashi theme choices', async () => {
     const user = userEvent.setup()
     const onChange = vi.fn()
-    const { rerender } = render(<NativeThemePicker value="theme03" onChange={onChange} />)
+    const { container, rerender } = render(<NativeThemePicker value="theme03" onChange={onChange} />)
 
     await user.click(screen.getByRole('radio', { name: '经典原生生成' }))
     expect(onChange).toHaveBeenCalledWith('core01')
 
     rerender(<NativeThemePicker value="core01" onChange={onChange} />)
+    expect(container.innerHTML).not.toContain('shadow-sm')
     expect(screen.getByRole('radio', { name: '经典原生生成' })).toHaveAttribute('aria-checked', 'true')
     expect(screen.queryByRole('radiogroup', { name: '原生主题' })).not.toBeInTheDocument()
-    expect(screen.getByText('Huashu 内容驱动')).toBeInTheDocument()
+    expect(screen.getByText('原生内容驱动')).toBeInTheDocument()
 
     await user.click(screen.getByRole('radio', { name: '主题原生生成' }))
     expect(onChange).toHaveBeenLastCalledWith('theme03')
+  })
+
+  it('supports arrow-key navigation for modes and themes, and Escape closes preview', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    const { rerender } = render(<NativeThemePicker value="core01" onChange={onChange} />)
+
+    const classic = screen.getByRole('radio', { name: '经典原生生成' })
+    classic.focus()
+    await user.keyboard('{ArrowRight}')
+    expect(onChange).toHaveBeenLastCalledWith('theme01')
+
+    rerender(<NativeThemePicker value="theme01" onChange={onChange} />)
+    const firstTheme = screen.getByRole('radio', { name: '轻拟态风' })
+    firstTheme.focus()
+    await user.keyboard('{ArrowRight}')
+    expect(onChange).toHaveBeenLastCalledWith('theme02')
+
+    const previewButton = screen.getByRole('button', { name: '放大 轻拟态风 主题预览' })
+    await user.click(previewButton)
+    await user.keyboard('{Escape}')
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(previewButton).toHaveFocus()
+    })
   })
 })

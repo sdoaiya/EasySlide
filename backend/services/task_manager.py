@@ -3,10 +3,18 @@ Task Manager - handles background tasks using ThreadPoolExecutor
 No need for Celery or Redis, uses in-memory task tracking
 """
 import logging
+import json
 import os
 import shutil
+import tempfile
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
+from concurrent.futures import (
+    FIRST_COMPLETED,
+    TimeoutError as FutureTimeoutError,
+    ThreadPoolExecutor,
+    as_completed,
+    wait,
+)
 from contextlib import contextmanager
 from typing import Callable, List, Dict, Any, Optional
 from datetime import datetime
@@ -21,11 +29,35 @@ from services.image_generation_manifest import (
     update_manifest_page,
     write_prompt_snapshot,
 )
-from services.image_generation_quality import assess_generated_image, summarize_generation_quality
+from services.image_generation_quality import (
+    assess_generated_image,
+    generate_image_until_quality_passes,
+    summarize_generation_quality,
+)
+from services.ai_service_manager import get_ai_service
+from services.content_spine_service import (
+    get_spine_source_fields,
+    update_spine_source_fields,
+)
+from services.ppt_workspace_service import (
+    get_ppt_settings,
+    get_ppt_status,
+    record_ppt_revision,
+    set_ppt_status,
+    update_ppt_settings,
+)
 from utils import get_filtered_pages
 from utils.image_utils import check_image_resolution
 
 logger = logging.getLogger(__name__)
+
+
+def _is_edge_tts_voice_name(voice: str) -> bool:
+    """校验 edge-tts 音色名的语言前缀格式。"""
+    if not voice or '-' not in voice:
+        return False
+    locale = voice.split('-', 1)[0]
+    return locale.isalpha() and locale.islower() and 2 <= len(locale) <= 3
 
 
 def _set_export_task_progress(task: Task, progress: dict):
@@ -81,6 +113,303 @@ def get_image_prompt_field_names() -> set:
         return set(Settings.DEFAULT_IMAGE_PROMPT_FIELDS)
 
 
+def get_image_quality_control_enabled() -> bool:
+    """Return the optional multimodal image gate setting, defaulting to off."""
+    try:
+        return bool(Settings.get_settings().enable_image_quality_control)
+    except Exception as exc:
+        logger.warning("Failed to retrieve image quality-control setting; disabling gate: %s", exc)
+        return False
+
+
+def _image_scene_enabled(app) -> bool:
+    return bool(
+        app
+        and app.config.get('IMAGE_SCENE_ENABLED', False)
+        and app.config.get('HYPERFRAMES_ENABLED', False)
+    )
+
+
+def _prepare_image_scene_version(
+    image,
+    *,
+    project_id,
+    page_id,
+    page_data,
+    description,
+    page_index,
+    file_service,
+    app,
+):
+    from services.hyperframes_renderer import HyperframesRuntime
+    from services.image_scene_service import (
+        create_image_scene_artifacts,
+        fit_image_scene_background,
+    )
+
+    title = str((page_data or {}).get('title') or f'第 {page_index} 页').strip()
+    body_lines = _image_scene_body_lines(page_data, description)
+    electron = os.environ.get('EASYSLIDE_ELECTRON_EXECUTABLE')
+    if electron:
+        runtime = HyperframesRuntime.for_packaged(electron)
+    else:
+        project_root = Path(__file__).resolve().parents[2]
+        runtime = HyperframesRuntime.for_development(
+            project_root,
+            browser_path=os.environ.get('HYPERFRAMES_BROWSER_PATH'),
+        )
+    background = fit_image_scene_background(image)
+    try:
+        artifacts = create_image_scene_artifacts(
+            page_id=page_id,
+            background_image=background,
+            title=title,
+            body_lines=body_lines,
+            chart_data=_image_scene_chart_data(page_data),
+            output_directory=(
+                Path(file_service.upload_folder) / project_id / 'image-scenes' / page_id
+            ),
+            runtime=runtime,
+            ffmpeg_path=app.config.get('FFMPEG_PATH', 'ffmpeg'),
+        )
+    finally:
+        background.close()
+    with Image.open(artifacts['hero_path']) as hero:
+        version_image = hero.copy()
+    return version_image, artifacts
+
+
+def _image_scene_body_lines(page_data, description):
+    lines = []
+    for key in ('subtitle', 'content', 'key_points', 'points'):
+        value = (page_data or {}).get(key)
+        values = list(value.values()) if isinstance(value, dict) else value
+        if isinstance(values, str):
+            values = values.splitlines()
+        if isinstance(values, (list, tuple)):
+            for item in values:
+                text = str(item).strip()
+                if text and text not in lines:
+                    lines.append(text[:120])
+    if not lines:
+        lines = [line.strip()[:120] for line in str(description or '').splitlines() if line.strip()]
+    return lines[:6]
+
+
+def _image_scene_chart_data(page_data):
+    data = page_data or {}
+    for key in ('chart_data', 'chartData', 'chart', 'metrics'):
+        value = data.get(key)
+        if isinstance(value, (list, dict)):
+            return value
+    return None
+
+
+def recover_historical_image_scenes_task(
+    task_id,
+    project_id,
+    version_ids,
+    file_service,
+    app,
+    force=False,
+):
+    if app is None:
+        raise ValueError('Flask app instance must be provided')
+    with app.app_context():
+        from services.historical_image_scene_service import (
+            create_historical_image_scene_artifacts,
+        )
+        from services.hyperframes_renderer import HyperframesRuntime
+        from services.image_editability import ImageEditabilityService, ServiceConfig
+
+        task = db.session.get(Task, task_id)
+        if not task:
+            return
+        task.status = 'PROCESSING'
+        progress = {'total': len(version_ids), 'completed': 0, 'failed': 0, 'pages': []}
+        resume = task.get_progress().get('_resume')
+        if resume:
+            progress['_resume'] = resume
+        task.set_progress(progress)
+        db.session.commit()
+        try:
+            config = ServiceConfig.from_defaults(
+                upload_folder=str(file_service.upload_folder),
+                ai_service=get_ai_service(),
+                max_depth=1,
+            )
+            editability = ImageEditabilityService(config)
+            electron = os.environ.get('EASYSLIDE_ELECTRON_EXECUTABLE')
+            runtime = (
+                HyperframesRuntime.for_packaged(electron)
+                if electron
+                else HyperframesRuntime.for_development(
+                    Path(__file__).resolve().parents[2],
+                    browser_path=os.environ.get('HYPERFRAMES_BROWSER_PATH'),
+                )
+            )
+            for version_id in version_ids:
+                _wait_if_task_paused(task_id)
+                version = db.session.get(PageImageVersion, version_id)
+                if not version or not version.page or version.page.project_id != project_id:
+                    progress['failed'] += 1
+                    progress['pages'].append({
+                        'version_id': version_id,
+                        'status': 'failed',
+                        'reason': '图片版本不存在',
+                    })
+                    continue
+                if version.scene_status == 'ready' and not force:
+                    progress['completed'] += 1
+                    progress['pages'].append({
+                        'page_id': version.page_id,
+                        'version_id': version.id,
+                        'status': 'skipped',
+                        'level': _scene_level(version.scene_error, 'L0'),
+                    })
+                    continue
+
+                version.scene_status = 'building'
+                version.scene_error = None
+                db.session.commit()
+                try:
+                    editable = editability.make_image_editable(
+                        file_service.get_absolute_path(version.image_path)
+                    )
+                    artifacts = create_historical_image_scene_artifacts(
+                        page_id=version.page_id,
+                        editable_image=editable,
+                        output_directory=(
+                            Path(file_service.upload_folder)
+                            / project_id
+                            / 'historical-image-scenes'
+                            / version.page_id
+                            / version.id
+                        ),
+                        runtime=runtime,
+                        ffmpeg_path=app.config.get('FFMPEG_PATH', 'ffmpeg'),
+                    )
+                    scene_ref = artifacts.get('scene_manifest_ref')
+                    version.scene_manifest_path = scene_ref['path'] if scene_ref else None
+                    version.scene_manifest_sha256 = scene_ref['sha256'] if scene_ref else None
+                    version.scene_status = 'ready' if scene_ref else 'degraded'
+                    version.scene_quality_score = (
+                        round(1 - artifacts['visual_difference'], 4)
+                        if scene_ref else None
+                    )
+                    version.scene_schema_version = 1 if scene_ref else None
+                    version.scene_error = f"{artifacts['level']}: {artifacts['reason']}"
+                    progress['completed'] += 1
+                    progress['pages'].append({
+                        'page_id': version.page_id,
+                        'version_id': version.id,
+                        'status': version.scene_status,
+                        'level': artifacts['level'],
+                        'reason': artifacts['reason'],
+                    })
+                except Exception as exc:
+                    logger.exception(
+                        'Historical image scene recovery failed for version %s',
+                        version.id,
+                    )
+                    version.scene_status = 'failed'
+                    version.scene_error = f'L3: {exc}'
+                    progress['failed'] += 1
+                    progress['pages'].append({
+                        'page_id': version.page_id,
+                        'version_id': version.id,
+                        'status': 'failed',
+                        'level': 'L3',
+                        'reason': str(exc),
+                    })
+                db.session.commit()
+                task = db.session.get(Task, task_id)
+                task.set_progress(progress)
+                db.session.commit()
+
+            task = db.session.get(Task, task_id)
+            task.status = 'COMPLETED'
+            task.completed_at = datetime.utcnow()
+            task.set_progress(progress)
+            db.session.commit()
+        except Exception as exc:
+            logger.warning('Historical image scene recovery unavailable: %s', exc)
+            progress['completed'] = 0
+            progress['failed'] = 0
+            progress['pages'] = []
+            for version_id in version_ids:
+                version = db.session.get(PageImageVersion, version_id)
+                if not version or not version.page or version.page.project_id != project_id:
+                    progress['failed'] += 1
+                    continue
+                version.scene_status = 'degraded'
+                version.scene_manifest_path = None
+                version.scene_manifest_sha256 = None
+                version.scene_quality_score = None
+                version.scene_schema_version = None
+                version.scene_error = f'L3: 拆层服务不可用（{exc}）'
+                progress['completed'] += 1
+                progress['pages'].append({
+                    'page_id': version.page_id,
+                    'version_id': version.id,
+                    'status': 'degraded',
+                    'level': 'L3',
+                    'reason': str(exc),
+                })
+            task = db.session.get(Task, task_id)
+            if task:
+                task.status = 'COMPLETED'
+                task.error_message = None
+                task.completed_at = datetime.utcnow()
+                task.set_progress(progress)
+                db.session.commit()
+
+
+def _scene_level(scene_error, fallback):
+    value = str(scene_error or '')
+    return (
+        value.split(':', 1)[0]
+        if value.startswith(('L0:', 'L1:', 'L2:', 'L3:', 'L4:'))
+        else fallback
+    )
+
+
+def review_generated_image(ai_service, image, prompt, page_desc, page_outline, page_index):
+    """Persist a short-lived JPEG because multimodal providers review file paths."""
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as temp_file:
+            temp_path = temp_file.name
+        image.convert('RGB').save(temp_path, format='JPEG', quality=95)
+        return ai_service.review_generated_slide_image(
+            temp_path,
+            prompt,
+            page_desc,
+            page_outline=page_outline,
+            page_index=page_index,
+        )
+    finally:
+        if temp_path:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                logger.warning("Failed to remove temporary image review file: %s", temp_path)
+
+
+def _get_page_template_path(page: Page, file_service) -> Optional[str]:
+    if not page.template_image_path:
+        return None
+    path = file_service.upload_folder / page.template_image_path.replace('\\', '/')
+    return str(path) if path.exists() and path.is_file() else None
+
+
+def _append_page_template_style(extra_requirements: Optional[str], page: Page) -> Optional[str]:
+    style = (page.template_style_text or '').strip()
+    if not style:
+        return extra_requirements
+    return f"{extra_requirements or ''}\n\n本页模板风格要求：\n{style}"
+
+
 def prepare_page_for_image_generation(page: Page, file_service) -> bool:
     """Return whether a page needs generation, clearing stale file references."""
     image_path = page.generated_image_path
@@ -96,6 +425,18 @@ def prepare_page_for_image_generation(page: Page, file_service) -> bool:
     page.generated_image_path = None
     page.cached_image_path = None
     return True
+
+
+def get_renovation_source_image_path(page: Page, file_service) -> Optional[str]:
+    """Return the rendered original PDF page for a renovation project, if present."""
+    source_path = file_service.get_absolute_path(
+        f"{page.project_id}/pages/page_{page.order_index + 1}_original.png"
+    )
+    return source_path if os.path.isfile(source_path) else None
+
+
+def is_renovation_project(project: Optional[Project]) -> bool:
+    return bool(project and project.creation_type in {'renovation', 'ppt_renovation'})
 
 
 def _append_extra_fields(
@@ -256,8 +597,237 @@ def sync_resource_limits(description_workers: int, image_workers: int):
     text_resource_limiter.update_capacity(description_workers)
 
 
-def save_image_with_version(image, project_id: str, page_id: str, file_service,
-                            page_obj=None, image_format: str = 'PNG') -> tuple[str, int]:
+def initialize_content_workspace_task(
+    task_id: str,
+    project_id: str,
+    workspace_kind: str,
+    spine_revision: int,
+    spine_hash: str,
+    spine_document: dict,
+    settings: dict,
+    app=None,
+):
+    """Initialize one workspace from the immutable Spine snapshot saved in Task."""
+    from contextlib import nullcontext
+    from models import ProjectWorkspace
+    from services.project_workspace_service import initialize_workspace_from_snapshot
+
+    context = app.app_context() if app else nullcontext()
+    with context:
+        task = db.session.get(Task, task_id)
+        if not task or task.status == 'CANCELLED':
+            return
+        task.status = 'PROCESSING'
+        progress = task.get_progress()
+        progress['stage'] = 'initializing_workspace'
+        task.set_progress(progress)
+        workspace = ProjectWorkspace.query.filter_by(
+            project_id=project_id,
+            kind=workspace_kind,
+        ).one_or_none()
+        if workspace and not workspace.current_version_id:
+            workspace.stage = 'INITIALIZING'
+        db.session.commit()
+        try:
+            _wait_if_task_paused(task_id)
+            task = db.session.get(Task, task_id)
+            if not task or task.status == 'CANCELLED':
+                return
+            initialize_workspace_from_snapshot(
+                project_id,
+                workspace_kind,
+                spine_revision,
+                spine_hash,
+                spine_document,
+                settings,
+            )
+            progress = task.get_progress()
+            progress.update({
+                'completed': 1,
+                'failed': 0,
+                'stage': 'completed',
+                'workspace_kind': workspace_kind,
+            })
+            task.set_progress(progress)
+            task.status = 'COMPLETED'
+            task.completed_at = datetime.utcnow()
+            workspace = ProjectWorkspace.query.filter_by(
+                project_id=project_id,
+                kind=workspace_kind,
+            ).one_or_none()
+            if workspace and workspace.current_version_id:
+                workspace.stage = 'DRAFT'
+            db.session.commit()
+        except Exception as exc:
+            db.session.rollback()
+            task = db.session.get(Task, task_id)
+            if task:
+                progress = task.get_progress()
+                progress.update({'failed': 1, 'stage': 'failed'})
+                task.set_progress(progress)
+                task.status = 'FAILED'
+                workspace = ProjectWorkspace.query.filter_by(
+                    project_id=project_id,
+                    kind=workspace_kind,
+                ).one_or_none()
+                if workspace and not workspace.current_version_id:
+                    workspace.stage = 'FAILED'
+                task.error_message = str(exc)
+                task.completed_at = datetime.utcnow()
+                db.session.commit()
+            raise
+
+
+def generate_narration_candidates_task(
+    task_id: str,
+    project_id: str,
+    page_ids: List[str],
+    operation: str,
+    *,
+    instruction: str = '',
+    selection=None,
+    generation_config=None,
+    app=None,
+):
+    """Create AI candidates sequentially; task progress contains IDs and outcomes only."""
+    from contextlib import nullcontext
+    from services.narration_service import (
+        NarrationLocked,
+        NarrationRevisionConflict,
+        create_ai_narration_candidate,
+        ensure_legacy_narration_version,
+    )
+    from services.prompts import get_narration_candidate_prompt
+
+    def parse_result(raw):
+        value = str(raw or '').strip()
+        if value.startswith('```'):
+            value = value.split('\n', 1)[-1].rsplit('```', 1)[0].strip()
+        result = json.loads(value)
+        if not isinstance(result, dict):
+            raise ValueError('invalid AI narration result')
+        return result
+
+    context = app.app_context() if app else nullcontext()
+    with context:
+        task = db.session.get(Task, task_id)
+        if not task or task.status == 'CANCELLED':
+            return
+        task.status = 'PROCESSING'
+        db.session.commit()
+
+        progress = task.get_progress()
+        progress.setdefault('pages', [])
+        for page_id in page_ids:
+            _wait_if_task_paused(task_id)
+            db.session.expire_all()
+            task = db.session.get(Task, task_id)
+            if not task or task.status == 'CANCELLED':
+                return
+
+            page = db.session.get(Page, page_id)
+            if not page or page.project_id != project_id:
+                outcome = {'page_id': page_id, 'status': 'failed', 'reason': 'page_not_found'}
+            elif page.narration_locked:
+                outcome = {'page_id': page_id, 'status': 'skipped', 'reason': 'locked'}
+            else:
+                try:
+                    current = ensure_legacy_narration_version(page)
+                    db.session.commit()
+                    base = current
+                    if not base and operation != 'generate':
+                        raise ValueError('missing_base_version')
+                    payload = {
+                        'operation': operation,
+                        'base_revision': int(page.narration_revision or 0),
+                        'base_version_id': base.id if base else None,
+                        'instruction': instruction,
+                        'selection': selection,
+                        'generation_config': generation_config,
+                    }
+                    prompt = get_narration_candidate_prompt(
+                        operation=operation,
+                        base_text=base.text if base else '',
+                        source={
+                            'outline': page.get_outline_content() or {},
+                            'description': page.get_description_content() or {},
+                            'page_order': page.order_index + 1,
+                        },
+                        instruction=instruction,
+                        selection=selection,
+                        generation_config=generation_config,
+                    )
+                    result = parse_result(get_ai_service().text_provider.generate_text(prompt))
+
+                    _wait_if_task_paused(task_id)
+                    db.session.expire_all()
+                    task = db.session.get(Task, task_id)
+                    page = db.session.get(Page, page_id)
+                    if not task or task.status == 'CANCELLED':
+                        db.session.rollback()
+                        return
+                    if page.narration_locked:
+                        outcome = {
+                            'page_id': page_id,
+                            'status': 'skipped',
+                            'reason': 'locked_before_write',
+                        }
+                    else:
+                        source_type = (
+                            'ai_generated' if operation == 'generate'
+                            else 'converted' if operation.startswith('convert_')
+                            else 'ai_polished'
+                        )
+                        candidate = create_ai_narration_candidate(
+                            page,
+                            payload=payload,
+                            result=result,
+                            source_type=source_type,
+                        )
+                        db.session.commit()
+                        outcome = {
+                            'page_id': page_id,
+                            'status': 'candidate',
+                            'candidate_id': candidate.id,
+                        }
+                except (NarrationLocked, NarrationRevisionConflict):
+                    db.session.rollback()
+                    outcome = {'page_id': page_id, 'status': 'skipped', 'reason': 'changed_before_write'}
+                except Exception as exc:
+                    db.session.rollback()
+                    reason = 'missing_base_version' if str(exc) == 'missing_base_version' else 'ai_service_error'
+                    outcome = {'page_id': page_id, 'status': 'failed', 'reason': reason}
+
+            progress['pages'].append(outcome)
+            progress['completed'] = len(progress['pages'])
+            progress['failed'] = sum(item['status'] == 'failed' for item in progress['pages'])
+            progress['skipped'] = sum(item['status'] == 'skipped' for item in progress['pages'])
+            task = db.session.get(Task, task_id)
+            if not task or task.status == 'CANCELLED':
+                return
+            task.set_progress(progress)
+            db.session.commit()
+
+        task = db.session.get(Task, task_id)
+        if task and task.status != 'CANCELLED':
+            task.status = 'COMPLETED'
+            task.completed_at = datetime.utcnow()
+            db.session.commit()
+
+
+def save_image_with_version(
+    image,
+    project_id: str,
+    page_id: str,
+    file_service,
+    page_obj=None,
+    image_format: str = 'PNG',
+    scene_manifest_ref=None,
+    scene_status=None,
+    scene_quality_score=None,
+    scene_schema_version=None,
+    scene_error=None,
+) -> tuple[str, int]:
     """
     保存图片并创建历史版本记录的公共函数
 
@@ -281,6 +851,24 @@ def save_image_with_version(image, project_id: str, page_id: str, file_service,
     6. 如果提供了 page_obj，更新页面状态和图片路径
     """
     # 使用 MAX 查询确保版本号安全（即使有版本被删除也不会重复）
+    allowed_scene_statuses = {'missing', 'building', 'ready', 'degraded', 'failed'}
+    resolved_scene_status = scene_status or ('ready' if scene_manifest_ref else 'missing')
+    if resolved_scene_status not in allowed_scene_statuses:
+        raise ValueError(f'Invalid image scene status: {resolved_scene_status}')
+    scene_path = None
+    scene_sha256 = None
+    if scene_manifest_ref is not None:
+        if not isinstance(scene_manifest_ref, dict):
+            raise ValueError('Scene Manifest reference must be an object')
+        if scene_manifest_ref.get('page_id') not in (None, page_id):
+            raise ValueError('Scene Manifest page does not match image version')
+        scene_path = scene_manifest_ref.get('path')
+        scene_sha256 = str(scene_manifest_ref.get('sha256') or '').lower()
+        if not isinstance(scene_path, str) or not scene_path:
+            raise ValueError('Scene Manifest reference is missing path')
+        if len(scene_sha256) != 64 or any(char not in '0123456789abcdef' for char in scene_sha256):
+            raise ValueError('Scene Manifest reference has an invalid SHA-256')
+
     max_version = db.session.query(func.max(PageImageVersion.version_number)).filter_by(page_id=page_id).scalar() or 0
     next_version = max_version + 1
 
@@ -306,7 +894,13 @@ def save_image_with_version(image, project_id: str, page_id: str, file_service,
         page_id=page_id,
         image_path=image_path,
         version_number=next_version,
-        is_current=True
+        is_current=True,
+        scene_manifest_path=scene_path,
+        scene_manifest_sha256=scene_sha256,
+        scene_status=resolved_scene_status,
+        scene_quality_score=scene_quality_score,
+        scene_schema_version=scene_schema_version,
+        scene_error=scene_error,
     )
     db.session.add(new_version)
 
@@ -446,7 +1040,7 @@ def generate_native_deck_task(task_id: str, project_id: str, ai_service, page_id
             project = db.session.get(Project, project_id)
             if not task or not project:
                 return
-            if project.render_mode != 'native':
+            if get_ppt_settings(project)['render_mode'] != 'native':
                 raise ValueError('只有原生可编辑项目可以生成原生页面')
 
             all_pages = Page.query.filter_by(project_id=project_id).order_by(Page.order_index).all()
@@ -454,13 +1048,16 @@ def generate_native_deck_task(task_id: str, project_id: str, ai_service, page_id
             selected_page_ids = set(page_ids or [])
             pages = [page for page in all_pages if not selected_page_ids or page.id in selected_page_ids]
             service = NativeDeckService()
-            theme = service.resolve_theme(project.native_theme, [page.native_layout for page in all_pages])
-            project.native_theme = theme
+            theme = service.resolve_theme(
+                get_ppt_settings(project)['native_theme'],
+                [page.native_layout for page in all_pages],
+            )
+            update_ppt_settings(project, {'native_theme': theme})
             deck_plan = service.build_deck_design_plan(
                 outlines=[page.get_outline_content() for page in all_pages],
                 theme=theme,
                 style_hint=project.template_style,
-                project_topic=project.idea_prompt,
+                project_topic=get_spine_source_fields(project)['idea_prompt'],
             )
             task.status = 'PROCESSING'
             task.set_progress({'total': len(pages), 'completed': 0, 'failed': 0, 'failed_page_ids': [], 'warnings': [], 'quality_warnings': []})
@@ -499,7 +1096,7 @@ def generate_native_deck_task(task_id: str, project_id: str, ai_service, page_id
                         theme=theme,
                         role=role,
                         style_hint=project.template_style,
-                        project_topic=project.idea_prompt,
+                        project_topic=get_spine_source_fields(project)['idea_prompt'],
                         layout_candidates=candidates,
                         deck_plan=deck_plan,
                         page_index=page.order_index,
@@ -577,7 +1174,7 @@ def generate_native_deck_task(task_id: str, project_id: str, ai_service, page_id
                                 theme=theme,
                                 role=role,
                                 style_hint=project.template_style,
-                                project_topic=project.idea_prompt,
+                                project_topic=get_spine_source_fields(project)['idea_prompt'],
                                 deck_plan=deck_plan,
                                 page_index=page.order_index,
                                 recent_layouts=layout_history,
@@ -613,7 +1210,13 @@ def generate_native_deck_task(task_id: str, project_id: str, ai_service, page_id
 
             task.status = 'COMPLETED'
             task.completed_at = datetime.utcnow()
-            project.status = 'NATIVE_DECK_GENERATED'
+            set_ppt_status(project, 'NATIVE_DECK_GENERATED')
+            record_ppt_revision(
+                project,
+                'native.generate',
+                changed_page_ids=[page.id for page in pages],
+                source_type='ai',
+            )
             db.session.commit()
         except Exception as exc:
             db.session.rollback()
@@ -770,7 +1373,13 @@ def generate_descriptions_task(task_id: str, project_id: str, ai_service,
             from models import Project
             project = Project.query.get(project_id)
             if project and failed == 0:
-                project.status = 'DESCRIPTIONS_GENERATED'
+                set_ppt_status(project, 'DESCRIPTIONS_GENERATED')
+                record_ppt_revision(
+                    project,
+                    'description.generate',
+                    changed_page_ids=[page.id for page in pages],
+                    source_type='ai',
+                )
                 db.session.commit()
                 logger.info(f"Project {project_id} status updated to DESCRIPTIONS_GENERATED")
         
@@ -880,8 +1489,11 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                         page_obj = Page.query.get(page_id)
                         if not page_obj:
                             raise ValueError(f"Page {page_id} not found")
+                        project_obj = Project.query.get(project_id)
+                        renovation_source_path = get_renovation_source_image_path(page_obj, file_service)
+                        renovating = is_renovation_project(project_obj) and bool(renovation_source_path)
                         had_image_reference = bool(page_obj.generated_image_path)
-                        if not prepare_page_for_image_generation(page_obj, file_service):
+                        if not renovating and not prepare_page_for_image_generation(page_obj, file_service):
                             return (
                                 page_id,
                                 page_obj.generated_image_path,
@@ -947,28 +1559,37 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                                     has_material_images = True
                             
                             # 在子线程中动态获取模板路径，确保使用最新模板
-                            role = infer_image_page_role(
+                            role = getattr(page_obj, 'template_selection_role', None) or infer_image_page_role(
                                 page_obj.order_index + 1,
                                 total_page_count,
                                 page_data,
                                 page_obj.part,
                             )
-                            layout_family = infer_image_layout_family(
+                            layout_family = getattr(page_obj, 'template_selection_layout', None) or infer_image_layout_family(
                                 role,
                                 page_obj.order_index + 1,
                                 page_data,
                             )
-                            project_obj = Project.query.get(project_id)
                             page_ref_image_path = None
+                            page_template_path = None
                             if use_template:
-                                page_ref_image_path = file_service.get_template_path(project_id)
-                                page_ref_image_path = resolve_template_reference_path(
-                                    getattr(project_obj, 'template_pack_id', None),
-                                    role,
-                                    page_ref_image_path,
-                                )
+                                page_template_path = _get_page_template_path(page_obj, file_service)
+                                page_ref_image_path = page_template_path
+                                if not page_template_path:
+                                    page_ref_image_path = file_service.get_template_path(project_id)
+                                    page_ref_image_path = resolve_template_reference_path(
+                                        getattr(project_obj, 'template_pack_id', None),
+                                        role,
+                                        page_ref_image_path,
+                                    )
                                 # 注意：如果有风格描述，即使没有模板图片也允许生成
                                 # 这个检查已经在 controller 层完成，这里不再检查
+
+                            if renovating:
+                                if page_ref_image_path:
+                                    page_additional_ref_images.insert(0, page_ref_image_path)
+                                page_ref_image_path = renovation_source_path
+                                has_material_images = True
                             
                             # Generate image prompt
                             page_extra_requirements = append_image_page_role_hint(extra_requirements, role)
@@ -978,8 +1599,22 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                             )
                             page_extra_requirements = append_template_visual_profile_hint(
                                 page_extra_requirements,
-                                getattr(project_obj, 'template_pack_id', None) if use_template else None,
+                                getattr(project_obj, 'template_pack_id', None) if use_template and not page_template_path else None,
                             )
+                            if use_template:
+                                page_extra_requirements = _append_page_template_style(page_extra_requirements, page_obj)
+                            if renovating:
+                                page_extra_requirements = (
+                                    f"{page_extra_requirements or ''}\n\nPPT 翻新要求：随附的首张参考图是原始第"
+                                    f"{page_obj.order_index + 1}页。保留其中的事实、文字层级、数据关系和核心素材，"
+                                    "但重新组织版式并提升视觉质量；不要忽略原页参考图。"
+                                )
+                            if _image_scene_enabled(app):
+                                from services.image_scene_service import append_image_scene_background_requirements
+
+                                page_extra_requirements = append_image_scene_background_requirements(
+                                    page_extra_requirements,
+                                )
 
                             prompt = ai_service.generate_image_prompt(
                                 outline, page_data, desc_text, page_obj.order_index + 1,
@@ -1017,9 +1652,27 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                                     {'status': 'paused'},
                                 )
                             logger.info(f"🎨 Calling AI service to generate image for page {page_index}/{len(pages)}...")
-                            image = ai_service.generate_image(
-                                prompt, page_ref_image_path, aspect_ratio, resolution,
-                                additional_ref_images=page_additional_ref_images if page_additional_ref_images else None
+                            quality_control = {'enabled': get_image_quality_control_enabled(), 'attempts': 0, 'review': None}
+
+                            def generate_candidate():
+                                quality_control['attempts'] += 1
+                                return ai_service.generate_image(
+                                    prompt, page_ref_image_path, aspect_ratio, resolution,
+                                    additional_ref_images=page_additional_ref_images if page_additional_ref_images else None
+                                )
+
+                            def review_candidate(candidate):
+                                review = review_generated_image(
+                                    ai_service, candidate, prompt, desc_text, page_data, page_obj.order_index + 1
+                                )
+                                quality_control['review'] = review
+                                return review
+
+                            image = generate_image_until_quality_passes(
+                                generate_candidate,
+                                review_candidate,
+                                enabled=quality_control['enabled'],
+                                max_attempts=3,
                             )
                         logger.info(f"✅ Image generated successfully for page {page_index}")
                         
@@ -1034,9 +1687,38 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                         # 优化：直接在子线程中计算版本号并保存到最终位置
                         # 每个页面独立，使用数据库事务保证版本号原子性，避免临时文件
                         qa = assess_generated_image(image, aspect_ratio, resolution_matches=is_match)
-                        image_path, next_version = save_image_with_version(
-                            image, project_id, page_id, file_service, page_obj=page_obj
-                        )
+                        version_image = image
+                        scene_artifacts = None
+                        if _image_scene_enabled(app):
+                            version_image, scene_artifacts = _prepare_image_scene_version(
+                                image,
+                                project_id=project_id,
+                                page_id=page_id,
+                                page_data=page_data,
+                                description=desc_text,
+                                page_index=page_obj.order_index + 1,
+                                file_service=file_service,
+                                app=app,
+                            )
+                            qa = scene_artifacts['quality']
+                        try:
+                            image_path, next_version = save_image_with_version(
+                                version_image,
+                                project_id,
+                                page_id,
+                                file_service,
+                                page_obj=page_obj,
+                                scene_manifest_ref=(
+                                    scene_artifacts['scene_manifest_ref'] if scene_artifacts else None
+                                ),
+                                scene_quality_score=(
+                                    1.0 if scene_artifacts else None
+                                ),
+                                scene_schema_version=(1 if scene_artifacts else None),
+                            )
+                        finally:
+                            if version_image is not image:
+                                version_image.close()
                         
                         return (
                             page_id,
@@ -1053,6 +1735,7 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                                 'visual_role': role,
                                 'layout_family': layout_family,
                                 'qa': qa,
+                                'quality_control': quality_control,
                             },
                         )
                         
@@ -1191,9 +1874,20 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
             # Update project status
             project = Project.query.get(project_id)
             if project:
-                project.status = 'COMPLETED' if failed == 0 else 'DESCRIPTIONS_GENERATED'
+                set_ppt_status(
+                    project,
+                    'COMPLETED' if failed == 0 else 'DESCRIPTIONS_GENERATED',
+                )
+                record_ppt_revision(
+                    project,
+                    'image.generate_batch',
+                    changed_page_ids=[page.id for page in pages],
+                    source_type='ai',
+                )
                 db.session.commit()
-                logger.info(f"Project {project_id} status updated to {project.status}")
+                logger.info(
+                    f"Project {project_id} PPT status updated to {get_ppt_status(project)}"
+                )
         
         except Exception as e:
             # Mark task as failed
@@ -1210,7 +1904,7 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                     ).update({'status': 'FAILED'}, synchronize_session=False)
                 project = Project.query.get(project_id)
                 if project:
-                    project.status = 'DESCRIPTIONS_GENERATED'
+                    set_ppt_status(project, 'DESCRIPTIONS_GENERATED')
                 db.session.commit()
 
 
@@ -1279,6 +1973,10 @@ def generate_single_page_image_task(task_id: str, project_id: str, page_id: str,
             # 将 extra_fields 拼入描述文本供图片生成使用
             desc_text = _append_extra_fields(desc_text, desc_content, image_prompt_field_names)
 
+            project = Project.query.get(project_id)
+            renovation_source_path = get_renovation_source_image_path(page, file_service)
+            renovating = is_renovation_project(project) and bool(renovation_source_path)
+
             # 从描述文本中提取图片 URL
             additional_ref_images = []
             has_material_images = False
@@ -1292,8 +1990,10 @@ def generate_single_page_image_task(task_id: str, project_id: str, page_id: str,
             
             # Get template path if use_template
             ref_image_path = None
+            page_template_path = None
             if use_template:
-                ref_image_path = file_service.get_template_path(project_id)
+                page_template_path = _get_page_template_path(page, file_service)
+                ref_image_path = page_template_path or file_service.get_template_path(project_id)
                 # 注意：如果有风格描述，即使没有模板图片也允许生成
                 # 这个检查已经在 controller 层完成，这里不再检查
             
@@ -1303,21 +2003,40 @@ def generate_single_page_image_task(task_id: str, project_id: str, page_id: str,
                 page_data['part'] = page.part
 
             total_pages = Page.query.filter_by(project_id=project_id).count()
-            role = infer_image_page_role(page.order_index + 1, total_pages, page_data, page.part)
-            layout_family = infer_image_layout_family(role, page.order_index + 1, page_data)
-            project = Project.query.get(project_id)
+            role = getattr(page, 'template_selection_role', None) or infer_image_page_role(page.order_index + 1, total_pages, page_data, page.part)
+            layout_family = getattr(page, 'template_selection_layout', None) or infer_image_layout_family(role, page.order_index + 1, page_data)
             ref_image_path = resolve_template_reference_path(
-                getattr(project, 'template_pack_id', None),
+                None if page_template_path else getattr(project, 'template_pack_id', None),
                 role,
                 ref_image_path,
             )
+
+            if renovating:
+                if ref_image_path:
+                    additional_ref_images.insert(0, ref_image_path)
+                ref_image_path = renovation_source_path
+                has_material_images = True
 
             page_extra_requirements = append_image_page_role_hint(extra_requirements, role)
             page_extra_requirements = append_image_layout_hint(page_extra_requirements, layout_family)
             page_extra_requirements = append_template_visual_profile_hint(
                 page_extra_requirements,
-                getattr(project, 'template_pack_id', None) if use_template else None,
+                getattr(project, 'template_pack_id', None) if use_template and not page_template_path else None,
             )
+            if use_template:
+                page_extra_requirements = _append_page_template_style(page_extra_requirements, page)
+            if renovating:
+                page_extra_requirements = (
+                    f"{page_extra_requirements or ''}\n\nPPT 翻新要求：随附的首张参考图是原始第"
+                    f"{page.order_index + 1}页。保留其中的事实、文字层级、数据关系和核心素材，"
+                    "但重新组织版式并提升视觉质量；不要忽略原页参考图。"
+                )
+            if _image_scene_enabled(app):
+                from services.image_scene_service import append_image_scene_background_requirements
+
+                page_extra_requirements = append_image_scene_background_requirements(
+                    page_extra_requirements,
+                )
 
             prompt = ai_service.generate_image_prompt(
                 outline, page_data, desc_text, page.order_index + 1,
@@ -1363,9 +2082,27 @@ def generate_single_page_image_task(task_id: str, project_id: str, page_id: str,
             ):
                 # Generate image
                 logger.info(f"🎨 Generating image for page {page_id}...")
-                image = ai_service.generate_image(
-                    prompt, ref_image_path, aspect_ratio, resolution,
-                    additional_ref_images=additional_ref_images if additional_ref_images else None
+                quality_control = {'enabled': get_image_quality_control_enabled(), 'attempts': 0, 'review': None}
+
+                def generate_candidate():
+                    quality_control['attempts'] += 1
+                    return ai_service.generate_image(
+                        prompt, ref_image_path, aspect_ratio, resolution,
+                        additional_ref_images=additional_ref_images if additional_ref_images else None
+                    )
+
+                def review_candidate(candidate):
+                    review = review_generated_image(
+                        ai_service, candidate, prompt, desc_text, page_data, page.order_index + 1
+                    )
+                    quality_control['review'] = review
+                    return review
+
+                image = generate_image_until_quality_passes(
+                    generate_candidate,
+                    review_candidate,
+                    enabled=quality_control['enabled'],
+                    max_attempts=3,
                 )
             
             if not image:
@@ -1380,11 +2117,38 @@ def generate_single_page_image_task(task_id: str, project_id: str, page_id: str,
                     actual_res,
                 )
             qa = assess_generated_image(image, aspect_ratio, resolution_matches=is_match)
+            version_image = image
+            scene_artifacts = None
+            if _image_scene_enabled(app):
+                version_image, scene_artifacts = _prepare_image_scene_version(
+                    image,
+                    project_id=project_id,
+                    page_id=page_id,
+                    page_data=page_data,
+                    description=desc_text,
+                    page_index=page.order_index + 1,
+                    file_service=file_service,
+                    app=app,
+                )
+                qa = scene_artifacts['quality']
 
-            # 保存图片并创建历史版本记录
-            image_path, next_version = save_image_with_version(
-                image, project_id, page_id, file_service, page_obj=page
-            )
+            # 保存同源 hero 并在同一数据库事务中绑定最终 Scene Manifest。
+            try:
+                image_path, next_version = save_image_with_version(
+                    version_image,
+                    project_id,
+                    page_id,
+                    file_service,
+                    page_obj=page,
+                    scene_manifest_ref=(
+                        scene_artifacts['scene_manifest_ref'] if scene_artifacts else None
+                    ),
+                    scene_quality_score=(1.0 if scene_artifacts else None),
+                    scene_schema_version=(1 if scene_artifacts else None),
+                )
+            finally:
+                if version_image is not image:
+                    version_image.close()
             
             # Mark task as completed
             task.status = 'COMPLETED'
@@ -1408,11 +2172,18 @@ def generate_single_page_image_task(task_id: str, project_id: str, page_id: str,
                 visual_role=role,
                 layout_family=layout_family,
                 qa=qa,
+                quality_control=quality_control,
             )
             progress['quality_summary'] = summarize_generation_quality(progress.get('pages'))
             if progress['quality_summary']['warnings']:
                 progress['warning_message'] = "当前页面存在质量提醒，可调整描述后单页重试。"
             _set_image_task_progress(task, progress, file_service.upload_folder)
+            record_ppt_revision(
+                page.project,
+                'image.generate',
+                changed_page_ids=[page.id],
+                source_type='ai',
+            )
             db.session.commit()
             
             logger.info(f"✅ Task {task_id} COMPLETED - Page {page_id} image generated")
@@ -1530,6 +2301,12 @@ def edit_page_image_task(task_id: str, project_id: str, page_id: str,
                 "completed": 1,
                 "failed": 0
             })
+            record_ppt_revision(
+                page.project,
+                'image.edit',
+                changed_page_ids=[page.id],
+                source_type='manual',
+            )
             db.session.commit()
             
             logger.info(f"✅ Task {task_id} COMPLETED - Page {page_id} image edited")
@@ -1930,6 +2707,7 @@ def process_ppt_renovation_task(task_id: str, project_id: str, ai_service,
 
             # Process each page as an independent pipeline:
             # parse markdown → AI extract content → (optional layout caption) → write to DB
+            from services.material_import_service import import_reference_markdown_images_to_materials
             logger.info("Processing pages (parse → extract → save pipeline)...")
             import threading
             progress_lock = threading.Lock()
@@ -1954,6 +2732,16 @@ def process_ppt_renovation_task(task_id: str, project_id: str, ai_service,
                             hf_text = file_parser_service.extract_header_footer_from_layout(extract_id)
                             if hf_text:
                                 md_text = hf_text + '\n\n' + md_text
+
+                        if md_text.strip():
+                            with progress_lock:
+                                imported = import_reference_markdown_images_to_materials(
+                                    project_id=project_id,
+                                    markdown_content=md_text,
+                                    upload_folder=app.config['UPLOAD_FOLDER'],
+                                )
+                                if imported:
+                                    db.session.commit()
 
                         if not md_text.strip():
                             content = {'title': f'Page {idx + 1}', 'points': [], 'description': ''}
@@ -2059,10 +2847,18 @@ def process_ppt_renovation_task(task_id: str, project_id: str, ai_service,
                     else:
                         all_outlines.append(header)
                     all_descriptions.append(f"--- 第{i + 1}页 ---\n{description}")
-                project.outline_text = "\n\n".join(all_outlines)
-                project.description_text = "\n\n".join(all_descriptions)
-                project.status = 'DESCRIPTIONS_GENERATED'
+                update_spine_source_fields(project.content_spine, {
+                    'outline_text': "\n\n".join(all_outlines),
+                    'description_text': "\n\n".join(all_descriptions),
+                })
+                set_ppt_status(project, 'DESCRIPTIONS_GENERATED')
                 project.updated_at = datetime.utcnow()
+                record_ppt_revision(
+                    project,
+                    'renovation.process',
+                    changed_page_ids=[page.id for page in project.pages],
+                    source_type='ai',
+                )
 
             db.session.commit()
 
@@ -2095,7 +2891,7 @@ def process_ppt_renovation_task(task_id: str, project_id: str, ai_service,
             # Reset project status so user can retry
             project = Project.query.get(project_id)
             if project:
-                project.status = 'DRAFT'
+                set_ppt_status(project, 'DRAFT')
 
             db.session.commit()
 
@@ -2446,9 +3242,19 @@ def export_video_task(
     page_ids: list = None,
     language: str = 'zh',
     narration_config: dict | None = None,
+    narration_mode: str | None = None,
+    speakers: list | None = None,
+    tts_provider: str = 'edge',
+    auto_emotion: bool = True,
     director_plan: dict | None = None,
+    pronunciation_lexicon: list | None = None,
+    narration_preferences: dict | None = None,
+    narration_snapshot_path: str | None = None,
+    narration_snapshot_hash: str | None = None,
     frame_paths: list[str] | None = None,
     frame_sequences: list[list[str]] | None = None,
+    scene_manifests: list[dict] | None = None,
+    native_scene_bundles: list[dict] | None = None,
     app=None,
 ):
     """
@@ -2456,7 +3262,7 @@ def export_video_task(
 
     流程:
       0-20%  为缺少旁白的页面生成 narration_text（AI）
-      20-50% 逐页生成 TTS 音频（edge-tts）
+      20-50% 逐页生成 TTS 音频（Edge TTS 或 Fish Audio）
       50-90% 逐页创建 Ken Burns 视频片段（FFmpeg）
       90-100% 合成最终 MP4
     """
@@ -2471,17 +3277,30 @@ def export_video_task(
             check_ffmpeg_available,
             check_ffmpeg_ass_filter_available,
             create_placeholder_frame,
+            get_default_voice,
         )
 
-        # 读取 ElevenLabs 配置
         _settings = Settings.get_settings()
-        elevenlabs_config = None
-        if _settings.elevenlabs_enabled and _settings.elevenlabs_api_key:
-            elevenlabs_config = {
-                'api_key': _settings.elevenlabs_api_key,
-                'voice_id': _settings.elevenlabs_voice_id or None,
-            }
-        logger.info(f"[export_video] voice={voice!r} elevenlabs_enabled={_settings.elevenlabs_enabled} elevenlabs_config={'set' if elevenlabs_config else 'None'}")
+        tts_provider = str(tts_provider or 'edge').strip().lower()
+        if tts_provider not in {'edge', 'fish_audio'}:
+            raise RuntimeError(f'不支持的 TTS 引擎: {tts_provider}')
+        fish_api_key = ''
+        fish_model = app.config.get('FISH_AUDIO_MODEL', 's2.1-pro-free')
+        if tts_provider == 'fish_audio':
+            fish_api_key = str(
+                _settings.fish_audio_api_key or app.config.get('FISH_AUDIO_API_KEY') or ''
+            ).strip()
+            if not fish_api_key:
+                raise RuntimeError('Fish Audio API Key 未配置，请先在设置中保存并验证。')
+        # 非 edge-tts 音色名回退到本地默认音色，避免历史任务数据中断导出。
+        if tts_provider == 'edge' and voice and not _is_edge_tts_voice_name(voice):
+            fallback_voice = get_default_voice(language, dict(app.config))
+            logger.warning(
+                f"[export_video] 请求音色 {voice!r} 不是有效的 edge-tts 音色名，"
+                f"已回退到本地默认音色 {fallback_voice!r}"
+            )
+            voice = fallback_voice
+        logger.info(f"[export_video] provider={tts_provider!r}, voice={voice!r}")
 
         progress_messages = ["🚀 开始导出讲解视频..."]
         max_messages = 10
@@ -2515,6 +3334,7 @@ def export_video_task(
                 logger.warning(f"更新进度失败: {e}")
 
         placeholder_dir = None
+        artifact_directory = None
         try:
             _wait_if_export_task_paused(task_id)
             task = Task.query.get(task_id)
@@ -2526,9 +3346,125 @@ def export_video_task(
             if not project:
                 raise ValueError(f"Project {project_id} not found")
 
+            narration_snapshot = None
+            snapshot_pages = {}
+            snapshot_scene_manifests = None
+            snapshot_native_scene_bundles = None
+            snapshot_scene_levels = []
+            if narration_snapshot_path:
+                from services.video_export_snapshot import load_video_export_snapshot
+
+                narration_snapshot = load_video_export_snapshot(
+                    narration_snapshot_path,
+                    narration_snapshot_hash or '',
+                )
+                if narration_snapshot.get('project_id') != project_id:
+                    raise RuntimeError('视频导出快照与当前项目不匹配')
+                if 'scene_manifests' in narration_snapshot:
+                    snapshot_scene_manifests = narration_snapshot['scene_manifests']
+                if 'native_scene_bundles' in narration_snapshot:
+                    snapshot_native_scene_bundles = narration_snapshot['native_scene_bundles']
+                if isinstance(narration_snapshot.get('scene_levels'), list):
+                    snapshot_scene_levels = narration_snapshot['scene_levels']
+                snapshot_pages = {
+                    item['page_id']: item
+                    for item in narration_snapshot.get('pages', [])
+                    if isinstance(item, dict) and item.get('page_id')
+                }
+                snapshot_page_ids = [
+                    item['page_id']
+                    for item in narration_snapshot.get('pages', [])
+                    if isinstance(item, dict) and item.get('page_id')
+                ]
+                if page_ids is None:
+                    page_ids = snapshot_page_ids
+                elif snapshot_page_ids and page_ids != snapshot_page_ids:
+                    raise RuntimeError('视频导出页面顺序与不可变快照不一致')
+
+            if snapshot_scene_manifests is not None:
+                if scene_manifests is not None and scene_manifests != snapshot_scene_manifests:
+                    raise RuntimeError('场景清单引用与视频导出快照不一致')
+                effective_scene_manifests = snapshot_scene_manifests
+            else:
+                # Legacy tasks created before scene refs entered the immutable snapshot.
+                effective_scene_manifests = scene_manifests
+
+            scene_manifest_refs_by_page = {}
+            if effective_scene_manifests is not None:
+                if not isinstance(effective_scene_manifests, list):
+                    raise RuntimeError('场景清单引用必须是数组')
+                if effective_scene_manifests:
+                    from services.scene_manifest import load_scene_manifest
+
+                    if not page_ids or len(effective_scene_manifests) != len(page_ids):
+                        raise RuntimeError('场景清单数量与导出页面不一致')
+                    for reference, page_id in zip(effective_scene_manifests, page_ids):
+                        if reference is None:
+                            continue
+                        load_scene_manifest(reference, page_id)
+                        scene_manifest_refs_by_page[page_id] = reference
+
+            if snapshot_native_scene_bundles is not None:
+                if native_scene_bundles is not None and native_scene_bundles != snapshot_native_scene_bundles:
+                    raise RuntimeError('原生场景包引用与视频导出快照不一致')
+                effective_native_scene_bundles = snapshot_native_scene_bundles
+            else:
+                # Legacy tasks created before bundle refs entered the immutable snapshot.
+                effective_native_scene_bundles = native_scene_bundles
+
+            native_scene_bundle_refs_by_page = {}
+            if effective_native_scene_bundles is not None:
+                if not isinstance(effective_native_scene_bundles, list):
+                    raise RuntimeError('原生场景包引用必须是数组')
+                if effective_native_scene_bundles:
+                    from services.native_scene_bundle import load_native_scene_bundle
+
+                    if not page_ids or len(effective_native_scene_bundles) != len(page_ids):
+                        raise RuntimeError('原生场景包数量与导出页面不一致')
+                    if not effective_scene_manifests or len(effective_scene_manifests) != len(page_ids):
+                        raise RuntimeError('原生场景包缺少对应的场景清单')
+                    for bundle_ref, scene_ref, page_id in zip(
+                        effective_native_scene_bundles,
+                        effective_scene_manifests,
+                        page_ids,
+                    ):
+                        if bundle_ref is None and scene_ref is None:
+                            continue
+                        if bundle_ref is None or scene_ref is None:
+                            raise RuntimeError('原生场景包与场景清单的逐页降级位置不一致')
+                        load_native_scene_bundle(bundle_ref, page_id, scene_ref['sha256'])
+                        native_scene_bundle_refs_by_page[page_id] = bundle_ref
+
+            scene_levels_by_page = {
+                item['page_id']: item
+                for item in snapshot_scene_levels
+                if isinstance(item, dict) and item.get('page_id')
+            }
+
             export_allow_partial = project.export_allow_partial or False
             fail_fast = not export_allow_partial
+            if pronunciation_lexicon is None:
+                pronunciation_lexicon = project.get_pronunciation_lexicon()
+            if narration_preferences is None:
+                narration_preferences = project.get_narration_preferences()
             logger.info(f"视频导出设置: export_allow_partial={export_allow_partial}, fail_fast={fail_fast}")
+            configured_narration_mode = (
+                narration_config.get('narration_mode')
+                if isinstance(narration_config, dict)
+                else None
+            )
+            video_narration_mode = (
+                narration_mode
+                if narration_mode in {'single', 'dialogue'}
+                else configured_narration_mode
+                if configured_narration_mode in {'single', 'dialogue'}
+                else 'single'
+            )
+            video_speakers = speakers or (
+                narration_config.get('speakers', [])
+                if isinstance(narration_config, dict)
+                else []
+            )
 
             task.status = 'PROCESSING'
             _set_export_task_progress(task, {
@@ -2556,6 +3492,8 @@ def export_video_task(
             pages = get_filtered_pages(project_id, page_ids)
             if not pages:
                 raise ValueError("没有找到可导出的页面")
+            if narration_snapshot and {page.id for page in pages} != set(snapshot_pages):
+                raise RuntimeError('视频导出快照页面范围与当前任务不一致')
 
             # 构建页面列表：有图片的用实际图片，无图片的根据选项处理
             valid_pages = []
@@ -2610,27 +3548,81 @@ def export_video_task(
             progress_callback("准备", f"找到 {len(valid_pages)} 页幻灯片", 5)
 
             # ── Step 1: 生成缺失的旁白 ──
-            if generate_narration:
+            generated_snapshot_narrations = {}
+            has_pending_snapshot_pages = any(
+                entry.get('pending_generation')
+                for entry in snapshot_pages.values()
+            )
+            if generate_narration and (not narration_snapshot or has_pending_snapshot_pages):
                 from services.prompts import (
+                    get_dialogue_narration_generation_prompt,
                     get_narration_generation_prompt,
                     normalize_narration_generation_config,
+                    parse_dialogue_narration_result,
                     parse_narration_generation_result,
                 )
-                from services.ai_service_manager import get_ai_service
+                from services.narration_service import (
+                    has_dialogue_speakers,
+                    normalize_speakers,
+                    narration_config_hash,
+                    narration_source_hash,
+                    page_narration_is_current,
+                    set_page_narration,
+                )
 
-                ai_service = get_ai_service()
                 narration_generated = 0
-                project_topic = (project.idea_prompt or '').strip() if project else ''
+                project_topic = (
+                    get_spine_source_fields(project)['idea_prompt'].strip()
+                    if project else ''
+                )
                 normalized_narration_config = normalize_narration_generation_config(
                     narration_config,
                     fallback_topic=project_topic,
+                )
+                effective_mode = narration_mode if narration_mode in {'single', 'dialogue'} else normalized_narration_config.get('narration_mode', 'single')
+                effective_speakers = normalize_speakers(
+                    speakers or normalized_narration_config.get('speakers'),
+                    default_voice=voice,
+                )
+                video_narration_mode = effective_mode
+                video_speakers = effective_speakers
+                normalized_narration_config['narration_mode'] = effective_mode
+                normalized_narration_config['speakers'] = effective_speakers
+                current_config_hash = narration_config_hash(
+                    normalized_narration_config,
+                    effective_mode,
+                    effective_speakers,
                 )
                 image_prompt_field_names = get_image_prompt_field_names()
 
                 # 收集需要生成旁白的页面
                 pages_needing_narration = []  # list of (page, page_index_in_valid, desc_text)
                 for i, (page, _) in enumerate(valid_pages):
-                    desc_content = page.get_description_content()
+                    snapshot_entry = snapshot_pages.get(page.id)
+                    if snapshot_entry:
+                        if snapshot_entry.get('silent'):
+                            continue
+                        if snapshot_entry.get('text') or snapshot_entry.get('segments'):
+                            continue
+                    source_hash = narration_source_hash(
+                        page,
+                        normalized_narration_config,
+                        effective_mode,
+                        effective_speakers,
+                    )
+                    has_segments = bool(page.get_narration_segments())
+                    has_narration = bool((page.get_narration_text() or '').strip() or has_segments)
+                    dialogue_ready = effective_mode != 'dialogue' or has_dialogue_speakers(page.get_narration_segments())
+                    if has_narration:
+                        # Legacy pages have no hashes; stamp them without an extra AI call.
+                        if (not page.narration_source_hash or not page.narration_config_hash) and effective_mode == 'single':
+                            page.narration_source_hash = source_hash
+                            page.narration_config_hash = current_config_hash
+                            page.narration_status = page.narration_status or 'READY'
+                        elif page_narration_is_current(page, source_hash, current_config_hash) and dialogue_ready:
+                            continue
+                    frozen_source = snapshot_entry.get('source', {}) if snapshot_entry else {}
+                    desc_content = frozen_source.get('description') or page.get_description_content()
                     desc_text = ''
                     if desc_content:
                         desc_text = desc_content.get('text', '')
@@ -2639,7 +3631,7 @@ def export_video_task(
                             desc_text = '\n'.join(tc) if isinstance(tc, list) else str(tc)
                         desc_text = _append_extra_fields(desc_text, desc_content, image_prompt_field_names)
 
-                    outline_content = page.get_outline_content() or {}
+                    outline_content = frozen_source.get('outline') or page.get_outline_content() or {}
                     if not desc_text:
                         title = outline_content.get('title', '')
                         points = outline_content.get('points', [])
@@ -2647,17 +3639,20 @@ def export_video_task(
                             desc_text = f'{title}\n' + '\n'.join(f'- {p}' for p in points)
 
                     if not desc_text:
-                        if fail_fast:
+                        if fail_fast or effective_mode == 'dialogue':
                             raise RuntimeError(
                                 f"第 {page.order_index + 1} 页缺少可生成旁白的描述内容，当前项目未开启“允许返回半成品”，无法导出视频。"
                             )
                         continue
 
-                    pages_needing_narration.append((page, i + 1, outline_content, desc_text))
+                    pages_needing_narration.append((page, i + 1, outline_content, desc_text, source_hash))
 
                 if pages_needing_narration:
                     progress_callback("旁白", f"正在生成 {len(pages_needing_narration)} 页旁白...", 5)
                     try:
+                        from services.ai_service_manager import get_ai_service
+
+                        ai_service = get_ai_service()
                         prompt_pages = [
                             {
                                 'page_index': seq,
@@ -2665,31 +3660,59 @@ def export_video_task(
                                 'points': outline.get('points', []),
                                 'description_text': desc_text,
                             }
-                            for _, seq, outline, desc_text in pages_needing_narration
+                        for _, seq, outline, desc_text, _ in pages_needing_narration
                         ]
-                        prompt = get_narration_generation_prompt(
-                            prompt_pages,
-                            language=language,
-                            config=normalized_narration_config,
+                        prompt_builder = (
+                            get_dialogue_narration_generation_prompt
+                            if effective_mode == 'dialogue'
+                            else get_narration_generation_prompt
                         )
+                        prompt = prompt_builder(prompt_pages, language=language, config=normalized_narration_config)
                         result = ai_service.text_provider.generate_text(prompt)
-                        parsed = parse_narration_generation_result(result)
+                        parsed = (
+                            parse_dialogue_narration_result(result)
+                            if effective_mode == 'dialogue'
+                            else parse_narration_generation_result(result)
+                        )
 
-                        for page, seq, _, _ in pages_needing_narration:
+                        for page, seq, _, _, source_hash in pages_needing_narration:
                             narration = parsed.get(seq, '')
+                            if effective_mode == 'dialogue' and not has_dialogue_speakers(narration):
+                                raise RuntimeError(
+                                    f"第 {page.order_index + 1} 页未生成有效的双人旁白分段，已停止导出。"
+                                )
                             if narration:
-                                page.set_narration_text(narration)
+                                if narration_snapshot:
+                                    from services.narration_service import normalize_narration_segments, segments_to_text
+
+                                    normalized = normalize_narration_segments(
+                                        narration if isinstance(narration, list) else None,
+                                        fallback_text=narration if isinstance(narration, str) else None,
+                                    )
+                                    generated_snapshot_narrations[page.id] = {
+                                        'text': segments_to_text(normalized),
+                                        'segments': normalized,
+                                    }
+                                else:
+                                    set_page_narration(
+                                        page,
+                                        text=narration if isinstance(narration, str) else None,
+                                        segments=narration if isinstance(narration, list) else None,
+                                        source_hash=source_hash,
+                                        config_hash=current_config_hash,
+                                    )
                                 narration_generated += 1
                             elif fail_fast:
                                 raise RuntimeError(
                                     f"第 {page.order_index + 1} 页旁白生成结果为空，当前项目未开启“允许返回半成品”，已停止导出。"
                                 )
-                        db.session.commit()
+                        if not narration_snapshot:
+                            db.session.commit()
 
                     except RuntimeError:
                         raise
                     except Exception as e:
-                        if fail_fast:
+                        if fail_fast or effective_mode == 'dialogue':
                             raise RuntimeError(f"旁白生成失败，已停止导出: {e}") from e
                         logger.warning(f"批量生成旁白失败: {e}")
 
@@ -2703,9 +3726,18 @@ def export_video_task(
             for page, image_source in valid_pages:
                 stage_image_paths = image_source if isinstance(image_source, list) else [image_source]
                 img_path = stage_image_paths[-1]
-                db.session.refresh(page)
-                narration = page.narration_text
-                if not narration or not narration.strip():
+                snapshot_entry = snapshot_pages.get(page.id)
+                generated_entry = generated_snapshot_narrations.get(page.id)
+                if snapshot_entry:
+                    narration = (generated_entry or snapshot_entry).get('text') or ''
+                    narration_segments = (generated_entry or snapshot_entry).get('segments') or []
+                    explicit_silent = bool(snapshot_entry.get('silent'))
+                else:
+                    db.session.refresh(page)
+                    narration = page.narration_text
+                    narration_segments = page.get_narration_segments()
+                    explicit_silent = False
+                if not explicit_silent and not narration_segments and not str(narration or '').strip():
                     missing_narration_pages.append(page.order_index + 1)
                 logger.info(
                     f"[视频导出] 页面 {page.order_index + 1}: "
@@ -2716,13 +3748,23 @@ def export_video_task(
                 pages_data.append({
                     'image_path': img_path,
                     'narration_text': narration,
+                    'narration_segments': narration_segments,
+                    'narration_mode': video_narration_mode,
+                    'speakers': video_speakers,
                     'page_index': page.order_index,
                     'title': (page.get_outline_content() or {}).get('title', ''),
-                    'render_mode': project.render_mode or 'image',
+                    'page_id': page.id,
+                    'render_mode': get_ppt_settings(project)['render_mode'],
+                    'scene_manifest_ref': scene_manifest_refs_by_page.get(page.id),
+                    'native_scene_bundle_ref': native_scene_bundle_refs_by_page.get(page.id),
+                    'scene_level': scene_levels_by_page.get(page.id, {}).get('level'),
+                    'scene_level_reason': scene_levels_by_page.get(page.id, {}).get('reason'),
+                    'native_animation': (page.get_native_props() or {}).get('__animation', {}),
                     'stage_image_paths': stage_image_paths if len(stage_image_paths) > 1 else [],
+                    'allow_silent': explicit_silent,
                 })
 
-            if missing_narration_pages and fail_fast:
+            if missing_narration_pages and (fail_fast or video_narration_mode == 'dialogue'):
                 pages = '、'.join(str(idx) for idx in missing_narration_pages)
                 raise RuntimeError(
                     f"以下页面缺少旁白文本：第 {pages} 页。当前项目未开启“允许返回半成品”，已停止导出。"
@@ -2746,8 +3788,23 @@ def export_video_task(
             video_height = app.config.get('VIDEO_OUTPUT_HEIGHT', 1080)
             video_fps = app.config.get('VIDEO_FPS', 25)
             silent_duration = app.config.get('DEFAULT_SILENT_CLIP_DURATION', 3.0)
+            captured_frame_paths = frame_paths or [
+                path for sequence in (frame_sequences or []) for path in sequence
+            ]
+            expected_native_directory = os.path.abspath(
+                os.path.join(exports_dir, f'_native_video_{task_id}'),
+            )
+            artifact_directory = (
+                expected_native_directory
+                if any(
+                    os.path.abspath(os.path.dirname(path)) == expected_native_directory
+                    for path in captured_frame_paths
+                )
+                else os.path.join(exports_dir, f'_video_export_{task_id}')
+            )
+            os.makedirs(artifact_directory, exist_ok=True)
 
-            generate_narration_video(
+            quality_report = generate_narration_video(
                 pages_data=pages_data,
                 output_path=output_path,
                 voice=voice,
@@ -2761,9 +3818,23 @@ def export_video_task(
                 progress_callback=progress_callback,
                 silent_duration=silent_duration,
                 fail_fast=fail_fast,
-                elevenlabs_config=elevenlabs_config,
                 speed=speed,
+                narration_mode=video_narration_mode,
+                speakers=video_speakers,
+                tts_provider=tts_provider,
+                fish_api_key=fish_api_key,
+                fish_model=fish_model,
+                auto_emotion=bool(auto_emotion),
                 director_plan=director_plan,
+                pronunciation_lexicon=pronunciation_lexicon,
+                narration_preferences=narration_preferences,
+                language=language,
+                hyperframes_enabled=bool(app.config.get('HYPERFRAMES_ENABLED', False)),
+                hyperframes_executable=os.environ.get('EASYSLIDE_ELECTRON_EXECUTABLE'),
+                artifact_directory=artifact_directory,
+                project_id=project_id,
+                narration_snapshot_path=narration_snapshot_path,
+                narration_snapshot_hash=narration_snapshot_hash,
             )
 
             # ── Step 4: 标记完成 ──
@@ -2785,6 +3856,7 @@ def export_video_task(
                     "messages": progress_messages,
                     "download_url": download_path,
                     "filename": filename,
+                    "quality_report": quality_report or {},
                 })
                 db.session.commit()
                 logger.info(f"✅ 任务 {task_id} 完成 - 视频已导出: {output_path}")
@@ -2794,6 +3866,7 @@ def export_video_task(
             error_detail = traceback.format_exc()
             logger.error(f"✗ 视频导出任务 {task_id} 失败: {error_detail}")
 
+            db.session.rollback()
             task = Task.query.get(task_id)
             if task:
                 if task.status == 'PAUSED':
@@ -2810,9 +3883,306 @@ def export_video_task(
                 shutil.rmtree(placeholder_dir, ignore_errors=True)
             captured_frame_paths = frame_paths or [path for sequence in (frame_sequences or []) for path in sequence]
             if captured_frame_paths:
+                db.session.rollback()
                 task = Task.query.get(task_id)
-                if not task or task.status in {'COMPLETED', 'FAILED'}:
+                # Completed and failed exports retain reproducibility inputs; cancelled work is discarded.
+                if not task or task.status == 'CANCELLED':
                     import shutil
                     for directory in {os.path.dirname(path) for path in captured_frame_paths}:
                         if os.path.basename(directory) == f'_native_video_{task_id}':
                             shutil.rmtree(directory, ignore_errors=True)
+            if artifact_directory:
+                db.session.rollback()
+                task = Task.query.get(task_id)
+                if not task or task.status == 'CANCELLED':
+                    import shutil
+                    shutil.rmtree(artifact_directory, ignore_errors=True)
+
+
+def export_video_workspace_task(
+    task_id: str,
+    project_id: str,
+    filename: str,
+    snapshot_path: str,
+    snapshot_hash: str,
+    voice: str = 'zh-CN-XiaoxiaoNeural',
+    rate: str = '+0%',
+    enable_ken_burns: bool = False,
+    render_profile: str = 'final',
+    source_proof_task_id: str | None = None,
+    workspace_version_id: str | None = None,
+    app=None,
+):
+    """Render a frozen video-workspace document through the existing video engine."""
+    if app is None:
+        raise ValueError('Flask app instance must be provided')
+    placeholder_dir = None
+    try:
+        with app.app_context():
+            from services.tts_video_service import (
+                check_ffmpeg_available,
+                create_placeholder_frame,
+                generate_narration_video,
+            )
+            from services.video_workspace_export_snapshot import load_video_workspace_export_snapshot
+
+            task = Task.query.get(task_id)
+            if not task:
+                raise ValueError('视频工作区导出任务不存在')
+            _wait_if_export_task_paused(task_id)
+            task = Task.query.get(task_id)
+            task.status = 'PROCESSING'
+            _set_export_task_progress(task, {'total': 100, 'completed': 0, 'failed': 0, 'percent': 0, 'current_step': '准备视频工作区导出'})
+            db.session.commit()
+            ffmpeg_path = app.config.get('FFMPEG_PATH', 'ffmpeg')
+            if not check_ffmpeg_available(ffmpeg_path):
+                raise RuntimeError('FFmpeg 未安装或不在 PATH 中。请安装 FFmpeg 以使用视频导出功能。')
+            render_profile = str(render_profile or 'final').strip().lower()
+            if render_profile not in {'proof', 'final'}:
+                raise ValueError('render_profile must be proof or final')
+            snapshot = load_video_workspace_export_snapshot(snapshot_path, snapshot_hash)
+            items = snapshot['render_items']
+            director_plan = {
+                'version': 1,
+                'preset': 'workspace',
+                'config': {'subtitle_mode': 'standard'},
+                'pages': [],
+            }
+            for item in items:
+                animation = item.get('animation') or {}
+                intensity = str(animation.get('intensity') or 'subtle')
+                director_plan['pages'].append({
+                    'page_index': item.get('page_index', 0),
+                    'motion': {
+                        'effect': 'zoom_in' if intensity != 'none' else 'static',
+                        'intensity': intensity,
+                    },
+                    'transition': {
+                        'type': item.get('transition') or 'cut',
+                        'duration_ms': 420 if item.get('transition') not in {None, 'cut'} else 0,
+                    },
+                    'audio': {
+                        'normalize_loudness': True,
+                        'cues': item.get('audio_cues') or [],
+                    },
+                })
+            if render_profile == 'proof':
+                width, height, fps = 960, 540, 15
+            else:
+                width = app.config.get('VIDEO_OUTPUT_WIDTH', 1920)
+                height = app.config.get('VIDEO_OUTPUT_HEIGHT', 1080)
+                fps = app.config.get('VIDEO_FPS', 25)
+            placeholder_dir = os.path.join(app.config['UPLOAD_FOLDER'], project_id, 'exports', f'_workspace_placeholder_{task_id}')
+            os.makedirs(placeholder_dir, exist_ok=True)
+            fallback_scenes = []
+            for index, item in enumerate(items):
+                if item.get('image_path') and os.path.isfile(item['image_path']):
+                    continue
+                item['image_path'] = os.path.join(placeholder_dir, f'{index:04d}.png')
+                create_placeholder_frame(item['image_path'], title=item['title'], width=width, height=height, ffmpeg_path=ffmpeg_path)
+                fallback_scenes.append({'scene_id': item['scene_id'], 'reason': item['fallback_reason'] or 'missing_image'})
+
+            def progress_callback(_step, message, percent):
+                current = Task.query.get(task_id)
+                if current:
+                    _wait_if_export_task_paused(task_id)
+                    _set_export_task_progress(current, {'total': 100, 'completed': percent, 'failed': 0, 'percent': percent, 'current_step': message})
+                    db.session.commit()
+
+            exports_dir = os.path.join(app.config['UPLOAD_FOLDER'], project_id, 'exports')
+            os.makedirs(exports_dir, exist_ok=True)
+            output_path = os.path.join(exports_dir, filename if filename.endswith('.mp4') else f'{filename}.mp4')
+            quality_report = generate_narration_video(
+                pages_data=items, output_path=output_path, voice=voice, rate=rate,
+                width=width, height=height, fps=fps,
+                enable_ken_burns=enable_ken_burns or any(
+                    (item.get('animation') or {}).get('intensity') not in {None, 'none'}
+                    for item in items
+                ),
+                director_plan=director_plan,
+                narration_mode=next(
+                    (item.get('narration_mode') for item in items if item.get('narration_mode') == 'dialogue'),
+                    'single',
+                ),
+                ffmpeg_path=ffmpeg_path,
+                progress_callback=progress_callback,
+                silent_duration=app.config.get('DEFAULT_SILENT_CLIP_DURATION', 3.0),
+                fail_fast=True, hyperframes_enabled=True,
+                artifact_directory=os.path.join(exports_dir, f'_video_workspace_{task_id}'),
+                project_id=project_id,
+            )
+            task = Task.query.get(task_id)
+            _wait_if_export_task_paused(task_id)
+            task.status = 'COMPLETED'
+            task.completed_at = datetime.utcnow()
+            _set_export_task_progress(task, {
+                'total': 100, 'completed': 100, 'failed': 0, 'percent': 100,
+                'current_step': '✓ 视频工作区导出完成',
+                'download_url': f'/files/{project_id}/exports/{os.path.basename(output_path)}',
+                'quality_report': quality_report or {}, 'fallback_scenes': fallback_scenes,
+                'workspace_version': snapshot['workspace_version'],
+                'render_profile': render_profile,
+                'source_proof_task_id': source_proof_task_id,
+            })
+            db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        task = Task.query.get(task_id)
+        if task and task.status != 'PAUSED':
+            task.status = 'FAILED'
+            task.error_message = str(exc)
+            task.completed_at = datetime.utcnow()
+            db.session.commit()
+        logger.exception('视频工作区导出任务 %s 失败', task_id)
+    finally:
+        if placeholder_dir:
+            shutil.rmtree(placeholder_dir, ignore_errors=True)
+
+
+def _run_podcast_tts_with_timeout(call, timeout_seconds: float):
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='podcast-tts')
+    future = executor.submit(call)
+    try:
+        result = future.result(timeout=max(float(timeout_seconds), 0.1))
+    except FutureTimeoutError as exc:
+        future.cancel()
+        # ponytail: requests cannot be killed mid-call; replace with cancellable client if TTS throughput matters.
+        executor.shutdown(wait=False, cancel_futures=True)
+        raise TimeoutError(f'Fish Audio 播客合成超过 {timeout_seconds:g} 秒未完成') from exc
+    executor.shutdown(wait=True)
+    return result
+
+
+def _fish_tts_timeout_config(app, name: str, default: float) -> float:
+    return float(os.environ.get(name) or app.config.get(name, default) or default)
+
+
+def _start_podcast_tts_watchdog(app, task_id: str, timeout_seconds: float):
+    def fail_task():
+        with app.app_context():
+            task = Task.query.get(task_id)
+            if task and task.status in {'PENDING', 'PROCESSING', 'RUNNING'}:
+                task.status = 'FAILED'
+                task.error_message = f'Fish Audio 播客合成超过 {timeout_seconds:g} 秒未完成'
+                task.completed_at = datetime.utcnow()
+                db.session.commit()
+
+    # ponytail: watchdog may leave the provider request running; move Fish TTS to a killable process if volume grows.
+    timer = threading.Timer(max(float(timeout_seconds), 0.1), fail_task)
+    timer.daemon = True
+    timer.start()
+    return timer
+
+
+def export_podcast_workspace_task(
+    task_id: str, project_id: str, filename: str, snapshot_path: str, snapshot_hash: str, app=None,
+):
+    """Synthesize exactly the podcast document frozen by the export request."""
+    if app is None:
+        raise ValueError('Flask app instance must be provided')
+    try:
+        with app.app_context():
+            from services.podcast_export_service import (
+                load_podcast_export_snapshot,
+                preflight_podcast_materials,
+            )
+            from services.tts_video_service import generate_fish_narration_audio_sync
+
+            task = Task.query.get(task_id)
+            if not task:
+                raise ValueError('播客工作区导出任务不存在')
+            task.status = 'PROCESSING'
+            _set_export_task_progress(task, {'total': 100, 'completed': 0, 'failed': 0, 'percent': 0, 'current_step': '准备播客工作区导出'})
+            db.session.commit()
+            _wait_if_export_task_paused(task_id)
+            snapshot = load_podcast_export_snapshot(snapshot_path, snapshot_hash)
+            preflight_podcast_materials(project_id, snapshot)
+            if snapshot.get('export_config', {}).get('tts_provider') != 'fish_audio':
+                raise ValueError('播客工作区当前仅支持 Fish Audio 导出')
+            api_key = str(app.config.get('FISH_AUDIO_API_KEY') or os.environ.get('FISH_AUDIO_API_KEY') or '').strip()
+            if not api_key:
+                settings = Settings.get_settings()
+                api_key = str(settings.fish_audio_api_key or '').strip()
+            if not api_key:
+                raise ValueError('Fish Audio API Key 未配置，请先在设置中保存并验证')
+            exports_dir = os.path.join(app.config['UPLOAD_FOLDER'], project_id, 'exports')
+            working_dir = os.path.join(exports_dir, f'_podcast_workspace_{task_id}')
+            speakers = [{'id': item['speaker_id'], 'name': item['name'], 'voice': item['voice_ref']} for item in snapshot['speakers']]
+            total_timeout = _fish_tts_timeout_config(app, 'FISH_AUDIO_TTS_TOTAL_TIMEOUT', 360)
+            request_timeout = (
+                min(_fish_tts_timeout_config(app, 'FISH_AUDIO_TTS_CONNECT_TIMEOUT', 15), total_timeout),
+                min(_fish_tts_timeout_config(app, 'FISH_AUDIO_TTS_READ_TIMEOUT', 300), total_timeout),
+            )
+            _set_export_task_progress(task, {
+                'percent': 5,
+                'current_step': f'正在 Fish Audio 合成播客（超时 {total_timeout:g}s）',
+            })
+            db.session.commit()
+            watchdog = _start_podcast_tts_watchdog(app, task_id, total_timeout)
+            try:
+                audio_path, duration, _durations = _run_podcast_tts_with_timeout(
+                    lambda: generate_fish_narration_audio_sync(
+                        segments=snapshot['segments'], speakers=speakers, narration_mode=snapshot['format'],
+                        cache_dir=os.path.join(app.config['UPLOAD_FOLDER'], 'audio_cache'), working_dir=working_dir,
+                        api_key=api_key, model=app.config.get('FISH_AUDIO_MODEL', 's2.1-pro-free'),
+                        api_base=str(os.environ.get('FISH_AUDIO_API_BASE') or app.config.get('FISH_AUDIO_API_BASE', 'https://api.fish.audio')),
+                        ffmpeg_path=app.config.get('FFMPEG_PATH', 'ffmpeg'),
+                        request_timeout=request_timeout,
+                        total_timeout=total_timeout,
+                    ),
+                    total_timeout,
+                )
+            finally:
+                watchdog.cancel()
+            _wait_if_export_task_paused(task_id)
+            task = Task.query.get(task_id)
+            if task and task.status == 'FAILED':
+                return
+            os.makedirs(exports_dir, exist_ok=True)
+            output_path = os.path.join(exports_dir, filename)
+            from services.podcast_export_service import (
+                check_podcast_audio_peak,
+                mix_podcast_audio,
+                write_podcast_export_sidecars,
+            )
+            cover_asset = snapshot.get('export_config', {}).get('cover_asset') or {}
+            cover_path = None
+            if cover_asset.get('relative_path'):
+                cover_path = os.path.abspath(os.path.join(app.config['UPLOAD_FOLDER'], cover_asset['relative_path']))
+            metadata = {
+                'title': snapshot.get('title'),
+                'artist': ', '.join(item.get('name', '') for item in snapshot.get('speakers', []) if item.get('name')),
+                'album': snapshot.get('title'),
+                'comment': json.dumps({
+                    'chapters': [
+                        {'index': index + 1, 'title': item.get('text', '')[:80]}
+                        for index, item in enumerate(snapshot.get('segments', []))
+                    ],
+                }, ensure_ascii=False, separators=(',', ':')),
+            }
+            duration = mix_podcast_audio(
+                narration_path=audio_path, output_path=output_path, document=snapshot,
+                audio_assets=snapshot.get('export_config', {}).get('audio_assets', []),
+                upload_root=app.config['UPLOAD_FOLDER'], ffmpeg_path=app.config.get('FFMPEG_PATH', 'ffmpeg'),
+                metadata=metadata, cover_path=cover_path,
+                audio_mix=snapshot.get('audio_mix'),
+            )
+            _wait_if_export_task_paused(task_id)
+            sidecars = write_podcast_export_sidecars(output_path=output_path, snapshot=snapshot, cover_path=cover_path)
+            peak_db = check_podcast_audio_peak(output_path, app.config.get('FFMPEG_PATH', 'ffmpeg'))
+            _wait_if_export_task_paused(task_id)
+            task = Task.query.get(task_id)
+            task.status = 'COMPLETED'
+            task.completed_at = datetime.utcnow()
+            _set_export_task_progress(task, {'total': 100, 'completed': 100, 'failed': 0, 'percent': 100, 'current_step': '✓ 播客工作区导出完成', 'download_url': f'/files/{project_id}/exports/{os.path.basename(output_path)}', 'workspace_version': snapshot['workspace_version'], 'audio_mix_manifest_hash': (snapshot.get('audio_mix') or {}).get('manifest_hash'), 'duration_seconds': duration, 'peak_db': peak_db, 'sidecars': {key: f'/files/{project_id}/exports/{os.path.basename(value)}' for key, value in sidecars.items()}})
+            db.session.commit()
+    except Exception as exc:
+        with app.app_context():
+            db.session.rollback()
+            task = Task.query.get(task_id)
+            if task and task.status != 'PAUSED':
+                task.status = 'FAILED'
+                task.error_message = str(exc)
+                task.completed_at = datetime.utcnow()
+                db.session.commit()
+        logger.exception('播客工作区导出任务 %s 失败', task_id)
