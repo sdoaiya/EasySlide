@@ -223,6 +223,56 @@ export interface NarrationCandidateResponse {
   estimated_seconds?: number;
 }
 
+/** 候选稳定契约（重构计划 §7.4）：candidate_id 即 NarrationVersion.id */
+export interface NarrationCandidate {
+  candidate_id: string;
+  page_id: string;
+  source_page_revision: number;
+  base_version_id?: string | null;
+  source_content_hash: string;
+  status: 'candidate' | 'applied' | 'archived';
+  operation: string;
+  style_profile_id: string;
+  expressiveness_id: string;
+  voice_profile_id: string;
+  text: string;
+  segments: NarrationSegment[];
+  provider: string;
+  model_id: string;
+  prompt_version: string;
+  created_at?: string | null;
+}
+
+/** 活动/历史 AI 文案任务摘要（刷新恢复用） */
+export interface NarrationAiJobSummary {
+  task_id: string;
+  status: NarrationAiJobStatus;
+  operation?: string;
+  scope?: string;
+  total: number;
+  completed: number;
+  failed: number;
+  skipped: number;
+  page_ids: string[];
+  error_message?: string | null;
+  created_at?: string | null;
+  completed_at?: string | null;
+}
+
+export interface NarrationBatchApplyItem {
+  candidate_id: string;
+  base_revision: number;
+}
+
+export interface NarrationBatchApplyResult {
+  candidate_id: string;
+  page_id?: string;
+  status: 'applied' | 'conflict' | 'skipped' | 'error';
+  revision?: number;
+  applied_version_id?: string;
+  message?: string;
+}
+
 export interface NarrationPreviewTiming {
   segment_id?: string;
   start_ms: number;
@@ -274,6 +324,8 @@ export interface NarrationAiJobResult {
   completed: number;
   failed: number;
   skipped: number;
+  operation?: string;
+  scope?: string;
   pages: Array<{
     page_id: string;
     status: 'candidate' | 'failed' | 'skipped';

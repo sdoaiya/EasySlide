@@ -789,6 +789,7 @@ def generate_narration_candidates_task(
         NarrationRevisionConflict,
         create_ai_narration_candidate,
         ensure_legacy_narration_version,
+        provider_metadata,
     )
     from services.prompts import get_narration_candidate_prompt
 
@@ -851,7 +852,6 @@ def generate_narration_candidates_task(
                         generation_config=generation_config,
                     )
                     result = parse_result(get_ai_service().text_provider.generate_text(prompt))
-
                     _wait_if_task_paused(task_id)
                     db.session.expire_all()
                     task = db.session.get(Task, task_id)
@@ -876,6 +876,7 @@ def generate_narration_candidates_task(
                             payload=payload,
                             result=result,
                             source_type=source_type,
+                            provider_meta=provider_metadata(get_ai_service().text_provider),
                         )
                         db.session.commit()
                         outcome = {

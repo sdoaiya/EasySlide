@@ -35,7 +35,7 @@ def _add_20_page_project(app, *, title, content_project=False):
         return project.id
 
 
-def _measure_project_read_p95_ms(client, project_id, *, samples=100):
+def _measure_project_read_p95_ms(client, project_id, *, samples=150):
     for _ in range(5):
         assert client.get(f"/api/projects/{project_id}").status_code == 200
 

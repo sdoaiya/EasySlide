@@ -586,6 +586,7 @@ def create_ai_narration_candidate(
     payload: dict,
     result: dict,
     source_type: str,
+    provider_meta: Optional[dict] = None,
 ):
     from models import NarrationVersion, db
 
@@ -605,11 +606,7 @@ def create_ai_narration_candidate(
         status='candidate',
         parent_version_id=base_version_id or page.current_narration_version_id,
         ai_operation=payload.get('operation'),
-        ai_config={
-            'instruction': payload.get('instruction'),
-            'selection': payload.get('selection'),
-            'generation_config': payload.get('generation_config'),
-        },
+        ai_config=_candidate_config_base(page, payload, provider_meta),
         created_by='ai',
     )
     db.session.add(version)
@@ -656,4 +653,78 @@ def narration_diff(before: Any, after: Any) -> dict:
         'similarity': round(SequenceMatcher(None, before_text, after_text).ratio(), 4),
         'before_characters': len(before_text),
         'after_characters': len(after_text),
+    }
+
+
+# --- 阶段3：候选稳定契约（重构计划 §7.4） ---
+
+_PROVIDER_MODULE_NAMES = ('openai', 'genai', 'codex', 'anthropic', 'lazyllm', 'edge')
+_PROMPT_VERSION = 'narration-candidate-v2'
+UNKNOWN_ID = 'legacy.unknown'
+
+
+def provider_metadata(provider) -> dict:
+    """Capture the real upstream provider/model identity without guessing."""
+    module = type(provider).__module__.lower()
+    provider_name = next(
+        (name for name in _PROVIDER_MODULE_NAMES if name in module),
+        'unknown',
+    )
+    model = getattr(provider, 'model', None)
+    return {
+        'provider': provider_name,
+        'model_id': str(model) if model else UNKNOWN_ID,
+        'prompt_version': _PROMPT_VERSION,
+    }
+
+
+def _candidate_config_base(page, payload: dict, provider_meta: Optional[dict]) -> dict:
+    config = {
+        'instruction': payload.get('instruction'),
+        'selection': payload.get('selection'),
+        'generation_config': payload.get('generation_config'),
+        'source_page_revision': int(getattr(page, 'narration_revision', 0) or 0),
+        'source_content_hash': getattr(page, 'narration_source_hash', None),
+        'prompt_version': _PROMPT_VERSION,
+    }
+    if provider_meta:
+        config.update(provider_meta)
+    return config
+
+
+def candidate_contract(version) -> dict:
+    """Stable candidate contract; ``NarrationVersion.id`` is the candidate id.
+
+    Missing legacy fields serialize as ``legacy.unknown`` — never guessed
+    provider/model/style IDs. Falls back to the page's live revision/hash
+    only when the legacy candidate predates the normalized ai_config.
+    """
+    config = version.get_ai_config() or {}
+    generation_config = config.get('generation_config') or {}
+    page = version.page
+    page_revision = int(
+        config.get('source_page_revision')
+        or getattr(page, 'narration_revision', 0)
+        or 0
+    )
+    source_hash = config.get('source_content_hash') or getattr(
+        page, 'narration_source_hash', None,
+    )
+    return {
+        'candidate_id': version.id,
+        'page_id': version.page_id,
+        'source_page_revision': page_revision,
+        'base_version_id': version.parent_version_id,
+        'source_content_hash': source_hash or UNKNOWN_ID,
+        'status': version.status,
+        'operation': version.ai_operation or UNKNOWN_ID,
+        'style_profile_id': str(generation_config.get('style_profile_id') or UNKNOWN_ID),
+        'expressiveness_id': str(generation_config.get('expressiveness_id') or UNKNOWN_ID),
+        'voice_profile_id': str(generation_config.get('voice_profile_id') or UNKNOWN_ID),
+        'text': version.text,
+        'segments': version.get_segments(),
+        'provider': str(config.get('provider') or UNKNOWN_ID),
+        'model_id': str(config.get('model_id') or UNKNOWN_ID),
+        'prompt_version': str(config.get('prompt_version') or UNKNOWN_ID),
+        'created_at': version.created_at.isoformat() if version.created_at else None,
     }

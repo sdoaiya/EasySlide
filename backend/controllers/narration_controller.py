@@ -15,9 +15,11 @@ from services.narration_service import (
     NarrationLocked,
     NarrationRevisionConflict,
     apply_narration_version,
+    candidate_contract,
     create_ai_narration_candidate,
     ensure_legacy_narration_version,
     narration_diff,
+    provider_metadata,
     save_manual_narration_version,
     save_narration_draft,
     set_narration_lock,
@@ -261,6 +263,7 @@ def create_ai_candidate(project_id, page_id):
         payload=payload,
         result=parsed,
         source_type=source_type,
+        provider_meta=provider_metadata(get_ai_service().text_provider),
     ))
     if isinstance(result, tuple):
         return result
@@ -389,6 +392,167 @@ def control_ai_candidate_job(project_id, task_id, action):
         return not_found('Action')
     db.session.commit()
     return success_response(task.to_dict())
+
+
+@narration_bp.route('/<project_id>/narrations/ai-jobs', methods=['GET'])
+def list_ai_candidate_jobs(project_id):
+    """活动/历史 AI 文案任务列表；刷新后用于恢复任务展示（阶段3）。"""
+    if not Project.query.get(project_id):
+        return not_found('Project')
+    status = str(request.args.get('status') or '').strip()
+    query = Task.query.filter_by(project_id=project_id, task_type=_AI_JOB_TASK_TYPE)
+    if status == 'active':
+        query = query.filter(Task.status.in_(['PENDING', 'PROCESSING', 'RUNNING', 'PAUSED']))
+    elif status:
+        query = query.filter_by(status=status)
+    tasks = query.order_by(Task.created_at.desc()).limit(50).all()
+    return success_response({
+        'jobs': [
+            {
+                'task_id': task.id,
+                'status': task.status,
+                'operation': task.get_progress().get('operation'),
+                'scope': task.get_progress().get('scope'),
+                'total': task.get_progress().get('total', 0),
+                'completed': task.get_progress().get('completed', 0),
+                'failed': task.get_progress().get('failed', 0),
+                'skipped': task.get_progress().get('skipped', 0),
+                'page_ids': task.get_progress().get('page_ids') or [],
+                'error_message': task.error_message,
+                'created_at': task.created_at.isoformat() if task.created_at else None,
+                'completed_at': task.completed_at.isoformat() if task.completed_at else None,
+            }
+            for task in tasks
+        ],
+        'total': len(tasks),
+    })
+
+
+def _candidate_query(project_id, page_ids, status):
+    query = (
+        NarrationVersion.query
+        .join(Page, NarrationVersion.page_id == Page.id)
+        .filter(Page.project_id == project_id)
+    )
+    if page_ids:
+        query = query.filter(NarrationVersion.page_id.in_(page_ids))
+    if status:
+        query = query.filter(NarrationVersion.status == status)
+    return query.order_by(NarrationVersion.created_at.desc()).limit(200)
+
+
+@narration_bp.route('/<project_id>/narration-candidates', methods=['GET'])
+def list_narration_candidates(project_id):
+    """候选列表，返回稳定候选契约（§7.4）。"""
+    if not Project.query.get(project_id):
+        return not_found('Project')
+    page_ids = [
+        str(value) for value in request.args.getlist('page_id')
+        if str(value).strip()
+    ]
+    status = str(request.args.get('status') or 'candidate').strip()
+    if status not in {'candidate', 'applied', 'archived'}:
+        return error_response('INVALID_NARRATION', 'status 仅支持 candidate、applied、archived', 400)
+    versions = _candidate_query(project_id, page_ids, status).all()
+    return success_response({
+        'candidates': [candidate_contract(version) for version in versions],
+        'total': len(versions),
+    })
+
+
+@narration_bp.route('/<project_id>/narration-candidates/batch-apply', methods=['POST'])
+def batch_apply_narration_candidates(project_id):
+    """逐页应用候选：每项携带 candidate_id + base_revision，逐页校验冲突。
+
+    冲突页跳过并报告，不回滚已成功页面，也不静默覆盖。
+    """
+    if not Project.query.get(project_id):
+        return not_found('Project')
+    payload = request.get_json(silent=True)
+    items = payload.get('items') if isinstance(payload, dict) else None
+    if not isinstance(items, list) or not items or len(items) > 200:
+        return error_response('INVALID_NARRATION', 'items 必须是 1-200 个候选应用项', 400)
+
+    results = []
+    applied = 0
+    for item in items:
+        if not isinstance(item, dict):
+            results.append({'candidate_id': None, 'status': 'error', 'message': '无效的应用项'})
+            continue
+        candidate_id = str(item.get('candidate_id') or '')
+        try:
+            base_revision = int(item.get('base_revision'))
+        except (TypeError, ValueError):
+            results.append({'candidate_id': candidate_id, 'status': 'error', 'message': 'base_revision 无效'})
+            continue
+        candidate = NarrationVersion.query.get(candidate_id)
+        page = candidate.page if candidate else None
+        if not candidate or not page or page.project_id != project_id:
+            results.append({'candidate_id': candidate_id, 'status': 'error', 'message': '候选不存在或不属于当前项目'})
+            continue
+        if candidate.status != 'candidate':
+            results.append({'candidate_id': candidate_id, 'page_id': page.id, 'status': 'skipped', 'message': '候选已被应用或丢弃'})
+            continue
+        if page.narration_locked:
+            results.append({'candidate_id': candidate_id, 'page_id': page.id, 'status': 'skipped', 'message': '页面旁白已锁定'})
+            continue
+        try:
+            applied_version = apply_narration_version(page, candidate, base_revision)
+            db.session.commit()
+            applied += 1
+            results.append({
+                'candidate_id': candidate_id,
+                'page_id': page.id,
+                'status': 'applied',
+                'revision': int(page.narration_revision or 0),
+                'applied_version_id': applied_version.id,
+            })
+        except NarrationRevisionConflict:
+            db.session.rollback()
+            results.append({
+                'candidate_id': candidate_id,
+                'page_id': page.id,
+                'status': 'conflict',
+                'message': f'页面旁白已被更新，当前 revision 为 {page.narration_revision or 0}',
+            })
+        except NarrationLocked:
+            db.session.rollback()
+            results.append({'candidate_id': candidate_id, 'page_id': page.id, 'status': 'skipped', 'message': '页面旁白已锁定'})
+        except Exception as exc:
+            db.session.rollback()
+            results.append({'candidate_id': candidate_id, 'page_id': page.id, 'status': 'error', 'message': str(exc)})
+
+    return success_response({'results': results, 'applied': applied, 'conflicts': len(results) - applied})
+
+
+@narration_bp.route('/<project_id>/narration-candidates/batch-archive', methods=['POST'])
+def batch_archive_narration_candidates(project_id):
+    """批量丢弃候选；已应用/已归档的候选跳过。"""
+    if not Project.query.get(project_id):
+        return not_found('Project')
+    payload = request.get_json(silent=True)
+    candidate_ids = payload.get('candidate_ids') if isinstance(payload, dict) else None
+    if not isinstance(candidate_ids, list) or not candidate_ids or len(candidate_ids) > 200:
+        return error_response('INVALID_NARRATION', 'candidate_ids 必须是 1-200 个候选 ID', 400)
+
+    results = []
+    archived = 0
+    for candidate_id in candidate_ids:
+        candidate_id = str(candidate_id)
+        candidate = NarrationVersion.query.get(candidate_id)
+        page = candidate.page if candidate else None
+        if not candidate or not page or page.project_id != project_id:
+            results.append({'candidate_id': candidate_id, 'status': 'error', 'message': '候选不存在或不属于当前项目'})
+            continue
+        if candidate.status != 'candidate':
+            results.append({'candidate_id': candidate_id, 'page_id': page.id, 'status': 'skipped', 'message': '候选已被应用或丢弃'})
+            continue
+        candidate.status = 'archived'
+        db.session.commit()
+        archived += 1
+        results.append({'candidate_id': candidate_id, 'page_id': page.id, 'status': 'archived'})
+
+    return success_response({'results': results, 'archived': archived})
 
 
 def _preview_source(page, payload):

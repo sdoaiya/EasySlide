@@ -1,5 +1,5 @@
 import { apiClient, getApiBaseUrl } from './client';
-import type { Project, Task, ApiResponse, CreateProjectRequest, Page, Material, NativeExportQualityReport, ProjectDashboardStats, ImageGenerationOptions, ImageGenerationResponse, FishAudioVoice, NarrationPreferences, PronunciationEntry, NarrationPolicy, NarrationVersion, ProjectNarrationSummary, NarrationVersionsResponse, NarrationCandidateResponse, NarrationPreviewResult, CreateNarrationVersionRequest, NarrationAiCandidateRequest, NarrationPreviewRequest, NarrationAiJobRequest, NarrationAiJobResult, NarrationAiJobStatus, ContentProject, ContentProjectEntry, ContentSpine, ContentSyncProposal, ContentWorkspaceKind, ProjectWorkspace, WorkspaceVersion } from '@/types';
+import type { Project, Task, ApiResponse, CreateProjectRequest, Page, Material, NativeExportQualityReport, ProjectDashboardStats, ImageGenerationOptions, ImageGenerationResponse, FishAudioVoice, NarrationPreferences, PronunciationEntry, NarrationPolicy, NarrationVersion, ProjectNarrationSummary, NarrationVersionsResponse, NarrationCandidateResponse, NarrationPreviewResult, CreateNarrationVersionRequest, NarrationAiCandidateRequest, NarrationPreviewRequest, NarrationAiJobRequest, NarrationAiJobResult, NarrationAiJobStatus, NarrationAiJobSummary, NarrationCandidate, NarrationBatchApplyItem, NarrationBatchApplyResult, ContentProject, ContentProjectEntry, ContentSpine, ContentSyncProposal, ContentWorkspaceKind, ProjectWorkspace, WorkspaceVersion } from '@/types';
 import type { Settings } from '../types/index';
 import type { NativeMotionSceneBundle, NativeSceneManifestRef } from '@/native-deck/exportNativeMotionBundle';
 import type { NativeSceneManifest } from '@/native-deck/nativeSceneAdapter';
@@ -1142,6 +1142,59 @@ export const getNarrationAiJobResult = async (
 ): Promise<ApiResponse<NarrationAiJobResult>> => {
   const response = await apiClient.get<ApiResponse<NarrationAiJobResult>>(
     `/api/projects/${projectId}/narrations/ai-jobs/${taskId}/result`,
+  );
+  return response.data;
+};
+
+/** 活动/历史 AI 文案任务列表；刷新后用于恢复任务展示（阶段3） */
+export const listNarrationAiJobs = async (
+  projectId: string,
+  status?: 'active',
+): Promise<ApiResponse<{ jobs: NarrationAiJobSummary[]; total: number }>> => {
+  const params = new URLSearchParams();
+  if (status) params.append('status', status);
+  const query = params.toString();
+  const response = await apiClient.get<ApiResponse<{ jobs: NarrationAiJobSummary[]; total: number }>>(
+    `/api/projects/${projectId}/narrations/ai-jobs${query ? `?${query}` : ''}`,
+  );
+  return response.data;
+};
+
+/** 候选列表（稳定契约） */
+export const listNarrationCandidates = async (
+  projectId: string,
+  options: { pageIds?: string[]; status?: 'candidate' | 'applied' | 'archived' } = {},
+): Promise<ApiResponse<{ candidates: NarrationCandidate[]; total: number }>> => {
+  const params = new URLSearchParams();
+  (options.pageIds || []).forEach((pageId) => params.append('page_id', pageId));
+  if (options.status) params.append('status', options.status);
+  const query = params.toString();
+  const response = await apiClient.get<ApiResponse<{ candidates: NarrationCandidate[]; total: number }>>(
+    `/api/projects/${projectId}/narration-candidates${query ? `?${query}` : ''}`,
+  );
+  return response.data;
+};
+
+/** 逐页批量应用候选；每项携带 base_revision，冲突页跳过并报告 */
+export const batchApplyNarrationCandidates = async (
+  projectId: string,
+  items: NarrationBatchApplyItem[],
+): Promise<ApiResponse<{ results: NarrationBatchApplyResult[]; applied: number; conflicts: number }>> => {
+  const response = await apiClient.post<ApiResponse<{ results: NarrationBatchApplyResult[]; applied: number; conflicts: number }>>(
+    `/api/projects/${projectId}/narration-candidates/batch-apply`,
+    { items },
+  );
+  return response.data;
+};
+
+/** 批量丢弃候选 */
+export const batchArchiveNarrationCandidates = async (
+  projectId: string,
+  candidateIds: string[],
+): Promise<ApiResponse<{ results: NarrationBatchApplyResult[]; archived: number }>> => {
+  const response = await apiClient.post<ApiResponse<{ results: NarrationBatchApplyResult[]; archived: number }>>(
+    `/api/projects/${projectId}/narration-candidates/batch-archive`,
+    { candidate_ids: candidateIds },
   );
   return response.data;
 };

@@ -19,6 +19,10 @@ vi.mock('@/api/endpoints', () => ({
   pauseNarrationAiJob: vi.fn(),
   resumeNarrationAiJob: vi.fn(),
   cancelNarrationAiJob: vi.fn(),
+  listNarrationAiJobs: vi.fn(),
+  listNarrationCandidates: vi.fn(),
+  batchApplyNarrationCandidates: vi.fn(),
+  batchArchiveNarrationCandidates: vi.fn(),
 }));
 
 const summary = {
@@ -42,6 +46,7 @@ describe('NarrationWorkbench', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(endpoints.getProjectNarrations).mockResolvedValue({ success: true, message: '', data: summary });
+    vi.mocked(endpoints.listNarrationAiJobs).mockResolvedValue({ success: true, message: '', data: { jobs: [], total: 0 } });
     vi.mocked(endpoints.getPageNarrationVersions).mockResolvedValue({
       success: true,
       message: '',

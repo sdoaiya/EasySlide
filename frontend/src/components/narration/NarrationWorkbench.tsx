@@ -3,6 +3,7 @@ import { Lock, PanelRight, Pause, Play, Save, Sparkles, Square, Unlock, X } from
 
 import {
   applyNarrationVersion,
+  batchApplyNarrationCandidates,
   cancelNarrationAiJob,
   createNarrationAiCandidate,
   createNarrationAiJob,
@@ -11,12 +12,14 @@ import {
   getPageNarrationVersions,
   getProjectNarrations,
   getNarrationAiJobResult,
+  listNarrationAiJobs,
+  listNarrationCandidates,
   pauseNarrationAiJob,
   previewPageNarration,
   resumeNarrationAiJob,
   setPageNarrationLock,
 } from '@/api/endpoints';
-import { Button, SegmentedControl } from '@/components/shared';
+import { Button, SegmentedControl, Textarea } from '@/components/shared';
 import type {
   NarrationMode,
   NarrationAiJobResult,
@@ -87,11 +90,50 @@ export function NarrationWorkbench({
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [aiJob, setAiJob] = useState<NarrationAiJobResult | null>(null);
   const [aiJobPending, setAiJobPending] = useState(false);
+  const [selectedPageIds, setSelectedPageIds] = useState<Set<string>>(new Set());
+  const [pageFilter, setPageFilter] = useState<'all' | 'missing' | 'candidates' | 'locked'>('all');
+  const [batchOpen, setBatchOpen] = useState(false);
+  const [batchScope, setBatchScope] = useState<'current' | 'selected' | 'missing' | 'all_unlocked'>('selected');
+  const [batchOperation, setBatchOperation] = useState('polish');
+  const [batchInstruction, setBatchInstruction] = useState('');
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(savedDraft);
   const visiblePages = useMemo(() => (
     summary?.pages.filter((page) => !pageIds?.length || pageIds.includes(page.page_id)) || []
   ), [pageIds, summary]);
+
+  const filteredPages = useMemo(() => visiblePages.filter((page) => {
+    if (pageFilter === 'missing') return !page.current_version_id;
+    if (pageFilter === 'candidates') return page.candidate_count > 0;
+    if (pageFilter === 'locked') return page.locked;
+    return true;
+  }), [pageFilter, visiblePages]);
+
+  // 刷新/重新打开后恢复最近的活动批量任务（阶段3 §7.2）
+  useEffect(() => {
+    if (!open) return;
+    let active = true;
+    void listNarrationAiJobs(projectId, 'active')
+      .then((response) => {
+        if (!active) return;
+        const job = response.data?.jobs?.[0];
+        if (job) {
+          setAiJob({
+            task_id: job.task_id,
+            status: job.status as NarrationAiJobResult['status'],
+            total: job.total,
+            completed: job.completed,
+            failed: job.failed,
+            skipped: job.skipped,
+            pages: [],
+            operation: job.operation,
+            scope: job.scope,
+          });
+        }
+      })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, [open, projectId]);
 
   useEffect(() => () => {
     if (preview?.audio_url.startsWith('blob:')) URL.revokeObjectURL(preview.audio_url);
@@ -237,6 +279,76 @@ export function NarrationWorkbench({
     }
   };
 
+  const batchTargetPageIds = (scope: typeof batchScope): string[] | undefined => {
+    if (scope === 'current') return [selectedPageId];
+    if (scope === 'selected') return Array.from(selectedPageIds);
+    return undefined;
+  };
+
+  const submitBatch = async () => {
+    setAiJobPending(true);
+    setError('');
+    try {
+      const pageIds = batchTargetPageIds(batchScope);
+      if (batchScope === 'selected' && (!pageIds || pageIds.length === 0)) {
+        setError('请先勾选要批量处理的页面');
+        return;
+      }
+      const response = await createNarrationAiJob(projectId, {
+        scope: batchScope === 'current' || batchScope === 'selected' ? 'selected' : batchScope,
+        pageIds,
+        operation: batchOperation,
+        instruction: batchInstruction,
+        generationConfig: {
+          style_profile_id: 'script.conversational.v1',
+          expressiveness_id: 'expression.standard.v1',
+          language: 'zh-CN',
+        },
+      });
+      if (!response.data) throw new Error('AI 批量任务创建失败');
+      setAiJob({ ...response.data, completed: 0, failed: 0, skipped: 0, pages: [] });
+      setBatchOpen(false);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setAiJobPending(false);
+    }
+  };
+
+  const batchApplyCandidates = async () => {
+    setAiJobPending(true);
+    setError('');
+    try {
+      const target = batchTargetPageIds(batchScope) || [];
+      if (!target.length) {
+        setError('请先勾选要应用候选的页面');
+        return;
+      }
+      const listing = await listNarrationCandidates(projectId, { pageIds: target, status: 'candidate' });
+      const candidates = listing.data?.candidates || [];
+      if (!candidates.length) {
+        setError('所选页面没有待应用候选');
+        return;
+      }
+      const response = await batchApplyNarrationCandidates(projectId, candidates.map((candidate) => ({
+        candidate_id: candidate.candidate_id,
+        base_revision: candidate.source_page_revision,
+      })));
+      const results = response.data?.results || [];
+      const applied = results.filter((item) => item.status === 'applied').length;
+      const conflicts = results.filter((item) => item.status === 'conflict').length;
+      setError(conflicts
+        ? `已应用 ${applied} 个候选；${conflicts} 个页面因版本变化跳过，请在对应页面重新应用`
+        : `已应用 ${applied} 个候选`);
+      await refreshSummary();
+      if (target.includes(selectedPageId)) await loadPage(selectedPageId);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setAiJobPending(false);
+    }
+  };
+
   const speakers = Array.from(new Set([
     'host',
     'expert',
@@ -270,6 +382,80 @@ export function NarrationWorkbench({
                 )}
               </div>
             )}
+            <div className="relative">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                icon={<Sparkles size={15} aria-hidden="true" />}
+                disabled={aiJobPending}
+                aria-expanded={batchOpen}
+                aria-haspopup="menu"
+                onClick={() => setBatchOpen((value) => !value)}
+              >AI 批量处理</Button>
+              {batchOpen && (
+                <>
+                  <button type="button" aria-label="关闭批量处理菜单" className="fixed inset-0 z-40 cursor-default" onClick={() => setBatchOpen(false)} />
+                  <div role="menu" className="absolute right-0 top-full z-50 mt-1 w-80 rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)] p-4 shadow-[var(--app-shadow-floating)]">
+                    <label className="grid gap-1.5 text-xs font-medium text-[var(--app-text-secondary)]">
+                      <span>处理范围</span>
+                      <select
+                        aria-label="批量处理范围"
+                        value={batchScope}
+                        onChange={(event) => setBatchScope(event.target.value as typeof batchScope)}
+                        className="h-9 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2.5 text-sm outline-none focus-visible:border-[var(--app-accent)] focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)]"
+                      >
+                        <option value="current">当前页</option>
+                        <option value="selected">选中页（{selectedPageIds.size}）</option>
+                        <option value="missing">缺失页</option>
+                        <option value="all_unlocked">全部未锁定页</option>
+                      </select>
+                    </label>
+                    <label className="mt-3 grid gap-1.5 text-xs font-medium text-[var(--app-text-secondary)]">
+                      <span>处理方式</span>
+                      <select
+                        aria-label="批量处理方式"
+                        value={batchOperation}
+                        onChange={(event) => setBatchOperation(event.target.value)}
+                        className="h-9 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2.5 text-sm outline-none focus-visible:border-[var(--app-accent)] focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)]"
+                      >
+                        <option value="polish">自然润色</option>
+                        <option value="shorten">压缩精简</option>
+                        <option value="expand">扩写解释</option>
+                        <option value="convert_single">转为单人</option>
+                        <option value="convert_dialogue">转为多人对话</option>
+                      </select>
+                    </label>
+                    <Textarea
+                      label="补充要求"
+                      value={batchInstruction}
+                      onChange={(event) => setBatchInstruction(event.target.value)}
+                      className="mt-3 min-h-20 resize-y"
+                      placeholder="例如：更口语化，保留所有数字与结论"
+                    />
+                    <div className="mt-3 flex items-center justify-between gap-2">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={aiJobPending}
+                        onClick={() => void batchApplyCandidates()}
+                        title="把所选页面的候选逐页应用为确认稿；版本冲突的页面会跳过并报告"
+                      >应用候选</Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        loading={aiJobPending}
+                        onClick={() => void submitBatch()}
+                      >开始批量处理</Button>
+                    </div>
+                    <p className="mt-2 text-[11px] leading-4 text-[var(--app-text-tertiary)]">
+                      批量 AI 只生成候选，不会覆盖确认稿；任务进入任务中心，刷新后仍可恢复。
+                    </p>
+                  </div>
+                </>
+              )}
+            </div>
             <Button
               type="button"
               variant="secondary"
@@ -302,30 +488,59 @@ export function NarrationWorkbench({
 
         <div className="relative grid min-h-0 min-w-0 grid-cols-[216px_minmax(0,1fr)_320px] overflow-hidden max-[1279px]:grid-cols-[196px_minmax(0,1fr)]">
           <nav aria-label="旁白页面" className="min-h-0 min-w-0 overflow-y-auto border-r border-[var(--app-border)] bg-[var(--app-surface-secondary)] p-2">
-            {visiblePages.map((page) => (
-              <button
+            <div className="mb-2 flex items-center gap-1 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] p-0.5">
+              {([['all', '全部'], ['missing', '缺失'], ['candidates', '有候选'], ['locked', '锁定']] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={pageFilter === value}
+                  onClick={() => setPageFilter(value)}
+                  className={`h-7 flex-1 rounded-[var(--app-radius-control)] text-xs transition-colors ${pageFilter === value ? 'bg-[var(--app-surface)] font-medium shadow-[var(--app-shadow-control)]' : 'text-[var(--app-text-tertiary)] hover:bg-[var(--app-surface-hover)]'}`}
+                >{label}</button>
+              ))}
+            </div>
+            {filteredPages.map((page) => (
+              <div
                 key={page.page_id}
-                type="button"
-                disabled={pending}
-                onClick={() => {
-                  if (dirty) {
-                    setError('请先保存或放弃当前修改');
-                    return;
-                  }
-                  void run(() => loadPage(page.page_id));
-                }}
-                className={`mb-1 w-full rounded-[var(--app-radius-control)] px-3 py-2 text-left text-sm transition-colors ${
+                className={`mb-1 flex w-full items-center gap-1.5 rounded-[var(--app-radius-control)] px-1 py-1.5 transition-colors ${
                   page.page_id === selectedPageId
-                    ? 'bg-[var(--app-surface)] font-semibold shadow-[var(--app-shadow-control)]'
-                    : 'text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]'
+                    ? 'bg-[var(--app-surface)] shadow-[var(--app-shadow-control)]'
+                    : 'hover:bg-[var(--app-surface-hover)]'
                 }`}
               >
-                <span className="block">第 {page.order_index + 1} 页</span>
-                <span className="block text-xs font-normal text-[var(--app-text-tertiary)]">
-                  {page.current_version_id ? `${page.word_count} 字` : '缺少确认稿'}
-                  {page.candidate_count > 0 ? ` · ${page.candidate_count} 个候选` : ''}
-                </span>
-              </button>
+                <input
+                  type="checkbox"
+                  aria-label={`选择第 ${page.order_index + 1} 页`}
+                  checked={selectedPageIds.has(page.page_id)}
+                  onChange={(event) => {
+                    setSelectedPageIds((value) => {
+                      const next = new Set(value);
+                      if (event.target.checked) next.add(page.page_id);
+                      else next.delete(page.page_id);
+                      return next;
+                    });
+                  }}
+                  className="h-4 w-4 shrink-0 rounded border-[var(--app-border-strong)] accent-[var(--app-accent)]"
+                />
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={() => {
+                    if (dirty) {
+                      setError('请先保存或放弃当前修改');
+                      return;
+                    }
+                    void run(() => loadPage(page.page_id));
+                  }}
+                  className="min-w-0 flex-1 rounded-[var(--app-radius-control)] px-2 py-0.5 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)]"
+                >
+                  <span className="block truncate">第 {page.order_index + 1} 页</span>
+                  <span className="block truncate text-xs font-normal text-[var(--app-text-tertiary)]">
+                    {page.current_version_id ? `${page.word_count} 字` : '缺少确认稿'}
+                    {page.candidate_count > 0 ? ` · ${page.candidate_count} 个候选` : ''}
+                  </span>
+                </button>
+              </div>
             ))}
           </nav>
 
