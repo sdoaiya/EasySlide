@@ -29,12 +29,13 @@ from .user_style_template import UserStyleTemplate
 from .content_spine import ContentSpine
 from .project_workspace import ProjectWorkspace
 from .workspace_version import WorkspaceVersion
+from .workspace_generation_run import WorkspaceGenerationRun
 from .content_sync_proposal import ContentSyncProposal
 
 __all__ = [
     'db', 'Project', 'Page', 'NarrationVersion', 'Task', 'UserTemplate',
     'PageImageVersion', 'Material', 'ReferenceFile', 'Settings',
     'UserStyleTemplate', 'ContentSpine', 'ProjectWorkspace',
-    'WorkspaceVersion', 'ContentSyncProposal',
+    'WorkspaceVersion', 'WorkspaceGenerationRun', 'ContentSyncProposal',
 ]
 

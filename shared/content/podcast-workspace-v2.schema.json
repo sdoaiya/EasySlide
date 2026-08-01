@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://easyslide.local/schemas/content/podcast-workspace-v2.schema.json",
+  "title": "EasySlide Podcast Workspace Document V2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "title", "format", "language", "speakers", "segments", "mixing", "cover"],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "title": { "type": "string", "maxLength": 255 },
+    "format": { "enum": ["single", "dialogue"] },
+    "language": { "type": "string", "minLength": 2, "maxLength": 16 },
+    "speakers": { "type": "array", "minItems": 1, "maxItems": 4, "items": { "$ref": "#/$defs/speaker" } },
+    "segments": { "type": "array", "items": { "$ref": "#/$defs/segment" } },
+    "mixing": { "$ref": "#/$defs/mixing" },
+    "cover": { "$ref": "#/$defs/cover" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "format": { "const": "single" } }, "required": ["format"] },
+      "then": { "properties": { "speakers": { "maxItems": 1 } } }
+    },
+    {
+      "if": { "properties": { "format": { "const": "dialogue" } }, "required": ["format"] },
+      "then": { "properties": { "speakers": { "minItems": 2 } } }
+    }
+  ],
+  "$defs": {
+    "stableId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+    "speaker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["speaker_id", "name", "voice_profile_id", "expressiveness_id"],
+      "properties": {
+        "speaker_id": { "$ref": "#/$defs/stableId" },
+        "name": { "type": "string", "minLength": 1 },
+        "voice_profile_id": { "type": ["string", "null"] },
+        "expressiveness_id": { "type": "string" }
+      }
+    },
+    "segmentSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "ref", "content_hash"],
+      "properties": {
+        "kind": { "enum": ["brief", "manual", "transcript"] },
+        "ref": { "type": ["string", "null"] },
+        "content_hash": { "type": ["string", "null"] }
+      }
+    },
+    "segment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["segment_id", "title", "speaker_id", "text", "locked", "source", "audio_cues"],
+      "properties": {
+        "segment_id": { "$ref": "#/$defs/stableId" },
+        "title": { "type": "string" },
+        "speaker_id": { "$ref": "#/$defs/stableId" },
+        "text": { "type": "string", "minLength": 1 },
+        "locked": { "type": "boolean" },
+        "source": { "$ref": "#/$defs/segmentSource" },
+        "audio_cues": { "type": "array", "items": { "$ref": "#/$defs/audioCue" } }
+      }
+    },
+    "audioCue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cue_id", "kind", "asset_ref", "offset_ms", "gain_db"],
+      "properties": {
+        "cue_id": { "$ref": "#/$defs/stableId" },
+        "kind": { "enum": ["bgm", "sfx"] },
+        "asset_ref": { "type": "string", "minLength": 1 },
+        "offset_ms": { "type": "integer", "minimum": 0 },
+        "gain_db": { "type": "number", "minimum": -60, "maximum": 12 }
+      }
+    },
+    "mixing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bgm_asset_ref", "ducking", "fade_in_ms", "fade_out_ms"],
+      "properties": {
+        "bgm_asset_ref": { "type": ["string", "null"] },
+        "ducking": { "type": "boolean" },
+        "fade_in_ms": { "type": "integer", "minimum": 0 },
+        "fade_out_ms": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "cover": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["asset_ref", "title", "subtitle"],
+      "properties": {
+        "asset_ref": { "type": ["string", "null"] },
+        "title": { "type": "string" },
+        "subtitle": { "type": "string" }
+      }
+    }
+  }
+}

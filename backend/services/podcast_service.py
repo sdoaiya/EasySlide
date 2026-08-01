@@ -5,6 +5,8 @@ import json
 
 
 def build_podcast_document_from_spine(spine_document, settings=None):
+    from services.content_spine_service import get_spine_sections
+
     settings = settings or {}
     title = str(spine_document['topic']['value'] or 'Untitled project')[:255]
     speakers = settings.get('speakers') or [
@@ -16,7 +18,7 @@ def build_podcast_document_from_spine(spine_document, settings=None):
     if fmt == 'dialogue' and len(speakers) < 2:
         raise ValueError('dialogue podcast requires at least two speakers')
     segments = []
-    for index, section in enumerate(spine_document.get('sections') or []):
+    for index, section in enumerate(get_spine_sections(spine_document)):
         speaker = speakers[index % len(speakers)]
         segments.append({
             'segment_id': f'segment.{index + 1}',
@@ -107,3 +109,49 @@ def podcast_preview_cache_key(*, document, provider, segment_id=None, voice=None
     return hashlib.sha256(
         json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode('utf-8')
     ).hexdigest()
+
+
+def upgrade_podcast_document_v1_to_v2(document: dict) -> dict:
+    """Pure V1 → V2 adapter (reconstruction plan §10.1).
+
+    Legacy V1 podcast documents stay stored as V1; this function is the
+    read-time upgrade used by editors and generation candidates. It never
+    mutates the input.
+    """
+    speakers = []
+    for speaker in document.get('speakers') or []:
+        voice_ref = str(speaker.get('voice_ref') or '').strip()
+        speakers.append({
+            'speaker_id': speaker.get('speaker_id'),
+            'name': speaker.get('name', ''),
+            'voice_profile_id': voice_ref or None,
+            'expressiveness_id': 'expression.standard.v1',
+        })
+    segments = []
+    for segment in document.get('segments') or []:
+        source_kind = str(segment.get('source_kind') or 'manual').strip()
+        if source_kind not in {'brief', 'manual', 'transcript'}:
+            source_kind = 'manual'
+        segments.append({
+            'segment_id': segment.get('segment_id'),
+            'title': '',
+            'speaker_id': segment.get('speaker_id'),
+            'text': segment.get('text', ''),
+            'locked': bool(segment.get('locked', False)),
+            'source': {
+                'kind': source_kind,
+                'ref': segment.get('source_ref'),
+                'content_hash': None,
+            },
+            'audio_cues': segment.get('audio_cues') or [],
+        })
+    return {
+        'schema_version': 2,
+        'title': document.get('title', ''),
+        'format': document.get('format', 'single'),
+        'language': document.get('language', 'zh-CN'),
+        'speakers': speakers,
+        'segments': segments,
+        'mixing': document.get('mixing') or {},
+        'cover': document.get('cover') or {},
+    }

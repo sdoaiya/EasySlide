@@ -1,0 +1,294 @@
+"""Workspace generation runs: create, freeze sources, transitions, publish.
+
+Implements the reconstruction plan §3.3 / §4.1 state machine. Generation
+execution itself (AI tasks) lands in a later stage; this service owns the
+persistence contract, source snapshot freezing, staleness detection and
+the idempotent publish transaction.
+"""
+
+import json
+from datetime import datetime
+
+from models import (
+    ProjectWorkspace,
+    WorkspaceGenerationRun,
+    WorkspaceVersion,
+    db,
+)
+from services.project_brief_service import get_project_brief_snapshot, snapshot_hash
+from services.project_workspace_service import validate_workspace_document
+
+# state machine transitions; a state not listed accepts no outgoing edges
+_STATUS_TRANSITIONS = {
+    'PENDING': {'RUNNING', 'CANCELLED'},
+    'RUNNING': {'PAUSED', 'REVIEW_READY', 'FAILED', 'CANCELLED'},
+    'PAUSED': {'RUNNING', 'CANCELLED'},
+    'REVIEW_READY': {'PUBLISHING', 'STALE', 'PENDING'},
+    'PUBLISHING': {'PUBLISHED', 'FAILED'},
+    'STALE': {'PUBLISHING', 'PENDING'},
+    'FAILED': {'PENDING'},
+    'CANCELLED': set(),
+    'PUBLISHED': set(),
+}
+
+VALID_TARGET_KINDS = {'video', 'podcast'}
+VALID_SOURCE_KINDS = {'brief', 'ppt'}
+VALID_MODES = {'direct', 'preserve', 'ai_adapt'}
+VALID_OPERATIONS = {'generate', 'polish', 'shorten', 'expand', 'regenerate'}
+
+
+class GenerationRunError(ValueError):
+    pass
+
+
+class GenerationRunStateError(GenerationRunError):
+    pass
+
+
+class GenerationAlreadyActive(GenerationRunError):
+    pass
+
+
+class SourceSnapshotChanged(GenerationRunError):
+    pass
+
+
+class FeatureDisabled(GenerationRunError):
+    pass
+
+
+def canonical_json(value) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+
+
+def _active_run_exists(project_id: str, target_workspace_kind: str) -> bool:
+    return db.session.query(WorkspaceGenerationRun.id).filter_by(
+        project_id=project_id,
+        target_workspace_kind=target_workspace_kind,
+    ).filter(
+        WorkspaceGenerationRun.status.in_(
+            {'PENDING', 'RUNNING', 'PAUSED', 'PUBLISHING'},
+        ),
+    ).first() is not None
+
+
+def _target_workspace(project, kind: str) -> ProjectWorkspace:
+    workspace = next(
+        (item for item in project.workspaces if item.kind == kind), None,
+    )
+    if not workspace:
+        raise GenerationRunError(f'{kind} 工作区不存在')
+    return workspace
+
+
+def build_ppt_source_snapshot(project, *, page_ids=None) -> dict:
+    """Freeze selected PPT pages with versions and content hashes (§3.4).
+
+    The snapshot is immutable by contract: callers store it as-is and never
+    mutate it after creation.
+    """
+    pages = [page for page in (project.pages or [])]
+    if page_ids:
+        wanted = set(page_ids)
+        pages = [page for page in pages if page.id in wanted]
+        missing = sorted(wanted - {page.id for page in pages})
+        if missing:
+            raise GenerationRunError(f'页面不存在: {", ".join(missing)}')
+    ppt = _target_workspace(project, 'ppt')
+    frozen_pages = []
+    for page in sorted(pages, key=lambda item: item.order_index):
+        outline = page.get_outline_content() or {}
+        description = page.get_description_content() or {}
+        narration = page.get_narration_segments() or page.narration_text or ''
+        frozen_pages.append({
+            'page_id': page.id,
+            'order_index': page.order_index,
+            'page_revision': page.revision if hasattr(page, 'revision') else 0,
+            'title': str(outline.get('title') or ''),
+            'outline': outline,
+            'description': description,
+            'narration_version_id': page.current_narration_version_id,
+            'narration': narration,
+            'visual_kind': 'native_scene' if page.native_layout else 'image',
+            'visual_ref': page.native_layout or page.generated_image_path or page.cached_image_path,
+            'visual_revision': 0,
+            'source_hash': '',
+        })
+    for item in frozen_pages:
+        item['source_hash'] = snapshot_hash(item)
+    payload = {
+        'schema_version': 1,
+        'source_kind': 'ppt',
+        'workspace_id': ppt.id,
+        'workspace_version_id': ppt.current_version_id,
+        'workspace_revision': ppt.revision,
+        'project_title': project.project_title or '',
+        'pages': frozen_pages,
+    }
+    payload['content_hash'] = snapshot_hash(payload)
+    return payload
+
+
+def create_generation_run(project, *, target_workspace_kind, source_kind, mode,
+                          operation='generate', options=None, page_ids=None,
+                          parent_run_id=None) -> WorkspaceGenerationRun:
+    """Create a PENDING generation run with a frozen source snapshot.
+
+    The run only freezes input data; it never writes the formal workspace.
+    """
+    if target_workspace_kind not in VALID_TARGET_KINDS:
+        raise GenerationRunError('目标工作区只支持 video 或 podcast')
+    if source_kind not in VALID_SOURCE_KINDS:
+        raise GenerationRunError('源类型只支持 brief 或 ppt')
+    if mode not in VALID_MODES:
+        raise GenerationRunError('无效的适配方式')
+    if operation not in VALID_OPERATIONS:
+        raise GenerationRunError('无效的生成操作')
+    _target_workspace(project, target_workspace_kind)
+    if _active_run_exists(project.id, target_workspace_kind):
+        raise GenerationAlreadyActive(f'{target_workspace_kind} 工作区已有活动生成运行')
+
+    if source_kind == 'ppt':
+        ppt = _target_workspace(project, 'ppt')
+        snapshot = build_ppt_source_snapshot(project, page_ids=page_ids)
+        source_workspace_id = ppt.id
+        source_version_id = ppt.current_version_id
+        source_revision = ppt.revision
+    else:
+        snapshot = get_project_brief_snapshot(project)
+        source_workspace_id = None
+        source_version_id = None
+        source_revision = int(snapshot.get('revision') or 0)
+
+    target = _target_workspace(project, target_workspace_kind)
+    run = WorkspaceGenerationRun(
+        project_id=project.id,
+        target_workspace_kind=target_workspace_kind,
+        source_kind=source_kind,
+        source_workspace_id=source_workspace_id,
+        source_version_id=source_version_id,
+        source_revision=source_revision,
+        source_snapshot_json=canonical_json(snapshot),
+        source_snapshot_hash=snapshot['content_hash'],
+        parent_run_id=parent_run_id,
+        mode=mode,
+        operation=operation,
+        options_json=canonical_json(options or {}),
+        status='PENDING',
+        target_workspace_id=target.id,
+    )
+    db.session.add(run)
+    db.session.flush()
+    return run
+
+
+def transition_run(run: WorkspaceGenerationRun, next_status: str) -> WorkspaceGenerationRun:
+    allowed = _STATUS_TRANSITIONS.get(run.status, set())
+    if next_status not in allowed:
+        raise GenerationRunStateError(
+            f'生成运行状态不允许从 {run.status} 转换到 {next_status}'
+        )
+    run.status = next_status
+    if next_status == 'PUBLISHED':
+        run.published_at = datetime.utcnow()
+    return run
+
+
+def mark_stale_if_source_changed(run: WorkspaceGenerationRun, project) -> bool:
+    """Mark REVIEW_READY runs STALE when their source version moved on.
+
+    The candidate document is never silently replaced; users choose to
+    publish the old candidate or regenerate from the current source.
+    """
+    if run.status != 'REVIEW_READY':
+        return False
+    try:
+        if run.source_kind == 'ppt':
+            stored = json.loads(run.source_snapshot_json)
+            current_snapshot = build_ppt_source_snapshot(
+                project,
+                page_ids=[item.get('page_id') for item in (stored.get('pages') or [])],
+            )
+        else:
+            current_snapshot = get_project_brief_snapshot(project)
+    except (GenerationRunError, ValueError, TypeError):
+        # 源页面被删除或源快照损坏时视为源已变化，绝不改写候选内容。
+        run.status = 'STALE'
+        return True
+    if current_snapshot.get('content_hash') != run.source_snapshot_hash:
+        run.status = 'STALE'
+        return True
+    return False
+
+
+def set_candidate(run: WorkspaceGenerationRun, document: dict) -> WorkspaceGenerationRun:
+    """Attach a generated candidate; the candidate must be REVIEW_READY-able."""
+    candidate_hash = snapshot_hash(document)
+    run.candidate_document_json = canonical_json(document)
+    run.candidate_hash = candidate_hash
+    run.error_code = None
+    run.error_message = None
+    return run
+
+
+def publish_run(run: WorkspaceGenerationRun, project) -> WorkspaceGenerationRun:
+    """Publish the candidate as a new formal workspace version (§4.1).
+
+    The WorkspaceVersion creation, workspace pointer update and run state
+    change happen in one transaction. Publishing is idempotent: repeating
+    the request returns the same published version.
+    """
+    if run.status == 'PUBLISHED' and run.published_version_id:
+        return run
+    if run.status not in {'REVIEW_READY', 'STALE', 'PUBLISHING'}:
+        raise GenerationRunStateError(
+            f'只有可审查候选可以发布，当前状态 {run.status}'
+        )
+    if not run.candidate_document_json:
+        raise GenerationRunError('生成运行还没有候选文档')
+
+    workspace = ProjectWorkspace.query.filter_by(id=run.target_workspace_id).one_or_none()
+    if not workspace:
+        raise GenerationRunError('目标工作区不存在')
+
+    document = json.loads(run.candidate_document_json)
+    validate_workspace_document(workspace.kind, document)
+    options = json.loads(run.options_json or '{}')
+    settings = options.get('workspace_settings') or {}
+
+    run.status = 'PUBLISHING'
+    db.session.flush()
+    try:
+        version = WorkspaceVersion(
+            workspace_id=workspace.id,
+            revision=workspace.revision + 1,
+            document_json=canonical_json(document),
+            settings_json=canonical_json(settings),
+            content_hash=snapshot_hash({'document': document, 'settings': settings}),
+            source_type='ai',
+            parent_version_id=workspace.current_version_id,
+        )
+        db.session.add(version)
+        db.session.flush()
+        workspace.revision = version.revision
+        workspace.current_version_id = version.id
+        workspace.document_json = version.document_json
+        workspace.settings_json = version.settings_json
+        workspace.state = 'ready'
+        # 来源语义受 project_workspaces.source_kind 枚举约束；brief 来源记为
+        # manual，真实来源由 generation run（source_ref=generation-run:...）保留。
+        workspace.source_kind = 'ppt' if run.source_kind == 'ppt' else 'manual'
+        workspace.source_revision = run.source_revision
+        workspace.source_ref = f'generation-run:{run.id}'
+        run.status = 'PUBLISHED'
+        run.published_version_id = version.id
+        run.published_at = datetime.utcnow()
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        run = db.session.get(WorkspaceGenerationRun, run.id)
+        run.status = 'FAILED'
+        run.error_code = 'PUBLISH_FAILED'
+        db.session.commit()
+        raise
+    return run

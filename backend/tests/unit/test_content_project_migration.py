@@ -54,6 +54,7 @@ def test_offline_migration_backs_up_validates_and_switches_all_legacy_shapes(tmp
         assert table_count(connection, "workspace_versions") == 5
         assert table_count(connection, "orphan_task_archive") == 0
         assert table_count(connection, "content_sync_proposals") == 0
+        assert table_count(connection, "workspace_generation_runs") == 0
         assert connection.execute(
             "SELECT COUNT(*) FROM project_workspaces WHERE kind = 'ppt' AND current_version_id IS NOT NULL"
         ).fetchone()[0] == 5

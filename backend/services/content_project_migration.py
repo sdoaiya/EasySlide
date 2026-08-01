@@ -217,6 +217,39 @@ def ensure_sqlite_content_project_schema(connection: sqlite3.Connection) -> None
         );
         CREATE INDEX IF NOT EXISTS ix_content_sync_proposals_project_id ON content_sync_proposals(project_id);
 
+        CREATE TABLE IF NOT EXISTS workspace_generation_runs (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            target_workspace_kind TEXT NOT NULL CHECK(target_workspace_kind IN ('video', 'podcast')),
+            source_kind TEXT NOT NULL CHECK(source_kind IN ('brief', 'ppt')),
+            source_workspace_id TEXT,
+            source_version_id TEXT,
+            source_revision INTEGER NOT NULL,
+            source_snapshot_json TEXT NOT NULL,
+            source_snapshot_hash TEXT NOT NULL,
+            parent_run_id TEXT,
+            mode TEXT NOT NULL CHECK(mode IN ('direct', 'preserve', 'ai_adapt')),
+            operation TEXT NOT NULL CHECK(operation IN ('generate', 'polish', 'shorten', 'expand', 'regenerate')),
+            options_json TEXT,
+            candidate_document_json TEXT,
+            candidate_hash TEXT,
+            status TEXT NOT NULL CHECK(status IN ('PENDING', 'RUNNING', 'PAUSED', 'REVIEW_READY', 'PUBLISHING', 'PUBLISHED', 'FAILED', 'CANCELLED', 'STALE')),
+            task_id TEXT,
+            target_workspace_id TEXT NOT NULL,
+            published_version_id TEXT,
+            error_code TEXT,
+            error_message TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            published_at TEXT,
+            FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS ix_workspace_generation_runs_project_id ON workspace_generation_runs(project_id);
+        CREATE INDEX IF NOT EXISTS ix_workspace_generation_runs_task_id ON workspace_generation_runs(task_id);
+        CREATE INDEX IF NOT EXISTS ix_workspace_generation_runs_parent_run_id ON workspace_generation_runs(parent_run_id);
+        CREATE INDEX IF NOT EXISTS ix_workspace_generation_runs_project_target_status
+            ON workspace_generation_runs(project_id, target_workspace_kind, status);
+
         CREATE TABLE IF NOT EXISTS orphan_task_archive (
             original_task_id TEXT PRIMARY KEY,
             original_project_id TEXT NOT NULL,

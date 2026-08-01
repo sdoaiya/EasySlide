@@ -134,6 +134,9 @@ class Project(db.Model):
     sync_proposals = db.relationship(
         'ContentSyncProposal', back_populates='project', cascade='all, delete-orphan',
     )
+    generation_runs = db.relationship(
+        'WorkspaceGenerationRun', back_populates='project', cascade='all, delete-orphan',
+    )
 
     def __init__(self, **kwargs):
         legacy = {key: kwargs.pop(key) for key in list(kwargs) if key in _LEGACY_CONTENT_PROJECT_FIELDS}

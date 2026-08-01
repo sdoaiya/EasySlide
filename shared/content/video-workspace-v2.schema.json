@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://easyslide.local/schemas/content/video-workspace-v2.schema.json",
+  "title": "EasySlide Video Workspace Document V2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "title", "aspect_ratio", "scenes"],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "title": { "type": "string", "maxLength": 255 },
+    "aspect_ratio": { "enum": ["16:9", "9:16", "1:1"] },
+    "scenes": { "type": "array", "items": { "$ref": "#/$defs/scene" } }
+  },
+  "$defs": {
+    "stableId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+    "segment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["segment_id", "speaker_id", "text"],
+      "properties": {
+        "segment_id": { "$ref": "#/$defs/stableId" },
+        "speaker_id": { "$ref": "#/$defs/stableId" },
+        "text": { "type": "string", "minLength": 1 }
+      }
+    },
+    "sceneSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "ref", "revision", "content_hash"],
+      "properties": {
+        "kind": { "enum": ["brief", "ppt_page", "manual"] },
+        "ref": { "type": ["string", "null"] },
+        "revision": { "type": ["integer", "null"], "minimum": 0 },
+        "content_hash": { "type": ["string", "null"] }
+      }
+    },
+    "scene": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scene_id", "source", "title", "script", "visual", "voice", "subtitles", "duration_ms", "transition", "motion", "audio_cues"],
+      "properties": {
+        "scene_id": { "$ref": "#/$defs/stableId" },
+        "source": { "$ref": "#/$defs/sceneSource" },
+        "title": { "type": "string" },
+        "script": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "text", "segments"],
+          "properties": {
+            "mode": { "enum": ["single", "dialogue"] },
+            "text": { "type": "string" },
+            "segments": { "type": "array", "items": { "$ref": "#/$defs/segment" } }
+          }
+        },
+        "visual": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "asset_ref", "prompt", "fit"],
+          "properties": {
+            "kind": { "enum": ["generated", "ppt_page", "native_scene", "image", "video", "blank"] },
+            "asset_ref": { "type": ["string", "null"] },
+            "prompt": { "type": "string" },
+            "fit": { "enum": ["contain", "cover"] }
+          }
+        },
+        "voice": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["voice_profile_id", "expressiveness_id"],
+          "properties": {
+            "voice_profile_id": { "type": ["string", "null"] },
+            "expressiveness_id": { "type": "string" }
+          }
+        },
+        "subtitles": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "text", "style_profile_id"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "text": { "type": "string" },
+            "style_profile_id": { "type": "string" }
+          }
+        },
+        "duration_ms": { "type": "integer", "minimum": 100 },
+        "transition": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "duration_ms"],
+          "properties": {
+            "type": { "enum": ["cut", "fade", "dissolve", "slide"] },
+            "duration_ms": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "motion": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["profile_id", "intensity", "cues"],
+          "properties": {
+            "profile_id": { "type": "string" },
+            "intensity": { "enum": ["none", "subtle", "balanced", "expressive"] },
+            "cues": { "type": "array", "items": { "type": "object" } }
+          }
+        },
+        "audio_cues": { "type": "array", "items": { "type": "object" } }
+      }
+    }
+  }
+}

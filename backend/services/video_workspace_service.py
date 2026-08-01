@@ -46,10 +46,12 @@ def _scene(scene_id, title, narration_text, *, visual_kind, source_ref, source_r
 
 
 def build_video_document_from_spine(spine_document, settings=None):
+    from services.content_spine_service import get_spine_sections
+
     settings = settings or {}
     title = str(spine_document['topic']['value'] or 'Untitled project')[:255]
     scenes = []
-    for index, section in enumerate(spine_document.get('sections') or []):
+    for index, section in enumerate(get_spine_sections(spine_document)):
         scene_title = str(section.get('title') or '')
         narration_text = str(section.get('summary') or scene_title)
         scenes.append(_scene(
@@ -174,3 +176,72 @@ def propose_video_to_spine(project, target_base_revision):
         diff={'schema_version': 1, 'items': items},
         reason='Video structured content update',
     )
+
+
+def upgrade_video_document_v1_to_v2(document: dict) -> dict:
+    """Pure V1 → V2 adapter (reconstruction plan §9.1).
+
+    Legacy V1 workspace documents stay stored as V1; this function is the
+    read-time upgrade used by editors and generation candidates. It never
+    mutates the input.
+    """
+    scenes = []
+    for scene in document.get('scenes') or []:
+        narration = scene.get('narration') or {}
+        visual = scene.get('visual') or {}
+        visual_kind = visual.get('kind')
+        if visual_kind == 'page':
+            visual_kind = 'ppt_page'
+        elif visual_kind == 'material':
+            visual_kind = 'image'
+        if visual_kind not in {'generated', 'ppt_page', 'native_scene', 'image', 'video', 'blank'}:
+            visual_kind = 'blank'
+        source_ref = visual.get('source_ref')
+        animation = scene.get('animation') or {}
+        scenes.append({
+            'scene_id': scene.get('scene_id'),
+            'source': {
+                'kind': 'ppt_page' if source_ref else 'manual',
+                'ref': source_ref,
+                'revision': visual.get('source_revision'),
+                'content_hash': None,
+            },
+            'title': scene.get('title', ''),
+            'script': {
+                'mode': narration.get('mode', 'single'),
+                'text': narration.get('text', ''),
+                'segments': narration.get('segments') or [],
+            },
+            'visual': {
+                'kind': visual_kind,
+                'asset_ref': source_ref,
+                'prompt': '',
+                'fit': 'contain',
+            },
+            'voice': {
+                'voice_profile_id': None,
+                'expressiveness_id': 'expression.standard.v1',
+            },
+            'subtitles': {
+                'enabled': bool((scene.get('subtitles') or {}).get('enabled', True)),
+                'text': (scene.get('subtitles') or {}).get('text', ''),
+                'style_profile_id': 'subtitle.standard.v1',
+            },
+            'duration_ms': int(scene.get('duration_ms') or 5000),
+            'transition': {
+                'type': scene.get('transition', 'cut'),
+                'duration_ms': 400,
+            },
+            'motion': {
+                'profile_id': 'motion.standard.v1',
+                'intensity': animation.get('intensity', 'none'),
+                'cues': animation.get('cues') or [],
+            },
+            'audio_cues': scene.get('audio_cues') or [],
+        })
+    return {
+        'schema_version': 2,
+        'title': document.get('title', ''),
+        'aspect_ratio': document.get('aspect_ratio', '16:9'),
+        'scenes': scenes,
+    }
