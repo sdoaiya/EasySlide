@@ -761,7 +761,8 @@ describe('NativeDeckWorkspace', () => {
     renderWorkspace(slides.slice(0, 1))
     fireEvent.change(screen.getByLabelText('导出格式'), { target: { value: '讲解视频' } })
     fireEvent.click(screen.getByRole('button', { name: '导出讲解视频' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Fish Audio s2.1-pro-free' }))
+    fireEvent.click(await screen.findByRole('button', { name: '高级设置' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Fish Audio s2.1-pro-free' }))
 
     await waitFor(() => expect(screen.getByLabelText('语音音色')).toHaveValue('fish-host'))
     fireEvent.click(screen.getByRole('button', { name: '多人对话' }))

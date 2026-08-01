@@ -80,6 +80,7 @@ export function NarrationWorkbench({
   onClose,
   onSummaryChange,
 }: NarrationWorkbenchProps) {
+  const { target: railTarget, active: railActive } = useProjectRail();
   const [summary, setSummary] = useState<ProjectNarrationSummary | null>(null);
   const [selectedPageId, setSelectedPageId] = useState(initialPageId || '');
   const [details, setDetails] = useState<NarrationVersionsResponse | null>(null);
@@ -356,7 +357,6 @@ export function NarrationWorkbench({
     ...draft.segments.map((segment) => segment.speaker_id),
   ])).map((id) => ({ id, name: id === 'host' ? '主持人' : id === 'expert' ? '嘉宾' : id }));
 
-  const { target: railTarget, active: railActive } = useProjectRail();
 
   const pageRail = (
     <nav aria-label="旁白页面" className="min-h-0 min-w-0 overflow-y-auto border-r border-[var(--app-border)] bg-[var(--app-surface-secondary)] p-2">

@@ -31,6 +31,45 @@ workspace_generation_bp = Blueprint(
 
 VALID_TARGET_KINDS = {'video', 'podcast'}
 VALID_SOURCE_KINDS = {'brief', 'ppt'}
+VALID_OPTIMIZE_OPERATIONS = {'polish', 'shorten', 'expand', 'regenerate'}
+
+
+def _submit_candidate_task(run: WorkspaceGenerationRun) -> WorkspaceGenerationRun:
+    """Create the run-scoped task and submit it (阶段2 流水线)."""
+    from models import Task
+
+    task = Task(
+        project_id=run.project_id,
+        task_type='GENERATE_WORKSPACE_CANDIDATE',
+        status='PENDING',
+    )
+    task.set_progress({
+        'total': 1,
+        'completed': 0,
+        'failed': 0,
+        'stage': 'queued',
+        'item_ids': [],
+        '_resume': {
+            'kind': 'workspace-candidate',
+            'kwargs': {'run_id': run.id},
+        },
+    })
+    db.session.add(task)
+    db.session.flush()
+    run.task_id = task.id
+    db.session.commit()
+    try:
+        task_manager.submit_task(
+            task.id,
+            generate_workspace_candidate_task,
+            run_id=run.id,
+            app=current_app._get_current_object(),
+        )
+    except Exception as exc:
+        task.status = 'PAUSED'
+        task.error_message = str(exc)
+        db.session.commit()
+    return run
 
 
 def _feature_enabled() -> bool:
@@ -89,39 +128,7 @@ def create_run(project_id):
             parent_run_id=data.get('parent_run_id'),
         )
         # 任务输入只保存运行 ID；冻结源快照由任务从运行记录读取（阶段2）。
-        from models import Task
-
-        task = Task(
-            project_id=project.id,
-            task_type='GENERATE_WORKSPACE_CANDIDATE',
-            status='PENDING',
-        )
-        task.set_progress({
-            'total': 1,
-            'completed': 0,
-            'failed': 0,
-            'stage': 'queued',
-            'item_ids': [],
-            '_resume': {
-                'kind': 'workspace-candidate',
-                'kwargs': {'run_id': run.id},
-            },
-        })
-        db.session.add(task)
-        db.session.flush()
-        run.task_id = task.id
-        db.session.commit()
-        try:
-            task_manager.submit_task(
-                task.id,
-                generate_workspace_candidate_task,
-                run_id=run.id,
-                app=current_app._get_current_object(),
-            )
-        except Exception as exc:
-            task.status = 'PAUSED'
-            task.error_message = str(exc)
-            db.session.commit()
+        _submit_candidate_task(run)
         return success_response({
             **run.to_dict(),
             'result_route': f'/project/{project.id}/{target}/review/{run.id}',
@@ -178,6 +185,8 @@ def get_run(project_id, run_id):
             db.session.commit()
         payload = run.to_dict()
         payload['stale'] = stale
+        if run.candidate_document_json:
+            payload['candidate'] = json.loads(run.candidate_document_json)
         return success_response(payload)
     except GenerationRunError as exc:
         return error_response('GENERATION_RUN_NOT_FOUND', str(exc), 404)
@@ -224,6 +233,79 @@ def cancel_run(project_id, run_id):
 )
 def retry_run(project_id, run_id):
     return _control_run(project_id, run_id, 'PENDING', 'GENERATION_STATE_CONFLICT')
+
+
+@workspace_generation_bp.route(
+    '/<project_id>/workspace-generation-runs/<run_id>/optimize', methods=['POST'],
+)
+def optimize_run(project_id, run_id):
+    """Create an optimizing child run without touching the parent candidate (§11.3).
+
+    The child freezes the parent's snapshot and candidate base; requested
+    items are rewritten by the text provider and land in the child's own
+    candidate, never in the parent or the formal workspace.
+    """
+    try:
+        _require_feature()
+        parent = _run_or_404(run_id)
+        if parent.project_id != project_id:
+            return not_found('Generation run')
+        project = _get_project(project_id)
+        data = request.get_json() or {}
+        if not isinstance(data, dict):
+            return bad_request('request body must be an object')
+        item_ids = data.get('item_ids')
+        if not isinstance(item_ids, list) or not item_ids:
+            return bad_request('item_ids must be a non-empty array')
+        operation = data.get('operation') or 'polish'
+        if operation not in VALID_OPTIMIZE_OPERATIONS:
+            return bad_request('operation must be polish/shorten/expand/regenerate')
+        if parent.status not in {'REVIEW_READY', 'STALE'}:
+            return error_response(
+                'GENERATION_NOT_REVIEWABLE', '只有待审查候选可以继续优化', 409,
+            )
+        options = {
+            'item_ids': [str(item_id) for item_id in item_ids],
+            'instruction': str(data.get('instruction') or ''),
+        }
+        for key in ('style_profile_id', 'expressiveness_id', 'voice_profile_id'):
+            value = data.get(key)
+            if value:
+                options[key] = str(value)
+        if parent.candidate_hash:
+            options['base_candidate_hash'] = parent.candidate_hash
+        child = create_generation_run(
+            project,
+            target_workspace_kind=parent.target_workspace_kind,
+            source_kind=parent.source_kind,
+            mode='preserve',
+            operation=operation,
+            options=options,
+            parent_run_id=parent.id,
+        )
+        # 子运行继承父运行的冻结源快照，保证候选可复现
+        child.source_snapshot_json = parent.source_snapshot_json
+        child.source_snapshot_hash = parent.source_snapshot_hash
+        child.source_workspace_id = parent.source_workspace_id
+        child.source_version_id = parent.source_version_id
+        child.source_revision = parent.source_revision
+        _submit_candidate_task(child)
+        return success_response({
+            **child.to_dict(),
+            'result_route': (
+                f'/project/{project.id}/{parent.target_workspace_kind}'
+                f'/review/{child.id}'
+            ),
+        }, status_code=202)
+    except FeatureDisabled as exc:
+        db.session.rollback()
+        return error_response('FEATURE_DISABLED', str(exc), 403)
+    except GenerationAlreadyActive as exc:
+        db.session.rollback()
+        return error_response('GENERATION_ALREADY_ACTIVE', str(exc), 409)
+    except GenerationRunError as exc:
+        db.session.rollback()
+        return error_response('INVALID_GENERATION_RUN', str(exc), 400)
 
 
 @workspace_generation_bp.route(

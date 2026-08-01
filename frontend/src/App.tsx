@@ -14,6 +14,7 @@ import { useContentProjectStore } from './store/useContentProjectStore';
 import { useToast, AccessCodeGuard, AppTopNav, DesktopTitleBar, Loading } from './components/shared';
 import { ContentProjectLayout } from './components/content-project/ContentProjectLayout';
 import { WorkspaceEntryPage } from './components/content-project/WorkspaceEntryPage';
+import { WorkspaceGenerationReview } from './components/content-project/WorkspaceGenerationReview';
 
 const isDesktop = typeof window !== 'undefined' && 'electronAPI' in window;
 
@@ -88,6 +89,12 @@ export function SpineLegacyRedirect() {
   return <Navigate to={`/project/${projectId}/${target}`} replace />;
 }
 
+function WorkspaceGenerationReviewRoute() {
+  const { projectId, runId } = useParams();
+  if (!projectId || !runId) return <Navigate to="/home" replace />;
+  return <WorkspaceGenerationReview projectId={projectId} runId={runId} />;
+}
+
 function AppRoutes() {
   return (
     <Routes>
@@ -111,7 +118,9 @@ function AppRoutes() {
             <Route path="editor" element={<SlidePreview />} />
           </Route>
           <Route path="/project/:projectId/video" element={<WorkspaceEntryPage kind="video" />} />
+          <Route path="/project/:projectId/video/review/:runId" element={<WorkspaceGenerationReviewRoute />} />
           <Route path="/project/:projectId/podcast" element={<WorkspaceEntryPage kind="podcast" />} />
+          <Route path="/project/:projectId/podcast/review/:runId" element={<WorkspaceGenerationReviewRoute />} />
         </Route>
       </Route>
       <Route path="/project/:projectId/outline" element={<LegacyProjectRedirect stage="outline" />} />

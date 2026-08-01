@@ -59,6 +59,8 @@ const previewI18n = {
       videoNarrationAdvanced: "高级配置",
       videoNarrationCollapse: "收起高级配置",
       videoNarrationAdvancedHint: "这些参数只在导出前生效，不会影响页面内容本身。",
+      videoAdvancedOpen: "高级设置",
+      videoAdvancedCollapse: "收起高级设置",
       videoNarrationMinWords: "最少字数",
       videoNarrationMaxWords: "最多字数",
       videoNarrationSummaryLabel: "当前策略",
@@ -190,6 +192,8 @@ const previewI18n = {
       videoNarrationAdvanced: "Advanced settings",
       videoNarrationCollapse: "Hide advanced settings",
       videoNarrationAdvancedHint: "These options only affect narration generation during export.",
+      videoAdvancedOpen: "Advanced settings",
+      videoAdvancedCollapse: "Hide advanced settings",
       videoNarrationMinWords: "Min words",
       videoNarrationMaxWords: "Max words",
       videoNarrationSummaryLabel: "Current strategy",
@@ -278,7 +282,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Sparkles,
-  ChevronDown,
   ChevronUp,
   X,
   Upload,
@@ -289,7 +292,8 @@ import {
   Square,
   Check,
   FileText,
-  Loader2,
+  Film,
+  Loader2, ChevronDown,
   Info,
   Pause,
   Play,
@@ -300,6 +304,8 @@ import { Button, Loading, Modal, Textarea, useToast, useConfirm, MaterialSelecto
 import { SegmentedControl } from '@/components/shared/SegmentedControl';
 import { WorkspaceShell } from '@/components/workspace/WorkspaceShell';
 import { ProjectRailPortal, useProjectRail } from '@/components/project-rail/ProjectRail';
+import { PptToVideoWizard } from '@/components/content-project/PptToVideoWizard';
+import { useContentProjectStore } from '@/store/useContentProjectStore';
 import { WorkspaceStatusBar } from '@/components/workspace/WorkspaceStatusBar';
 import { WorkspaceToolbar } from '@/components/workspace/WorkspaceToolbar';
 import { MaterialGeneratorModal } from '@/components/shared/MaterialGeneratorModal';
@@ -558,6 +564,7 @@ const PPTX_TRANSITION_OPTIONS: { value: PptxTransitionEffect; labelKey: string }
 ];
 
 export const SlidePreview: React.FC = () => {
+  const { target: railTarget, active: railActive } = useProjectRail();
   const navigate = useNavigate();
   const location = useLocation();
   const { i18n } = useTranslation();
@@ -608,7 +615,11 @@ export const SlidePreview: React.FC = () => {
   const [showExportTasksPanel, setShowExportTasksPanel] = useState(false);
   const [showPptxExportDialog, setShowPptxExportDialog] = useState(false);
   const [showVideoExportDialog, setShowVideoExportDialog] = useState(false);
+  const [showVideoAdvancedSettings, setShowVideoAdvancedSettings] = useState(false);
   const [showNarrationWorkbench, setShowNarrationWorkbench] = useState(false);
+  const [showPptToVideoWizard, setShowPptToVideoWizard] = useState(false);
+  // 文案工作台打开时让出导航槽，避免双 rail 堆叠
+  const railVisible = railActive && !showNarrationWorkbench;
   const [videoNarrationSummary, setVideoNarrationSummary] = useState<ProjectNarrationSummary | null>(null);
   const [showEditablePptxDialog, setShowEditablePptxDialog] = useState(false);
   const [showImageQualityReport, setShowImageQualityReport] = useState(false);
@@ -2459,7 +2470,6 @@ export const SlidePreview: React.FC = () => {
     </div>
   );
 
-  const { target: railTarget, active: railActive } = useProjectRail();
 
   const imageRail = (
         <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-[var(--app-surface-muted)]">
@@ -2692,6 +2702,15 @@ export const SlidePreview: React.FC = () => {
             >
               <span className="hidden xl:inline">视频文案</span>
             </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<Film size={16} className="md:h-[18px] md:w-[18px]" />}
+              onClick={() => setShowPptToVideoWizard(true)}
+              className="hidden md:inline-flex"
+            >
+              <span className="hidden xl:inline">转换视频</span>
+            </Button>
 
           {/* 导出任务按钮 — 始终显示，面板内部决定是否有内容 */}
           <div className="relative">
@@ -2907,7 +2926,7 @@ export const SlidePreview: React.FC = () => {
       {/* 视频导出设置弹窗 */}
       {showVideoExportDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[color:var(--app-surface)]/80" onClick={() => setShowVideoExportDialog(false)}>
-          <div role="dialog" aria-modal="true" aria-labelledby="video-export-title" className="max-h-[88vh] w-[680px] max-w-[96vw] overflow-y-auto rounded-[var(--app-radius-panel)] border border-[var(--app-border)] bg-[var(--app-surface)] p-6 shadow-[var(--app-shadow-soft)]" onClick={e => e.stopPropagation()}>
+          <div role="dialog" aria-modal="true" aria-labelledby="video-export-title" className="max-h-[88vh] w-[560px] max-w-[96vw] overflow-y-auto rounded-[var(--app-radius-panel)] border border-[var(--app-border)] bg-[var(--app-surface)] p-6 shadow-[var(--app-shadow-soft)]" onClick={e => e.stopPropagation()}>
             <h3 id="video-export-title" className="text-lg font-semibold">{t('preview.videoExportTitle')}</h3>
             <p className="mb-5 mt-1 text-sm text-[var(--app-text-tertiary)]">{t('preview.videoExportSubtitle')}</p>
             <div className="space-y-5">
@@ -2921,19 +2940,6 @@ export const SlidePreview: React.FC = () => {
                 <Button type="button" variant="secondary" size="sm" onClick={() => { setShowVideoExportDialog(false); setShowNarrationWorkbench(true); }}>
                   编辑视频文案
                 </Button>
-              </div>
-              <div className="space-y-2">
-                <div className="text-sm font-medium">语音引擎</div>
-                <SegmentedControl
-                  ariaLabel="语音引擎"
-                  options={[
-                    { value: 'edge', label: 'Edge 免费语音' },
-                    { value: 'fish_audio', label: 'Fish Audio s2.1-pro-free' },
-                  ]}
-                  value={videoTtsProvider}
-                  onChange={setVideoTtsProvider}
-                  className="grid w-full grid-cols-2"
-                />
               </div>
               <div className="space-y-2">
                 <div className="text-sm font-medium">{t('preview.videoDirectorPreset')}</div>
@@ -2954,6 +2960,25 @@ export const SlidePreview: React.FC = () => {
                     </button>
                   ))}
                 </div>
+              </div>
+              <button type="button" aria-expanded={showVideoAdvancedSettings} onClick={() => setShowVideoAdvancedSettings((value) => !value)} className="flex w-full items-center justify-center gap-2 rounded-[var(--app-radius-control)] border border-[var(--app-border)] px-3 py-2 text-sm font-medium text-[var(--app-text-secondary)] transition-colors hover:bg-[var(--app-surface-hover)]">
+                <ChevronDown size={15} className={`transition-transform ${showVideoAdvancedSettings ? 'rotate-180' : ''}`} aria-hidden="true" />
+                {showVideoAdvancedSettings ? t('preview.videoAdvancedCollapse') : t('preview.videoAdvancedOpen')}
+              </button>
+              {showVideoAdvancedSettings && (
+                <>
+              <div className="space-y-2">
+                <div className="text-sm font-medium">语音引擎</div>
+                <SegmentedControl
+                  ariaLabel="语音引擎"
+                  options={[
+                    { value: 'edge', label: 'Edge 免费语音' },
+                    { value: 'fish_audio', label: 'Fish Audio s2.1-pro-free' },
+                  ]}
+                  value={videoTtsProvider}
+                  onChange={setVideoTtsProvider}
+                  className="grid w-full grid-cols-2"
+                />
               </div>
               <div className="space-y-4 rounded-[var(--app-radius-card)] border border-[var(--app-border)] p-4">
                 <div className="flex items-center justify-between gap-4">
@@ -3272,6 +3297,8 @@ export const SlidePreview: React.FC = () => {
                   </div>
                 )}
               </div>
+                </>
+              )}
             </div>
             <div className="flex justify-end gap-3 mt-6">
               <button
@@ -3619,9 +3646,9 @@ export const SlidePreview: React.FC = () => {
             </div>
           </WorkspaceStatusBar>
         )}
-      sidebar={railActive ? null : imageRail}
+      sidebar={railVisible ? null : imageRail}
       >
-      {railActive && railTarget && <ProjectRailPortal target={railTarget}>{imageRail}</ProjectRailPortal>}
+      {railVisible && railTarget && <ProjectRailPortal target={railTarget}>{imageRail}</ProjectRailPortal>}
 
         {/* 右侧：大图预览 */}
         <div className="flex h-full min-w-0 flex-col overflow-hidden bg-[var(--app-canvas)]">
@@ -4353,6 +4380,13 @@ export const SlidePreview: React.FC = () => {
         pageIds={narrationPageIds}
         onClose={() => setShowNarrationWorkbench(false)}
         onSummaryChange={setVideoNarrationSummary}
+      />}
+
+      {projectId && <PptToVideoWizard
+        projectId={projectId}
+        isOpen={showPptToVideoWizard}
+        onClose={() => setShowPptToVideoWizard(false)}
+        onCreated={() => void useContentProjectStore.getState().load(projectId)}
       />}
 
     </div>

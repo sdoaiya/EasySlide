@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MutableRefObject } from 'react'
-import { Download, FileText, ListTodo, Maximize2, MonitorPlay, Plus, Redo2, RefreshCw, Settings2, Sparkles, Trash2, Undo2, X, ZoomIn, ZoomOut } from 'lucide-react'
+import { ChevronDown, Download, FileText, Film, ListTodo, Maximize2, MonitorPlay, Plus, Redo2, RefreshCw, Settings2, Sparkles, Trash2, Undo2, X, ZoomIn, ZoomOut } from 'lucide-react'
 import type { NativeSlideSpec } from '@/native-deck/types'
 import type { FishAudioVoice, NarrationPreferences, NarrationSpeaker, ProjectNarrationSummary, PronunciationEntry } from '@/types'
 import { useNativeDeckStore } from '@/store/useNativeDeckStore'
@@ -7,6 +7,7 @@ import { useProjectStore } from '@/store/useProjectStore'
 import { WorkspaceShell } from '@/components/workspace/WorkspaceShell'
 import { WorkspaceStatusBar } from '@/components/workspace/WorkspaceStatusBar'
 import { ProjectRailPortal, useProjectRail } from '@/components/project-rail/ProjectRail'
+import { PptToVideoWizard } from '@/components/content-project/PptToVideoWizard'
 import { NativeDeckCanvas } from './NativeDeckCanvas'
 import { NativeDeckPageRail } from './NativeDeckPageRail'
 import { NativeDeckPropertyPanel, type NativeLayoutContract } from './NativeDeckPropertyPanel'
@@ -115,6 +116,8 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
   const [exportError, setExportError] = useState('')
   const [showVideoSettings, setShowVideoSettings] = useState(false)
   const [showNarrationWorkbench, setShowNarrationWorkbench] = useState(false)
+  const [showVideoAdvanced, setShowVideoAdvanced] = useState(false)
+  const [showPptToVideoWizard, setShowPptToVideoWizard] = useState(false)
   const [videoNarrationSummary, setVideoNarrationSummary] = useState<ProjectNarrationSummary>()
   const [videoPreset, setVideoPreset] = useState<NativeVideoPreset>('business')
   const [videoTtsProvider, setVideoTtsProvider] = useState<'edge' | 'fish_audio'>('edge')
@@ -695,6 +698,8 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
   }, [])
 
   const { target: railTarget, active: railActive } = useProjectRail();
+  // 文案工作台打开时让出导航槽，避免双 rail 堆叠
+  const railVisible = railActive && !showNarrationWorkbench
 
   const pageRail = (
     <NativeDeckPageRail slides={slides} selectedPageId={selectedPageId} onSelect={selectPage} onAdd={() => void createSlide()} onDuplicate={(pageId) => void createSlide(slides.find((slide) => slide.pageId === pageId))} onDelete={(pageId) => void removeSlide(pageId)} onMove={(pageId, direction) => void moveSlide(pageId, direction)} pageAction={pageGenerationAction} pageGenerationAction={singlePageGenerationAction || (media.pages.length > 0 ? { label: '生成本页', disabled: media.running, onClick: media.runPage } : undefined)} />
@@ -725,6 +730,7 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
             <button type="button" onClick={() => window.location.reload()} className="hidden h-10 items-center gap-2 rounded-lg px-3 text-sm font-semibold text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] md:inline-flex"><RefreshCw size={17} />刷新</button>
             <button type="button" aria-label={presenting ? '退出演示模式' : '演示模式'} title={presenting ? '退出演示模式' : '演示模式'} onClick={() => void (presenting ? stopPresentation() : startPresentation())} className="hidden h-10 items-center gap-2 rounded-lg px-3 text-sm font-semibold text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] md:inline-flex"><MonitorPlay size={17} />{presenting ? '退出演示' : '演示'}</button>
             <button type="button" aria-label="视频文案" title="编辑视频文案" onClick={() => setShowNarrationWorkbench(true)} className="hidden h-10 items-center gap-2 rounded-lg px-3 text-sm font-semibold text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] lg:inline-flex"><FileText size={17} />视频文案</button>
+            <button type="button" aria-label="转换视频" title="从当前 PPT 生成视频候选" onClick={() => setShowPptToVideoWizard(true)} className="hidden h-10 items-center gap-2 rounded-lg px-3 text-sm font-semibold text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] lg:inline-flex"><Film size={17} />转换视频</button>
             <div className="relative">
               <button ref={taskButtonRef} type="button" aria-label="导出任务" title="导出任务" onClick={() => setShowTasks((value) => !value)} className="relative flex h-10 items-center gap-1 rounded-[var(--app-radius-control)] px-2 text-sm font-semibold hover:bg-[var(--app-surface-hover)] active:scale-[0.98]">
                 <ListTodo size={17} aria-hidden="true" />{tasks.filter((task) => task.projectId === projectId).length || 0}
@@ -754,10 +760,10 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
           <span className="ml-auto whitespace-nowrap">{Math.round(zoom * 100)}% · 原生可编辑模式</span>
         </WorkspaceStatusBar>
       )}
-      sidebar={railActive ? null : pageRail}
+      sidebar={railVisible ? null : pageRail}
       inspector={<NativeDeckPropertyPanel slide={selectedSlide} contract={contract} contracts={layoutContracts} errors={errors} onChange={updateProps} onLayoutChange={changeLayout} onRegenerate={selectedSlide && singlePageGenerationAction ? () => singlePageGenerationAction.onClick(selectedSlide.pageId) : undefined} versions={pageVersions} onRestoreVersion={(versionId) => void restorePageVersion(versionId)} onApplyAnimation={applyAnimationToAll} mediaActions={media.mediaActions} />}
     >
-      {railActive && railTarget && <ProjectRailPortal target={railTarget}>{pageRail}</ProjectRailPortal>}
+      {railVisible && railTarget && <ProjectRailPortal target={railTarget}>{pageRail}</ProjectRailPortal>}
       <div className="relative flex h-full min-w-0 flex-col">
         <div className="min-h-0 flex-1">
           <NativeDeckCanvas
@@ -805,6 +811,19 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
               </div>
               <button type="button" onClick={() => { setShowVideoSettings(false); setShowNarrationWorkbench(true) }} className="h-9 shrink-0 rounded-[var(--app-radius-control)] px-3 text-sm font-semibold text-[var(--app-accent)] hover:bg-[var(--app-surface-hover)]">编辑文案</button>
             </div>
+            <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {(Object.keys(NATIVE_VIDEO_PRESETS) as NativeVideoPreset[]).map((preset) => (
+                <button key={preset} type="button" aria-pressed={videoPreset === preset} onClick={() => setVideoPreset(preset)} className={`h-10 rounded-[var(--app-radius-control)] border px-3 text-sm font-semibold transition-colors active:scale-[0.98] ${videoPreset === preset ? 'border-[var(--app-accent)] bg-[var(--app-accent-soft)] text-[var(--app-accent)]' : 'border-[var(--app-border)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]'}`}>
+                  {NATIVE_VIDEO_PRESET_LABELS[preset]}
+                </button>
+              ))}
+            </div>
+            <button type="button" aria-expanded={showVideoAdvanced} onClick={() => setShowVideoAdvanced((value) => !value)} className="mt-5 flex h-9 w-full items-center justify-center gap-2 rounded-[var(--app-radius-control)] border border-[var(--app-border)] text-sm font-semibold text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]">
+              <ChevronDown size={15} className={`transition-transform ${showVideoAdvanced ? 'rotate-180' : ''}`} aria-hidden="true" />
+              {showVideoAdvanced ? '收起高级设置' : '高级设置'}
+            </button>
+            {showVideoAdvanced && (
+              <>
             <div className="mt-5 grid grid-cols-2 gap-1 rounded-[var(--app-radius-control)] bg-[var(--app-surface-secondary)] p-1" role="group" aria-label="语音引擎">
               {([['edge', 'Edge TTS'], ['fish_audio', 'Fish Audio s2.1-pro-free']] as const).map(([provider, label]) => (
                 <button key={provider} type="button" aria-pressed={videoTtsProvider === provider} onClick={() => {
@@ -813,13 +832,6 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
                   if (voices.length) setVideoSpeakers((current) => current.map((speaker, index) => ({ ...speaker, voice: voices[index % voices.length].id })))
                 }} className={`h-9 rounded-[var(--app-radius-control)] px-3 text-sm font-semibold ${videoTtsProvider === provider ? 'bg-[var(--app-surface)] text-[var(--app-text)] shadow-[var(--app-shadow-control)]' : 'text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]'}`}>
                   {label}
-                </button>
-              ))}
-            </div>
-            <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {(Object.keys(NATIVE_VIDEO_PRESETS) as NativeVideoPreset[]).map((preset) => (
-                <button key={preset} type="button" aria-pressed={videoPreset === preset} onClick={() => setVideoPreset(preset)} className={`h-10 rounded-[var(--app-radius-control)] border px-3 text-sm font-semibold transition-colors active:scale-[0.98] ${videoPreset === preset ? 'border-[var(--app-accent)] bg-[var(--app-accent-soft)] text-[var(--app-accent)]' : 'border-[var(--app-border)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]'}`}>
-                  {NATIVE_VIDEO_PRESET_LABELS[preset]}
                 </button>
               ))}
             </div>
@@ -872,6 +884,8 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
               onNarrationPreferencesChange={setVideoNarrationPreferences}
             />}
             {videoTtsProvider === 'fish_audio' && (fishVoicesLoading || fishVoicesError) && <p className={`mt-3 text-sm ${fishVoicesError ? 'text-[var(--app-danger)]' : 'text-[var(--app-text-secondary)]'}`} role="status">{fishVoicesLoading ? '正在加载私有声音…' : fishVoicesError}</p>}
+              </>
+            )}
             <div className="mt-5 flex justify-end gap-2 border-t border-[var(--app-border)] pt-4">
               <button type="button" onClick={() => setShowVideoSettings(false)} className="h-10 rounded-[var(--app-radius-control)] px-4 text-sm font-semibold text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]">取消</button>
               <button type="button" disabled={(videoTtsProvider === 'fish_audio' && (fishVoicesLoading || !fishVoices.length)) || (videoNarrationMode === 'dialogue' && (videoSpeakers.length < 2 || videoSpeakers.some((speaker) => !speaker.name.trim() || !speaker.voice)))} onClick={() => {
@@ -890,6 +904,11 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
         pageIds={slides.map((slide) => slide.pageId)}
         onClose={() => setShowNarrationWorkbench(false)}
         onSummaryChange={setVideoNarrationSummary}
+      />
+      <PptToVideoWizard
+        projectId={projectId}
+        isOpen={showPptToVideoWizard}
+        onClose={() => setShowPptToVideoWizard(false)}
       />
     </WorkspaceShell>
   )

@@ -613,6 +613,7 @@ def generate_workspace_candidate_task(
     from models import WorkspaceGenerationRun
     from services.workspace_generation_service import (
         GenerationRunStateError,
+        apply_candidate_optimization,
         build_candidate_document,
         generation_error_code,
         generation_error_message,
@@ -656,7 +657,11 @@ def generate_workspace_candidate_task(
             run = db.session.get(WorkspaceGenerationRun, run_id)
             if not task or task.status == 'CANCELLED' or run.status == 'CANCELLED':
                 return
-            document, item_ids = build_candidate_document(run)
+            document, item_ids = (
+                apply_candidate_optimization(run)
+                if run.parent_run_id
+                else build_candidate_document(run)
+            )
             set_candidate(run, document)
             transition_run(run, 'REVIEW_READY')
             progress = task.get_progress()

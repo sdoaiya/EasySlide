@@ -1047,6 +1047,7 @@ describe('EasySlide internal workflow chrome', () => {
     fireEvent.click(screen.getByRole('button', { name: '导出 导出' }));
     fireEvent.click(screen.getByRole('button', { name: '导出为讲解视频' }));
     await screen.findByText('讲解视频导出设置');
+    fireEvent.click(screen.getByRole('button', { name: '高级设置' }));
     fireEvent.change(screen.getByLabelText('旁白模式'), { target: { value: 'dialogue' } });
     expect(screen.queryByText('语音音色')).not.toBeInTheDocument();
     expect(screen.getAllByRole('option', { name: '晓晓（中文 · 女声）' })).toHaveLength(2);
@@ -1126,6 +1127,7 @@ describe('EasySlide internal workflow chrome', () => {
     fireEvent.click(screen.getByRole('button', { name: '导出 导出' }));
     fireEvent.click(screen.getByRole('button', { name: '导出为讲解视频' }));
     expect(screen.getByRole('dialog', { name: '讲解视频导出设置' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '高级设置' }));
     fireEvent.click(screen.getByRole('radio', { name: 'Fish Audio s2.1-pro-free' }));
 
     await waitFor(() => expect(screen.getByLabelText('Fish Audio 私有声线')).toHaveValue('fish-host'));

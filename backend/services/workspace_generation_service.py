@@ -322,6 +322,85 @@ def build_candidate_document(run: WorkspaceGenerationRun) -> tuple[dict, list[st
     return document, item_ids
 
 
+def apply_candidate_optimization(run: WorkspaceGenerationRun) -> tuple[dict, list[str]]:
+    """Build an optimized child candidate from the parent's frozen candidate.
+
+    Child runs (``parent_run_id`` set) never touch the parent candidate or
+    the live source; each requested item is rewritten by the text provider
+    with the user instruction, and items the provider cannot rewrite keep
+    their original text (outcome recorded in task progress).
+    """
+    from services.prompts import get_video_scene_optimize_prompt
+
+    if not run.parent_run_id:
+        raise GenerationRunError('只有子运行可以执行候选优化')
+    parent = WorkspaceGenerationRun.query.get(run.parent_run_id)
+    if not parent or not parent.candidate_document_json:
+        raise GenerationRunError('父运行没有可优化的候选')
+    base = json.loads(parent.candidate_document_json)
+    options = json.loads(run.options_json or '{}')
+    item_ids = list(options.get('item_ids') or [])
+    instruction = str(options.get('instruction') or '')
+    operation = run.operation or 'polish'
+    style_profile_id = str(options.get('style_profile_id') or '')
+    expressiveness_id = str(options.get('expressiveness_id') or '')
+
+    def _rewrite(item: dict) -> dict:
+        if 'narration' in item:
+            base_text = str(item.get('narration', {}).get('text') or '')
+        else:
+            base_text = str(item.get('text') or '')
+        if not base_text.strip():
+            return item
+        prompt = get_video_scene_optimize_prompt(
+            operation=operation,
+            scene_title=str(item.get('title') or ''),
+            base_text=base_text,
+            instruction=instruction,
+            style_profile_id=style_profile_id,
+            expressiveness_id=expressiveness_id,
+        )
+        from services.ai_service_manager import get_ai_service
+
+        raw = str(get_ai_service().text_provider.generate_text(prompt) or '').strip()
+        if raw.startswith('```'):
+            raw = raw.split('\n', 1)[-1].rsplit('```', 1)[0].strip()
+        try:
+            result = json.loads(raw)
+            text = str(result.get('text') or '').strip()
+        except (TypeError, ValueError):
+            # 供应商返回不可解析内容时保留原文，不污染候选
+            return item
+        if not text:
+            return item
+        updated = json.loads(canonical_json(item))
+        if 'narration' in updated:
+            updated['narration'] = {**updated['narration'], 'text': text}
+            if 'subtitles' in updated and isinstance(updated['subtitles'], dict):
+                updated['subtitles'] = {**updated['subtitles'], 'text': text}
+        else:
+            updated['text'] = text
+        return updated
+
+    if 'scenes' in base:
+        scenes = []
+        for scene in base['scenes']:
+            item_id = str(scene.get('scene_id') or '')
+            scenes.append(_rewrite(scene) if item_id in item_ids else scene)
+        document = {**base, 'scenes': scenes}
+        item_ids = [str(scene.get('scene_id') or '') for scene in base['scenes']]
+    elif 'segments' in base:
+        segments = []
+        for segment in base['segments']:
+            item_id = str(segment.get('segment_id') or '')
+            segments.append(_rewrite(segment) if item_id in item_ids else segment)
+        document = {**base, 'segments': segments}
+        item_ids = [str(segment.get('segment_id') or '') for segment in base['segments']]
+    else:
+        document = base
+    return document, item_ids
+
+
 def generation_error_code(exc: Exception) -> str:
     """Map provider failures to the stable run error contract."""
     upstream_status = getattr(getattr(exc, 'response', None), 'status_code', None)

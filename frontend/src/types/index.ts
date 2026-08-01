@@ -406,6 +406,57 @@ export interface ContentProject {
   updated_at?: string | null;
 }
 
+export type WorkspaceGenerationStatus =
+  | 'PENDING' | 'RUNNING' | 'PAUSED' | 'REVIEW_READY'
+  | 'PUBLISHING' | 'PUBLISHED' | 'FAILED' | 'CANCELLED' | 'STALE';
+
+export interface WorkspaceGenerationRun {
+  run_id: string;
+  project_id: string;
+  target_workspace_kind: 'video' | 'podcast';
+  source_kind: 'brief' | 'ppt';
+  source_workspace_id?: string | null;
+  source_version_id?: string | null;
+  source_revision: number;
+  source_snapshot_hash: string;
+  source_summary?: Record<string, any> | null;
+  parent_run_id?: string | null;
+  mode: 'direct' | 'preserve' | 'ai_adapt';
+  operation: 'generate' | 'polish' | 'shorten' | 'expand' | 'regenerate';
+  options?: Record<string, any> | null;
+  candidate_hash?: string | null;
+  status: WorkspaceGenerationStatus;
+  task_id?: string | null;
+  target_workspace_id?: string | null;
+  published_version_id?: string | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  published_at?: string | null;
+  candidate?: Record<string, any> | null;
+  stale?: boolean;
+  result_route?: string;
+}
+
+export interface CreateWorkspaceGenerationRunRequest {
+  targetWorkspaceKind: 'video' | 'podcast';
+  sourceKind: 'brief' | 'ppt';
+  mode?: 'direct' | 'preserve' | 'ai_adapt';
+  operation?: string;
+  pageIds?: string[];
+  options?: Record<string, any>;
+}
+
+export interface OptimizeWorkspaceGenerationRunRequest {
+  itemIds: string[];
+  operation: 'polish' | 'shorten' | 'expand' | 'regenerate';
+  instruction?: string;
+  styleProfileId?: string;
+  expressivenessId?: string;
+  voiceProfileId?: string;
+}
+
 export interface SyncDiffItem {
   item_id: string;
   path: string;

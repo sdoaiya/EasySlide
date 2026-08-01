@@ -1,5 +1,5 @@
 import { apiClient, getApiBaseUrl } from './client';
-import type { Project, Task, ApiResponse, CreateProjectRequest, Page, Material, NativeExportQualityReport, ProjectDashboardStats, ImageGenerationOptions, ImageGenerationResponse, FishAudioVoice, NarrationPreferences, PronunciationEntry, NarrationPolicy, NarrationVersion, ProjectNarrationSummary, NarrationVersionsResponse, NarrationCandidateResponse, NarrationPreviewResult, CreateNarrationVersionRequest, NarrationAiCandidateRequest, NarrationPreviewRequest, NarrationAiJobRequest, NarrationAiJobResult, NarrationAiJobStatus, NarrationAiJobSummary, NarrationCandidate, NarrationBatchApplyItem, NarrationBatchApplyResult, ContentProject, ContentProjectEntry, ContentSpine, ContentSyncProposal, ContentWorkspaceKind, ProjectWorkspace, WorkspaceVersion } from '@/types';
+import type { Project, Task, ApiResponse, CreateProjectRequest, Page, Material, NativeExportQualityReport, ProjectDashboardStats, ImageGenerationOptions, ImageGenerationResponse, FishAudioVoice, NarrationPreferences, PronunciationEntry, NarrationPolicy, NarrationVersion, ProjectNarrationSummary, NarrationVersionsResponse, NarrationCandidateResponse, NarrationPreviewResult, CreateNarrationVersionRequest, NarrationAiCandidateRequest, NarrationPreviewRequest, NarrationAiJobRequest, NarrationAiJobResult, NarrationAiJobStatus, NarrationAiJobSummary, NarrationCandidate, NarrationBatchApplyItem, NarrationBatchApplyResult, ContentProject, ContentProjectEntry, ContentSpine, ContentSyncProposal, ContentWorkspaceKind, ProjectWorkspace, WorkspaceVersion, WorkspaceGenerationRun, CreateWorkspaceGenerationRunRequest, OptimizeWorkspaceGenerationRunRequest } from '@/types';
 import type { Settings } from '../types/index';
 import type { NativeMotionSceneBundle, NativeSceneManifestRef } from '@/native-deck/exportNativeMotionBundle';
 import type { NativeSceneManifest } from '@/native-deck/nativeSceneAdapter';
@@ -656,6 +656,87 @@ export const setLastProjectEntry = async (
   entry: ContentProjectEntry,
 ): Promise<ApiResponse<{ project_id: string; last_workspace: ContentProjectEntry }>> => {
   const response = await apiClient.put(`/api/content-projects/${projectId}/last-workspace`, { entry });
+  return response.data;
+};
+
+// ===== 工作区生成运行 API（重构计划 §11） =====
+
+export const createWorkspaceGenerationRun = async (
+  projectId: string,
+  data: CreateWorkspaceGenerationRunRequest,
+): Promise<ApiResponse<WorkspaceGenerationRun>> => {
+  const response = await apiClient.post<ApiResponse<WorkspaceGenerationRun>>(
+    `/api/projects/${projectId}/workspace-generation-runs`,
+    {
+      target_workspace_kind: data.targetWorkspaceKind,
+      source_kind: data.sourceKind,
+      mode: data.mode,
+      operation: data.operation,
+      options: {
+        ...(data.options || {}),
+        ...(data.pageIds ? { page_ids: data.pageIds } : {}),
+      },
+    },
+  );
+  return response.data;
+};
+
+export const listWorkspaceGenerationRuns = async (
+  projectId: string,
+): Promise<ApiResponse<{ runs: WorkspaceGenerationRun[]; total: number }>> => {
+  const response = await apiClient.get<ApiResponse<{ runs: WorkspaceGenerationRun[]; total: number }>>(
+    `/api/projects/${projectId}/workspace-generation-runs`,
+  );
+  return response.data;
+};
+
+export const getWorkspaceGenerationRun = async (
+  projectId: string,
+  runId: string,
+): Promise<ApiResponse<WorkspaceGenerationRun>> => {
+  const response = await apiClient.get<ApiResponse<WorkspaceGenerationRun>>(
+    `/api/projects/${projectId}/workspace-generation-runs/${runId}`,
+  );
+  return response.data;
+};
+
+export const controlWorkspaceGenerationRun = async (
+  projectId: string,
+  runId: string,
+  action: 'pause' | 'resume' | 'cancel' | 'retry',
+): Promise<ApiResponse<WorkspaceGenerationRun>> => {
+  const response = await apiClient.post<ApiResponse<WorkspaceGenerationRun>>(
+    `/api/projects/${projectId}/workspace-generation-runs/${runId}/${action}`,
+  );
+  return response.data;
+};
+
+export const publishWorkspaceGenerationRun = async (
+  projectId: string,
+  runId: string,
+): Promise<ApiResponse<WorkspaceGenerationRun>> => {
+  const response = await apiClient.post<ApiResponse<WorkspaceGenerationRun>>(
+    `/api/projects/${projectId}/workspace-generation-runs/${runId}/publish`,
+  );
+  return response.data;
+};
+
+export const optimizeWorkspaceGenerationRun = async (
+  projectId: string,
+  runId: string,
+  data: OptimizeWorkspaceGenerationRunRequest,
+): Promise<ApiResponse<WorkspaceGenerationRun>> => {
+  const response = await apiClient.post<ApiResponse<WorkspaceGenerationRun>>(
+    `/api/projects/${projectId}/workspace-generation-runs/${runId}/optimize`,
+    {
+      item_ids: data.itemIds,
+      operation: data.operation,
+      instruction: data.instruction,
+      style_profile_id: data.styleProfileId,
+      expressiveness_id: data.expressivenessId,
+      voice_profile_id: data.voiceProfileId,
+    },
+  );
   return response.data;
 };
 

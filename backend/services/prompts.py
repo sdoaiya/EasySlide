@@ -1489,3 +1489,45 @@ Huashu 设计规划：
 {json.dumps(layout_candidates, ensure_ascii=False)}
 
 只返回 JSON：{{"layout":"布局ID","props":{{...}}}}"""
+
+
+def get_video_scene_optimize_prompt(
+    *,
+    operation: str,
+    scene_title: str,
+    base_text: str,
+    instruction: str = '',
+    style_profile_id: str = '',
+    expressiveness_id: str = '',
+) -> str:
+    """Build a provider-independent, non-destructive video scene script edit.
+
+    Mirrors the narration candidate prompt contract: the provider returns a
+    single JSON object with the new narration text; facts introduced by the
+    base text must be preserved unless the user instruction explicitly asks
+    otherwise.
+    """
+    operation_rules = {
+        'generate': '根据场景标题与源材料生成自然、可口述的讲解稿。',
+        'polish': '润色表达与节奏，不增加原材料中不存在的事实、数字或结论。',
+        'shorten': '压缩冗余表达，保留所有关键事实、数字和结论。',
+        'expand': '补充解释和过渡，但不得创造原材料中不存在的事实。',
+        'regenerate': '重新组织表达，保持核心事实不变。',
+    }
+    rule = operation_rules.get(operation, operation_rules['polish'])
+    profile_hint = ''
+    if style_profile_id:
+        profile_hint += f'\n文案风格配置：{style_profile_id}'
+    if expressiveness_id:
+        profile_hint += f'\n表现力配置：{expressiveness_id}'
+    payload = {
+        'scene_title': scene_title,
+        'base_text': base_text,
+        'user_instruction': instruction,
+    }
+    return f"""你正在优化视频场景的旁白脚本。
+要求：{rule}
+不得覆盖场景标题，不得新增脚本之外的旁白段落，不得返回 Markdown 或解释。
+只返回一个合法 JSON 对象：{{"text": "优化后的旁白文本"}}
+{profile_hint}
+输入：{json.dumps(payload, ensure_ascii=False)}"""
