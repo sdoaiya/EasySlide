@@ -62,7 +62,6 @@ function PptToVideoWizardInner({ projectId, isOpen, onClose, onCreated }: {
     setBusy(false);
     setMessage('');
     return () => { active = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, projectId]);
 
   const togglePage = (pageId: string) => {
