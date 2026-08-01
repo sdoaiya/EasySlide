@@ -21,6 +21,7 @@ import {
 } from '@/api/endpoints';
 import { WorkspaceShell } from '@/components/workspace/WorkspaceShell';
 import { WorkspaceStatusBar } from '@/components/workspace/WorkspaceStatusBar';
+import { ProjectRailPortal, useProjectRail } from '@/components/project-rail/ProjectRail';
 import type { ProjectWorkspace } from '@/types';
 import { WorkspaceVersionHistory } from './WorkspaceVersionHistory';
 import { useExportTasksStore } from '@/store/useExportTasksStore';
@@ -149,6 +150,7 @@ export function PodcastWorkspace({ projectId, workspace, onChanged }: { projectI
   const [previewError, setPreviewError] = useState('');
   const [preview, setPreview] = useState<PodcastPreview | null>(null);
   const { addTask, pollTask } = useExportTasksStore();
+  const { target: railTarget, active: railActive } = useProjectRail();
 
   useEffect(() => {
     if (loadedRevision.current === workspace.revision) return;
@@ -298,15 +300,24 @@ export function PodcastWorkspace({ projectId, workspace, onChanged }: { projectI
     </div>
   );
 
+  const segmentRail = (
+    <div className="flex h-full min-h-0 flex-col">
+      <p className="px-3 pb-2 text-xs font-medium text-[var(--app-text-tertiary)]">片段 · {document.segments.length}</p>
+      <div className="min-h-0 flex-1 space-y-1 overflow-y-auto px-2 pb-3">
+        {document.segments.map((segment, index) => <PodcastSegmentRailItem key={segment.segment_id} segment={segment} index={index} selected={selectedId === segment.segment_id} onSelect={setSelectedId} />)}
+      </div>
+    </div>
+  );
+
   return <WorkspaceShell
     className="h-full"
-    sidebarWidth="216px"
     inspectorWidth="320px"
     toolbar={<div className="flex h-full min-w-0 items-center gap-3"><Mic2 size={17} className="shrink-0" aria-hidden="true" /><span className="min-w-0 truncate text-sm font-semibold">{document.title}</span><span className="shrink-0 text-xs text-[var(--app-text-tertiary)]">R{workspace.revision}</span><div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2"><Button className="whitespace-nowrap" size="sm" variant="secondary" icon={<Download size={15} />} loading={busy === 'export'} disabled={dirty || busy !== null || !preflight.canExport} onClick={() => void exportAudio('mp3')}>导出 MP3</Button><Button className="whitespace-nowrap" size="sm" variant="secondary" icon={<Download size={15} />} loading={busy === 'export'} disabled={dirty || busy !== null || !preflight.canExport} onClick={() => void exportAudio('wav')}>导出 WAV</Button><Button className="whitespace-nowrap" size="sm" icon={<Save size={15} />} loading={busy === 'save'} disabled={!dirty || busy !== null} onClick={() => void save()}>保存版本</Button></div></div>}
-    sidebar={<div className="flex h-full min-h-0 flex-col"><p className="px-3 pb-2 text-xs font-medium text-[var(--app-text-tertiary)]">片段 · {document.segments.length}</p><div className="min-h-0 flex-1 space-y-1 overflow-y-auto px-2 pb-3">{document.segments.map((segment, index) => <PodcastSegmentRailItem key={segment.segment_id} segment={segment} index={index} selected={selectedId === segment.segment_id} onSelect={setSelectedId} />)}</div></div>}
+    sidebar={railActive ? null : segmentRail}
     inspector={inspector}
     statusBar={<WorkspaceStatusBar>{message || (dirty ? '有未保存修改' : preflight.canExport ? '混音预检通过，可导出' : '请处理混音预检中的阻塞项')}</WorkspaceStatusBar>}
   >
+    {railActive && railTarget && <ProjectRailPortal target={railTarget}>{segmentRail}</ProjectRailPortal>}
     <div className="flex h-full min-h-0 items-center justify-center overflow-auto bg-[var(--app-canvas)] p-6"><article className="w-full max-w-3xl overflow-hidden rounded-[var(--app-radius-panel)] border border-[var(--app-border)] bg-[var(--app-surface)] shadow-[var(--app-shadow-card)]"><div className="flex items-start gap-5 border-b border-[var(--app-border)] p-8">{document.cover.asset_ref && <img src={document.cover.asset_ref} alt="播客封面" className="h-24 w-24 rounded-[var(--app-radius-control)] object-cover" />}<div className="min-w-0"><p className="text-xs text-[var(--app-text-tertiary)]">{selectedSpeaker?.name || '未选择片段'}</p><h1 className="mt-2 text-2xl font-semibold">{document.cover.title || document.title}</h1>{document.cover.subtitle && <p className="mt-1 text-sm text-[var(--app-text-secondary)]">{document.cover.subtitle}</p>}</div></div><div className="p-8"><p className="whitespace-pre-wrap text-lg leading-8">{selected?.text || '暂无片段'}</p>{selected?.source_ref && <p className="mt-4 truncate text-xs text-[var(--app-text-tertiary)]">素材：{selected.source_ref}</p>}</div></article></div>
     <MaterialSelector projectId={projectId} isOpen={materialTarget !== null} onClose={() => setMaterialTarget(null)} onSelect={handleMaterialSelect} multiple={false} maxSelection={1} mediaKindFilter={materialTarget === 'cover' ? ['image'] : materialTarget === 'segment-source' ? ['audio', 'transcript'] : ['audio']} />
   </WorkspaceShell>;

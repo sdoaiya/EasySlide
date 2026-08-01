@@ -31,6 +31,7 @@ import type {
 } from '@/types';
 import { NarrationEditor, type NarrationEditorSegment } from './NarrationEditor';
 import { NarrationInspector } from './NarrationInspector';
+import { ProjectRailPortal, useProjectRail } from '@/components/project-rail/ProjectRail';
 
 
 interface NarrationWorkbenchProps {
@@ -355,6 +356,67 @@ export function NarrationWorkbench({
     ...draft.segments.map((segment) => segment.speaker_id),
   ])).map((id) => ({ id, name: id === 'host' ? '主持人' : id === 'expert' ? '嘉宾' : id }));
 
+  const { target: railTarget, active: railActive } = useProjectRail();
+
+  const pageRail = (
+    <nav aria-label="旁白页面" className="min-h-0 min-w-0 overflow-y-auto border-r border-[var(--app-border)] bg-[var(--app-surface-secondary)] p-2">
+      <div className="mb-2 flex items-center gap-1 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] p-0.5">
+        {([['all', '全部'], ['missing', '缺失'], ['candidates', '有候选'], ['locked', '锁定']] as const).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            aria-pressed={pageFilter === value}
+            onClick={() => setPageFilter(value)}
+            className={`h-7 flex-1 rounded-[var(--app-radius-control)] text-xs transition-colors ${pageFilter === value ? 'bg-[var(--app-surface)] font-medium shadow-[var(--app-shadow-control)]' : 'text-[var(--app-text-tertiary)] hover:bg-[var(--app-surface-hover)]'}`}
+          >{label}</button>
+        ))}
+      </div>
+      {filteredPages.map((page) => (
+        <div
+          key={page.page_id}
+          className={`mb-1 flex w-full items-center gap-1.5 rounded-[var(--app-radius-control)] px-1 py-1.5 transition-colors ${
+            page.page_id === selectedPageId
+              ? 'bg-[var(--app-surface)] shadow-[var(--app-shadow-control)]'
+              : 'hover:bg-[var(--app-surface-hover)]'
+          }`}
+        >
+          <input
+            type="checkbox"
+            aria-label={`选择第 ${page.order_index + 1} 页`}
+            checked={selectedPageIds.has(page.page_id)}
+            onChange={(event) => {
+              setSelectedPageIds((value) => {
+                const next = new Set(value);
+                if (event.target.checked) next.add(page.page_id);
+                else next.delete(page.page_id);
+                return next;
+              });
+            }}
+            className="h-4 w-4 shrink-0 rounded border-[var(--app-border-strong)] accent-[var(--app-accent)]"
+          />
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => {
+              if (dirty) {
+                setError('请先保存或放弃当前修改');
+                return;
+              }
+              void run(() => loadPage(page.page_id));
+            }}
+            className="min-w-0 flex-1 rounded-[var(--app-radius-control)] px-2 py-0.5 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)]"
+          >
+            <span className="block truncate">第 {page.order_index + 1} 页</span>
+            <span className="block truncate text-xs font-normal text-[var(--app-text-tertiary)]">
+              {page.current_version_id ? `${page.word_count} 字` : '缺少确认稿'}
+              {page.candidate_count > 0 ? ` · ${page.candidate_count} 个候选` : ''}
+            </span>
+          </button>
+        </div>
+      ))}
+    </nav>
+  );
+
   return (
     <div className="fixed inset-y-0 left-0 right-0 z-[130] bg-[var(--app-bg)] text-[var(--app-text)] lg:left-[var(--project-nav-offset,216px)]" role="dialog" aria-modal="true" aria-label="视频文案工作台">
       <div className="grid h-[100dvh] min-h-0 grid-rows-[auto_minmax(0,1fr)_auto]">
@@ -486,63 +548,9 @@ export function NarrationWorkbench({
           </div>
         </header>
 
-        <div className="relative grid min-h-0 min-w-0 grid-cols-[216px_minmax(0,1fr)_320px] overflow-hidden max-[1279px]:grid-cols-[196px_minmax(0,1fr)]">
-          <nav aria-label="旁白页面" className="min-h-0 min-w-0 overflow-y-auto border-r border-[var(--app-border)] bg-[var(--app-surface-secondary)] p-2">
-            <div className="mb-2 flex items-center gap-1 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] p-0.5">
-              {([['all', '全部'], ['missing', '缺失'], ['candidates', '有候选'], ['locked', '锁定']] as const).map(([value, label]) => (
-                <button
-                  key={value}
-                  type="button"
-                  aria-pressed={pageFilter === value}
-                  onClick={() => setPageFilter(value)}
-                  className={`h-7 flex-1 rounded-[var(--app-radius-control)] text-xs transition-colors ${pageFilter === value ? 'bg-[var(--app-surface)] font-medium shadow-[var(--app-shadow-control)]' : 'text-[var(--app-text-tertiary)] hover:bg-[var(--app-surface-hover)]'}`}
-                >{label}</button>
-              ))}
-            </div>
-            {filteredPages.map((page) => (
-              <div
-                key={page.page_id}
-                className={`mb-1 flex w-full items-center gap-1.5 rounded-[var(--app-radius-control)] px-1 py-1.5 transition-colors ${
-                  page.page_id === selectedPageId
-                    ? 'bg-[var(--app-surface)] shadow-[var(--app-shadow-control)]'
-                    : 'hover:bg-[var(--app-surface-hover)]'
-                }`}
-              >
-                <input
-                  type="checkbox"
-                  aria-label={`选择第 ${page.order_index + 1} 页`}
-                  checked={selectedPageIds.has(page.page_id)}
-                  onChange={(event) => {
-                    setSelectedPageIds((value) => {
-                      const next = new Set(value);
-                      if (event.target.checked) next.add(page.page_id);
-                      else next.delete(page.page_id);
-                      return next;
-                    });
-                  }}
-                  className="h-4 w-4 shrink-0 rounded border-[var(--app-border-strong)] accent-[var(--app-accent)]"
-                />
-                <button
-                  type="button"
-                  disabled={pending}
-                  onClick={() => {
-                    if (dirty) {
-                      setError('请先保存或放弃当前修改');
-                      return;
-                    }
-                    void run(() => loadPage(page.page_id));
-                  }}
-                  className="min-w-0 flex-1 rounded-[var(--app-radius-control)] px-2 py-0.5 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)]"
-                >
-                  <span className="block truncate">第 {page.order_index + 1} 页</span>
-                  <span className="block truncate text-xs font-normal text-[var(--app-text-tertiary)]">
-                    {page.current_version_id ? `${page.word_count} 字` : '缺少确认稿'}
-                    {page.candidate_count > 0 ? ` · ${page.candidate_count} 个候选` : ''}
-                  </span>
-                </button>
-              </div>
-            ))}
-          </nav>
+        <div className={`relative grid min-h-0 min-w-0 overflow-hidden ${railActive ? 'grid-cols-[minmax(0,1fr)_320px]' : 'grid-cols-[216px_minmax(0,1fr)_320px] max-[1279px]:grid-cols-[196px_minmax(0,1fr)]'}`}>
+          {railActive && railTarget && <ProjectRailPortal target={railTarget}>{pageRail}</ProjectRailPortal>}
+          {!railActive && pageRail}
 
           <main className="min-h-0 min-w-0 overflow-y-auto bg-[var(--app-surface)] p-5">
             <div className="mx-auto max-w-3xl space-y-5">

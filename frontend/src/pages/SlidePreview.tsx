@@ -299,6 +299,7 @@ import {
 import { Button, Loading, Modal, Textarea, useToast, useConfirm, MaterialSelector, ProjectSettingsModal, ExportTasksPanel, TextStyleSelector } from '@/components/shared';
 import { SegmentedControl } from '@/components/shared/SegmentedControl';
 import { WorkspaceShell } from '@/components/workspace/WorkspaceShell';
+import { ProjectRailPortal, useProjectRail } from '@/components/project-rail/ProjectRail';
 import { WorkspaceStatusBar } from '@/components/workspace/WorkspaceStatusBar';
 import { WorkspaceToolbar } from '@/components/workspace/WorkspaceToolbar';
 import { MaterialGeneratorModal } from '@/components/shared/MaterialGeneratorModal';
@@ -2458,6 +2459,168 @@ export const SlidePreview: React.FC = () => {
     </div>
   );
 
+  const { target: railTarget, active: railActive } = useProjectRail();
+
+  const imageRail = (
+        <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-[var(--app-surface-muted)]">
+          <div className="p-3 md:p-4 border-b border-[var(--app-border)] flex-shrink-0 space-y-2 md:space-y-3 md:sticky md:top-0 md:z-10">
+            <Button
+              variant="primary"
+              icon={imageGenerationActive
+                ? imageGenerationPaused
+                  ? <Play size={16} className="md:h-[18px] md:w-[18px]" />
+                  : <Pause size={16} className="md:h-[18px] md:w-[18px]" />
+                : <Sparkles size={16} className="md:h-[18px] md:w-[18px]" />}
+              onClick={imageGenerationActive
+                ? imageGenerationPaused
+                  ? resumeImageGeneration
+                  : pauseImageGeneration
+                : handleGenerateAll}
+              className="w-full text-sm md:text-base"
+              disabled={!imageGenerationActive && (pendingBatchImageCount === 0 || (isMultiSelectMode && selectedPageIds.size === 0))}
+            >
+              {imageGenerationActive
+                ? imageGenerationPaused
+                  ? t('preview.resumeGeneration')
+                  : t('preview.pauseGeneration')
+                : isMultiSelectMode && selectedPageIds.size > 0
+                  ? t('preview.generateSelected', { count: pendingBatchImageCount })
+                  : t('preview.batchGenerate', { count: pendingBatchImageCount })}
+            </Button>
+            <Button
+              variant="secondary"
+              icon={<Settings size={15} />}
+              onClick={openImageGenerationSettings}
+              className="w-full text-xs md:text-sm"
+            >
+              图片生成设置
+            </Button>
+          </div>
+          {/* 多选模式切换 - 固定在缩略图滚动区外 */}
+          <div
+            data-testid="slide-multiselect-toolbar"
+            className="flex shrink-0 items-center gap-2 border-b border-[var(--app-border)] bg-[var(--app-surface-muted)] px-3 py-3 text-xs md:px-4"
+          >
+              <button
+                onClick={toggleMultiSelectMode}
+                className={`px-2 py-1 rounded transition-colors flex items-center gap-1 ${
+                  isMultiSelectMode
+                    ? 'bg-[var(--app-accent-soft)] text-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]'
+                    : 'text-[var(--app-text-tertiary)] hover:bg-[var(--app-surface-hover)]'
+                }`}
+              >
+                {isMultiSelectMode ? <CheckSquare size={14} /> : <Square size={14} />}
+                <span>{isMultiSelectMode ? t('preview.cancelMultiSelect') : t('preview.multiSelect')}</span>
+              </button>
+              {isMultiSelectMode && (
+                <>
+                  <button
+                    onClick={selectedPageIds.size === selectablePages.length ? deselectAllPages : selectAllPages}
+                    className="text-[var(--app-text-tertiary)] transition-colors hover:text-[var(--app-accent)]"
+                  >
+                    {selectedPageIds.size === selectablePages.length ? t('common.deselectAll') : t('common.selectAll')}
+                  </button>
+                  {selectedPageIds.size > 0 && (
+                    <span className="font-medium text-[var(--app-accent)]">
+                      ({selectedPageIds.size}{t('preview.pagesUnit')})
+                    </span>
+                  )}
+                </>
+              )}
+          </div>
+
+          {/* 缩略图列表：桌面端垂直，移动端横向滚动 */}
+          <div
+            data-testid="slide-thumbnail-scroll"
+            className="flex-1 overflow-y-auto md:overflow-y-auto overflow-x-auto md:overflow-x-visible p-3 md:p-4 min-h-0"
+          >
+            <div className="flex md:flex-col gap-2 md:gap-4 min-w-max md:min-w-0">
+              {currentProject.pages.map((page, index) => (
+                <div key={page.id} className="md:w-full flex-shrink-0 relative">
+                  {/* 移动端：简化缩略图 */}
+                  <div className="md:hidden relative">
+                    <button
+                      onClick={() => {
+                        if (isMultiSelectMode && page.id && page.generated_image_path) {
+                          togglePageSelection(page.id);
+                        } else {
+                          setSelectedIndex(index);
+                        }
+                      }}
+                      className={`w-20 h-14 rounded border-2 transition-all ${
+                        selectedIndex === index
+                          ? 'border-[var(--app-accent)] shadow-[var(--app-shadow-card)]'
+                          : 'border-[var(--app-border)]'
+                      } ${isMultiSelectMode && page.id && selectedPageIds.has(page.id) ? 'ring-2 ring-[var(--app-accent-soft)]' : ''}`}
+                    >
+                      {page.generated_image_path ? (
+                        <img
+                          src={getImageUrl(page.generated_image_path, page.updated_at)}
+                          alt={`Slide ${index + 1}`}
+                          className="w-full h-full object-cover rounded"
+                        />
+                      ) : (
+                        <div className="w-full h-full bg-[var(--app-surface-muted)] rounded flex items-center justify-center text-xs text-[var(--app-text-muted)]">
+                          {index + 1}
+                        </div>
+                      )}
+                    </button>
+                    {/* 多选复选框（移动端） */}
+                    {isMultiSelectMode && page.id && (
+                      <button
+                        aria-label={`${selectedPageIds.has(page.id) ? '取消选择' : '选择'}第 ${index + 1} 页`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          togglePageSelection(page.id!);
+                        }}
+                        className={`absolute -top-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center transition-all ${
+                          selectedPageIds.has(page.id)
+                            ? 'bg-[var(--app-focus)] text-[var(--app-surface)]'
+                            : 'border-2 border-[var(--app-border)] bg-[var(--app-surface)]'
+                        }`}
+                      >
+                        {selectedPageIds.has(page.id) && <Check size={12} />}
+                      </button>
+                    )}
+                  </div>
+                  {/* 桌面端：完整卡片 */}
+                  <div className="hidden md:block relative">
+                    {/* 多选复选框（桌面端） */}
+                    {isMultiSelectMode && page.id && (
+                      <button
+                        aria-label={`${selectedPageIds.has(page.id) ? '取消选择' : '选择'}第 ${index + 1} 页`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          togglePageSelection(page.id!);
+                        }}
+                        className={`absolute top-2 left-2 z-10 w-6 h-6 rounded flex items-center justify-center transition-all ${
+                          selectedPageIds.has(page.id)
+                            ? 'bg-[var(--app-focus)] text-[var(--app-surface)] shadow-[var(--app-shadow-card)]'
+                            : 'border-2 border-[var(--app-border)] bg-[var(--app-surface)] hover:border-[var(--app-accent)]'
+                        }`}
+                      >
+                        {selectedPageIds.has(page.id) && <Check size={14} />}
+                      </button>
+                    )}
+                    <SlideCard
+                      page={page}
+                      index={index}
+                      isSelected={selectedIndex === index}
+                      isMultiSelectMode={isMultiSelectMode}
+                      onSelect={handleSlideCardSelect}
+                      onEdit={handleSlideCardEdit}
+                      onDelete={handleSlideCardDelete}
+                      isGenerating={page.id ? !!pageGeneratingTasks[page.id] : false}
+                      aspectRatio={aspectRatio}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+  );
+
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-[var(--app-canvas)] text-[var(--app-text)]">
       {/* 顶栏 */}
@@ -3456,166 +3619,9 @@ export const SlidePreview: React.FC = () => {
             </div>
           </WorkspaceStatusBar>
         )}
-        sidebar={(
-        <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-[var(--app-surface-muted)]">
-          <div className="p-3 md:p-4 border-b border-[var(--app-border)] flex-shrink-0 space-y-2 md:space-y-3 md:sticky md:top-0 md:z-10">
-            <Button
-              variant="primary"
-              icon={imageGenerationActive
-                ? imageGenerationPaused
-                  ? <Play size={16} className="md:h-[18px] md:w-[18px]" />
-                  : <Pause size={16} className="md:h-[18px] md:w-[18px]" />
-                : <Sparkles size={16} className="md:h-[18px] md:w-[18px]" />}
-              onClick={imageGenerationActive
-                ? imageGenerationPaused
-                  ? resumeImageGeneration
-                  : pauseImageGeneration
-                : handleGenerateAll}
-              className="w-full text-sm md:text-base"
-              disabled={!imageGenerationActive && (pendingBatchImageCount === 0 || (isMultiSelectMode && selectedPageIds.size === 0))}
-            >
-              {imageGenerationActive
-                ? imageGenerationPaused
-                  ? t('preview.resumeGeneration')
-                  : t('preview.pauseGeneration')
-                : isMultiSelectMode && selectedPageIds.size > 0
-                  ? t('preview.generateSelected', { count: pendingBatchImageCount })
-                  : t('preview.batchGenerate', { count: pendingBatchImageCount })}
-            </Button>
-            <Button
-              variant="secondary"
-              icon={<Settings size={15} />}
-              onClick={openImageGenerationSettings}
-              className="w-full text-xs md:text-sm"
-            >
-              图片生成设置
-            </Button>
-          </div>
-          {/* 多选模式切换 - 固定在缩略图滚动区外 */}
-          <div
-            data-testid="slide-multiselect-toolbar"
-            className="flex shrink-0 items-center gap-2 border-b border-[var(--app-border)] bg-[var(--app-surface-muted)] px-3 py-3 text-xs md:px-4"
-          >
-              <button
-                onClick={toggleMultiSelectMode}
-                className={`px-2 py-1 rounded transition-colors flex items-center gap-1 ${
-                  isMultiSelectMode
-                    ? 'bg-[var(--app-accent-soft)] text-[var(--app-accent)] hover:bg-[var(--app-accent-soft)]'
-                    : 'text-[var(--app-text-tertiary)] hover:bg-[var(--app-surface-hover)]'
-                }`}
-              >
-                {isMultiSelectMode ? <CheckSquare size={14} /> : <Square size={14} />}
-                <span>{isMultiSelectMode ? t('preview.cancelMultiSelect') : t('preview.multiSelect')}</span>
-              </button>
-              {isMultiSelectMode && (
-                <>
-                  <button
-                    onClick={selectedPageIds.size === selectablePages.length ? deselectAllPages : selectAllPages}
-                    className="text-[var(--app-text-tertiary)] transition-colors hover:text-[var(--app-accent)]"
-                  >
-                    {selectedPageIds.size === selectablePages.length ? t('common.deselectAll') : t('common.selectAll')}
-                  </button>
-                  {selectedPageIds.size > 0 && (
-                    <span className="font-medium text-[var(--app-accent)]">
-                      ({selectedPageIds.size}{t('preview.pagesUnit')})
-                    </span>
-                  )}
-                </>
-              )}
-          </div>
-
-          {/* 缩略图列表：桌面端垂直，移动端横向滚动 */}
-          <div
-            data-testid="slide-thumbnail-scroll"
-            className="flex-1 overflow-y-auto md:overflow-y-auto overflow-x-auto md:overflow-x-visible p-3 md:p-4 min-h-0"
-          >
-            <div className="flex md:flex-col gap-2 md:gap-4 min-w-max md:min-w-0">
-              {currentProject.pages.map((page, index) => (
-                <div key={page.id} className="md:w-full flex-shrink-0 relative">
-                  {/* 移动端：简化缩略图 */}
-                  <div className="md:hidden relative">
-                    <button
-                      onClick={() => {
-                        if (isMultiSelectMode && page.id && page.generated_image_path) {
-                          togglePageSelection(page.id);
-                        } else {
-                          setSelectedIndex(index);
-                        }
-                      }}
-                      className={`w-20 h-14 rounded border-2 transition-all ${
-                        selectedIndex === index
-                          ? 'border-[var(--app-accent)] shadow-[var(--app-shadow-card)]'
-                          : 'border-[var(--app-border)]'
-                      } ${isMultiSelectMode && page.id && selectedPageIds.has(page.id) ? 'ring-2 ring-[var(--app-accent-soft)]' : ''}`}
-                    >
-                      {page.generated_image_path ? (
-                        <img
-                          src={getImageUrl(page.generated_image_path, page.updated_at)}
-                          alt={`Slide ${index + 1}`}
-                          className="w-full h-full object-cover rounded"
-                        />
-                      ) : (
-                        <div className="w-full h-full bg-[var(--app-surface-muted)] rounded flex items-center justify-center text-xs text-[var(--app-text-muted)]">
-                          {index + 1}
-                        </div>
-                      )}
-                    </button>
-                    {/* 多选复选框（移动端） */}
-                    {isMultiSelectMode && page.id && (
-                      <button
-                        aria-label={`${selectedPageIds.has(page.id) ? '取消选择' : '选择'}第 ${index + 1} 页`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          togglePageSelection(page.id!);
-                        }}
-                        className={`absolute -top-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center transition-all ${
-                          selectedPageIds.has(page.id)
-                            ? 'bg-[var(--app-focus)] text-[var(--app-surface)]'
-                            : 'border-2 border-[var(--app-border)] bg-[var(--app-surface)]'
-                        }`}
-                      >
-                        {selectedPageIds.has(page.id) && <Check size={12} />}
-                      </button>
-                    )}
-                  </div>
-                  {/* 桌面端：完整卡片 */}
-                  <div className="hidden md:block relative">
-                    {/* 多选复选框（桌面端） */}
-                    {isMultiSelectMode && page.id && (
-                      <button
-                        aria-label={`${selectedPageIds.has(page.id) ? '取消选择' : '选择'}第 ${index + 1} 页`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          togglePageSelection(page.id!);
-                        }}
-                        className={`absolute top-2 left-2 z-10 w-6 h-6 rounded flex items-center justify-center transition-all ${
-                          selectedPageIds.has(page.id)
-                            ? 'bg-[var(--app-focus)] text-[var(--app-surface)] shadow-[var(--app-shadow-card)]'
-                            : 'border-2 border-[var(--app-border)] bg-[var(--app-surface)] hover:border-[var(--app-accent)]'
-                        }`}
-                      >
-                        {selectedPageIds.has(page.id) && <Check size={14} />}
-                      </button>
-                    )}
-                    <SlideCard
-                      page={page}
-                      index={index}
-                      isSelected={selectedIndex === index}
-                      isMultiSelectMode={isMultiSelectMode}
-                      onSelect={handleSlideCardSelect}
-                      onEdit={handleSlideCardEdit}
-                      onDelete={handleSlideCardDelete}
-                      isGenerating={page.id ? !!pageGeneratingTasks[page.id] : false}
-                      aspectRatio={aspectRatio}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-        )}
+      sidebar={railActive ? null : imageRail}
       >
+      {railActive && railTarget && <ProjectRailPortal target={railTarget}>{imageRail}</ProjectRailPortal>}
 
         {/* 右侧：大图预览 */}
         <div className="flex h-full min-w-0 flex-col overflow-hidden bg-[var(--app-canvas)]">

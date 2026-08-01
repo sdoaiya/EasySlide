@@ -4,6 +4,7 @@ import { Button, Textarea } from '@/components/shared';
 import { MaterialSelector } from '@/components/shared/MaterialSelector';
 import { WorkspaceShell } from '@/components/workspace/WorkspaceShell';
 import { WorkspaceStatusBar } from '@/components/workspace/WorkspaceStatusBar';
+import { ProjectRailPortal, useProjectRail } from '@/components/project-rail/ProjectRail';
 import { exportVideoWorkspace, getProject, handoffVideoWorkspaceFrames, updateContentWorkspace, type Material } from '@/api/endpoints';
 import { getImageUrl } from '@/api/client';
 import { useExportTasksStore } from '@/store/useExportTasksStore';
@@ -85,6 +86,7 @@ export function VideoWorkspace({
   const [proofTaskId, setProofTaskId] = useState<string | null>(null);
   const [materialTarget, setMaterialTarget] = useState<'visual' | 'audio' | null>(null);
   const { tasks, addTask, pollTask } = useExportTasksStore();
+  const { target: railTarget, active: railActive } = useProjectRail();
 
   useEffect(() => {
     const next = workspace.document as VideoDocument;
@@ -267,10 +269,26 @@ export function VideoWorkspace({
     }
   };
 
+  const sceneRail = (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="px-3 pb-2 text-xs font-medium text-[var(--app-text-tertiary)]">场景 · {document.scenes.length}</div>
+      <div className="min-h-0 flex-1 space-y-1 overflow-y-auto px-2 pb-3">
+        {document.scenes.map((scene, index) => (
+          <VideoSceneRailItem
+            key={scene.scene_id}
+            scene={scene}
+            index={index}
+            selected={selectedId === scene.scene_id}
+            onSelect={setSelectedId}
+          />
+        ))}
+      </div>
+    </div>
+  );
+
   return (
     <WorkspaceShell
       className="h-full"
-      sidebarWidth="216px"
       inspectorWidth="320px"
       toolbar={(
         <div className="flex h-full min-w-0 items-center gap-3">
@@ -295,22 +313,7 @@ export function VideoWorkspace({
           </div>
         </div>
       )}
-      sidebar={(
-        <div className="flex h-full min-h-0 flex-col">
-          <div className="px-3 pb-2 text-xs font-medium text-[var(--app-text-tertiary)]">场景 · {document.scenes.length}</div>
-          <div className="min-h-0 flex-1 space-y-1 overflow-y-auto px-2 pb-3">
-            {document.scenes.map((scene, index) => (
-              <VideoSceneRailItem
-                key={scene.scene_id}
-                scene={scene}
-                index={index}
-                selected={selectedId === scene.scene_id}
-                onSelect={setSelectedId}
-              />
-            ))}
-          </div>
-        </div>
-      )}
+      sidebar={railActive ? null : sceneRail}
       inspector={selected ? (
         <div className="space-y-4 p-4">
           <div>
@@ -353,6 +356,7 @@ export function VideoWorkspace({
       ) : null}
       statusBar={<WorkspaceStatusBar>{proofStatus === 'COMPLETED' ? '预览已完成，可导出高清' : proofStatus === 'FAILED' ? '预览导出失败，请查看任务中心' : message || `${document.aspect_ratio} · ${dirty ? '有未保存修改' : '已保存'}`}</WorkspaceStatusBar>}
     >
+      {railActive && railTarget && <ProjectRailPortal target={railTarget}>{sceneRail}</ProjectRailPortal>}
       <div className="flex h-full min-h-0 items-center justify-center overflow-auto bg-[var(--app-canvas)] p-6">
         {selected ? (
           <article className="flex aspect-video w-full max-w-4xl flex-col justify-between overflow-hidden rounded-[var(--app-radius-panel)] border border-[var(--app-border)] bg-[var(--app-surface)] p-8 shadow-[var(--app-shadow-card)]">

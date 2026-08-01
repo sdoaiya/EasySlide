@@ -45,21 +45,21 @@ describe('WorkspaceShell', () => {
     expect(screen.getByRole('complementary', { name: '属性栏' })).toHaveAttribute('data-collapsed', 'true');
   });
 
-  it('keeps the page rail inside the workspace instead of embedding it in project navigation', () => {
+  it('omits the sidebar column and toggle when the rail moved into project navigation', () => {
     render(
-      <>
-        <div data-content-project-rail-slot />
-        <WorkspaceShell toolbar="命令栏" sidebar="项目页面" inspector="属性栏">
-          画布
-        </WorkspaceShell>
-      </>
+      <WorkspaceShell toolbar="命令栏" sidebar={null} inspector="属性栏">
+        画布
+      </WorkspaceShell>
     );
 
     const shell = screen.getByRole('main').parentElement;
-    expect(screen.getByRole('complementary', { name: '页面栏' })).toHaveTextContent('项目页面');
-    expect(document.querySelector('[data-content-project-rail-slot]')).not.toHaveTextContent('项目页面');
+    expect(screen.queryByRole('complementary', { name: '页面栏' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '收起页面栏' })).not.toBeInTheDocument();
     expect(shell).toHaveStyle({
-      gridTemplateColumns: 'minmax(0, var(--workspace-sidebar-width)) minmax(0, 1fr) minmax(0, var(--workspace-inspector-width))',
+      gridTemplateColumns: 'minmax(0, 1fr) minmax(0, var(--workspace-inspector-width))',
+    });
+    expect(shell).toHaveStyle({
+      gridTemplateAreas: '"toolbar toolbar toolbar" "canvas inspector"',
     });
   });
 

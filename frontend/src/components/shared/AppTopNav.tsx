@@ -5,6 +5,7 @@ import { ChevronDown, ClipboardList, FileText, Film, FolderOpen, Globe, Home, Im
 import { getStaticAssetUrl } from '@/api/client';
 import { useTheme } from '@/hooks/useTheme';
 import { useT } from '@/hooks/useT';
+import { ProjectRailSlot } from '@/components/project-rail/ProjectRail';
 import { Button } from './Button';
 import { MaterialCenterModal } from './MaterialCenterModal';
 import { MaterialGeneratorModal } from './MaterialGeneratorModal';
@@ -37,7 +38,7 @@ export function AppTopNav() {
   const [projectNavCollapsed, setProjectNavCollapsed] = useState(false);
 
   useEffect(() => {
-    document.documentElement.style.setProperty('--project-nav-offset', projectNavCollapsed ? '72px' : '216px');
+    document.documentElement.style.setProperty('--project-nav-offset', projectNavCollapsed ? '44px' : '216px');
     return () => {
       document.documentElement.style.removeProperty('--project-nav-offset');
     };
@@ -69,10 +70,10 @@ export function AppTopNav() {
         role={isProjectRoute ? 'complementary' : 'navigation'}
         aria-label={isProjectRoute ? '项目工作区导航' : '工作台导航'}
         data-content-project-nav={isProjectRoute ? true : undefined}
-        className={`sticky top-0 z-40 h-16 border-b border-[var(--app-border)] bg-[var(--app-surface)] lg:fixed lg:inset-y-0 lg:left-0 ${isDesktop ? 'lg:top-10 lg:h-[calc(100vh-40px)]' : 'lg:top-0 lg:h-screen'} ${projectNavCollapsed ? 'lg:w-[72px]' : 'lg:w-[216px]'} lg:border-b-0 lg:border-r lg:bg-[var(--app-surface-muted)]`}
+        className={`sticky top-0 z-40 h-16 border-b border-[var(--app-border)] bg-[var(--app-surface)] lg:fixed lg:inset-y-0 lg:left-0 ${isDesktop ? 'lg:top-10 lg:h-[calc(100vh-40px)]' : 'lg:top-0 lg:h-screen'} ${projectNavCollapsed ? 'lg:w-[44px]' : 'lg:w-[216px]'} lg:border-b-0 lg:border-r lg:bg-[var(--app-surface-muted)]`}
       >
-        <div className={`relative z-[1] mx-auto flex h-full max-w-7xl items-center justify-between px-5 lg:mx-0 lg:max-w-none lg:flex-col lg:items-stretch ${projectNavCollapsed ? 'lg:px-2' : 'lg:px-4'} lg:py-5`}>
-          <button autoFocus type="button" onClick={() => navigate('/home')} className="flex h-10 items-center overflow-hidden lg:h-14 lg:w-full lg:justify-center lg:px-2" aria-label="EasySlide">
+        <div className={`relative z-[1] mx-auto flex h-full max-w-7xl items-center justify-between px-5 lg:mx-0 lg:max-w-none lg:flex-col lg:items-stretch ${projectNavCollapsed ? 'lg:px-0' : 'lg:px-4'} lg:py-5`}>
+          <button autoFocus type="button" onClick={() => navigate('/home')} className="flex h-10 items-center overflow-hidden lg:h-14 lg:w-full lg:justify-center ${projectNavCollapsed ? 'lg:px-0' : 'lg:px-2'}" aria-label="EasySlide">
             <img src={getStaticAssetUrl('/logo-nav-transparent.png')} alt="EasySlide Logo" className={`max-w-none object-contain ${projectNavCollapsed ? 'w-10 lg:w-10' : 'w-[132px] lg:w-[160px]'}`} />
           </button>
           {isProjectRoute ? (
@@ -107,7 +108,7 @@ export function AppTopNav() {
                   );
                 })}
               </div>
-              <div data-content-project-rail-slot className="mt-3 min-h-0 flex-1 overflow-hidden border-t border-[var(--app-border)] pt-3" />
+              <ProjectRailSlot collapsed={projectNavCollapsed} />
             </div>
           ) : (
             <div className="flex items-center gap-0.5 lg:mt-8 lg:w-full lg:flex-1 lg:flex-col lg:items-stretch lg:gap-1.5">
@@ -131,7 +132,7 @@ export function AppTopNav() {
               })}
             </div>
           )}
-          <div className={`flex items-center gap-1.5 lg:grid lg:w-full lg:gap-1 ${isProjectRoute ? (projectNavCollapsed ? 'lg:grid-cols-2' : 'lg:grid-cols-4') : 'lg:grid-cols-3'} lg:border-t lg:border-[var(--app-border)] lg:pt-4`}>
+          <div className={`flex items-center gap-1.5 lg:grid lg:w-full lg:gap-1 ${isProjectRoute ? 'lg:grid-cols-2' : 'lg:grid-cols-3'} lg:border-t lg:border-[var(--app-border)] lg:pt-4`}>
             {isProjectRoute && <button type="button" onClick={() => setProjectNavCollapsed((collapsed) => !collapsed)} className={`flex h-10 items-center justify-center rounded-[var(--app-radius-control)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text)] ${projectNavCollapsed ? 'w-full min-w-0 px-0' : 'min-w-10'}`} title={projectNavCollapsed ? '展开侧栏' : '折叠侧栏'} aria-label={projectNavCollapsed ? '展开侧栏' : '折叠侧栏'}>{projectNavCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</button>}
             <Button
               variant="ghost"

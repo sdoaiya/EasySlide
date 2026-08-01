@@ -6,7 +6,7 @@ const inspectorDrawerQuery = '(max-width: 1279px)';
 
 type WorkspaceShellProps = {
   toolbar: ReactNode;
-  sidebar: ReactNode;
+  sidebar?: ReactNode | null;
   children: ReactNode;
   inspector?: ReactNode;
   statusBar?: ReactNode;
@@ -25,6 +25,9 @@ export function WorkspaceShell({ toolbar, sidebar, children, inspector, statusBa
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [inspectorDrawer, setInspectorDrawer] = useState(() => window.matchMedia(inspectorDrawerQuery).matches);
   const [inspectorCollapsed, setInspectorCollapsed] = useState(inspectorDrawer);
+
+  // sidebar=null：索引已迁入统一左侧工具架（重构计划 §8.2.4），网格只保留画布+属性栏
+  const hasSidebar = sidebar !== null && sidebar !== undefined;
 
   useEffect(() => {
     const media = window.matchMedia(inspectorDrawerQuery);
@@ -51,10 +54,10 @@ export function WorkspaceShell({ toolbar, sidebar, children, inspector, statusBa
     gridTemplateRows: presenting ? 'minmax(0, 1fr)' : `${hideToolbar ? '' : 'var(--workspace-toolbar-height) '}minmax(0, 1fr)`,
     gridTemplateAreas: presenting
       ? '"canvas"'
-      : `${hideToolbar ? '' : '"toolbar toolbar toolbar" '}"sidebar canvas inspector"`,
+      : `${hideToolbar ? '' : '"toolbar toolbar toolbar" '}${hasSidebar ? '"sidebar canvas inspector"' : '"canvas inspector"'}`,
     gridTemplateColumns: presenting
       ? 'minmax(0, 1fr)'
-      : `minmax(0, ${sidebarCollapsed ? 'var(--workspace-sidebar-collapsed-width)' : sidebarWidth}) minmax(0, 1fr) minmax(0, ${inspector && !inspectorDrawer ? (inspectorCollapsed ? 'var(--workspace-sidebar-collapsed-width)' : inspectorWidth) : '0'})`,
+      : `${hasSidebar ? `minmax(0, ${sidebarCollapsed ? 'var(--workspace-sidebar-collapsed-width)' : sidebarWidth}) ` : ''}minmax(0, 1fr) minmax(0, ${inspector && !inspectorDrawer ? (inspectorCollapsed ? 'var(--workspace-sidebar-collapsed-width)' : inspectorWidth) : '0'})`,
   } satisfies CSSProperties;
 
   const inspectorLabel = inspectorDrawer
@@ -69,7 +72,7 @@ export function WorkspaceShell({ toolbar, sidebar, children, inspector, statusBa
       style={style}
     >
       {!hideToolbar && <WorkspaceToolbar style={{ gridArea: 'toolbar', display: presenting ? 'none' : undefined }}>
-        {!hidePanelToggles && !hideSidebarToggle && (
+        {!hidePanelToggles && !hideSidebarToggle && hasSidebar && (
           <button
             type="button"
             aria-label={sidebarCollapsed ? '展开页面栏' : '收起页面栏'}
@@ -96,14 +99,16 @@ export function WorkspaceShell({ toolbar, sidebar, children, inspector, statusBa
         )}
       </WorkspaceToolbar>}
 
-      <aside
-        aria-label="页面栏"
-        data-collapsed={sidebarCollapsed}
-        className={`min-h-0 overflow-hidden bg-[var(--app-surface)] ${softBorders ? 'shadow-[inset_-1px_0_0_rgba(60,60,67,0.16)]' : 'border-r border-[var(--app-border)]'}`}
-        style={{ gridArea: 'sidebar', display: presenting ? 'none' : undefined }}
-      >
-        {!sidebarCollapsed && <div className="h-full overflow-auto pb-[var(--workspace-statusbar-height)]">{sidebar}</div>}
-      </aside>
+      {hasSidebar && (
+        <aside
+          aria-label="页面栏"
+          data-collapsed={sidebarCollapsed}
+          className={`min-h-0 overflow-hidden bg-[var(--app-surface)] ${softBorders ? 'shadow-[inset_-1px_0_0_rgba(60,60,67,0.16)]' : 'border-r border-[var(--app-border)]'}`}
+          style={{ gridArea: 'sidebar', display: presenting ? 'none' : undefined }}
+        >
+          {!sidebarCollapsed && <div className="h-full overflow-auto pb-[var(--workspace-statusbar-height)]">{sidebar}</div>}
+        </aside>
+      )}
 
       <main
         className="min-h-0 min-w-0 w-full overflow-hidden"
@@ -127,7 +132,7 @@ export function WorkspaceShell({ toolbar, sidebar, children, inspector, statusBa
       )}
 
       {!hideStatusBar && <footer role="contentinfo" className="workspace-status-bar flex min-w-0 items-center border-t border-[var(--app-border)] bg-[var(--app-surface)] shadow-[0_1px_0_rgba(255,255,255,0.72)_inset]" style={{ display: presenting ? 'none' : undefined }}>
-        {hideToolbar && !hidePanelToggles && !hideSidebarToggle && (
+        {hideToolbar && !hidePanelToggles && !hideSidebarToggle && hasSidebar && (
           <button type="button" aria-label={sidebarCollapsed ? '展开页面栏' : '收起页面栏'} title={sidebarCollapsed ? '展开页面栏' : '收起页面栏'} aria-expanded={!sidebarCollapsed} onClick={() => setSidebarCollapsed((collapsed) => !collapsed)} className="flex h-8 w-9 shrink-0 items-center justify-center text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]">
             {sidebarCollapsed ? <PanelLeftOpen size={16} aria-hidden="true" /> : <PanelLeftClose size={16} aria-hidden="true" />}
           </button>
