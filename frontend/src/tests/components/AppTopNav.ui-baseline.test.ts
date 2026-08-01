@@ -17,6 +17,19 @@ describe('editorial workbench navigation baseline', () => {
     expect(css).toContain('background: var(--app-surface-muted) !important;');
   });
 
+  it('keeps the project navigation limited to PPT, video, podcast, and settings', () => {
+    const nav = source('src/components/shared/AppTopNav.tsx');
+
+    expect(nav).toContain("key: 'ppt'");
+    expect(nav).toContain("key: 'video'");
+    expect(nav).toContain("key: 'podcast'");
+    // 内容主线入口与主线同步审核已从前台导航移除
+    expect(nav).not.toContain("key: 'spine'");
+    expect(nav).not.toContain('主线同步审核');
+    expect(nav).not.toContain('GitCompareArrows');
+    expect(nav).not.toContain('pending_sync_count');
+  });
+
   it('keeps reduced-motion rules complete for native page transitions', () => {
     const nativeCss = source('src/native-deck/native-deck.css');
 

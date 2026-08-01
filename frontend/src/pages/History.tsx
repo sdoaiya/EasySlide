@@ -126,6 +126,8 @@ export const History: React.FC<{ showNavigation?: boolean }> = ({ showNavigation
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'completed' | 'generating' | 'in_progress' | null>(null);
+  const [workspaceFilter, setWorkspaceFilter] = useState<'ppt' | 'video' | 'podcast' | null>(null);
   const { show, ToastContainer } = useToast();
   const { confirm, ConfirmDialog } = useConfirm();
 
@@ -166,7 +168,7 @@ export const History: React.FC<{ showNavigation?: boolean }> = ({ showNavigation
     setError(null);
     try {
       const offset = (page - 1) * pageSize;
-      const response = await api.listProjects(pageSize, offset);
+      const response = await api.listProjects(pageSize, offset, statusFilter || undefined, workspaceFilter || undefined);
       if (response.data?.projects) {
         const normalizedProjects = response.data.projects.map(normalizeProject);
         setProjects(normalizedProjects);
@@ -179,11 +181,17 @@ export const History: React.FC<{ showNavigation?: boolean }> = ({ showNavigation
     } finally {
       setIsLoading(false);
     }
-  }, [pageSize]);
+  }, [pageSize, statusFilter, workspaceFilter]);
 
   useEffect(() => {
     loadProjects(currentPage);
-  }, [currentPage, pageSize]);
+  }, [currentPage, pageSize, statusFilter, workspaceFilter]);
+
+  const handleWorkspaceFilter = useCallback((value: 'ppt' | 'video' | 'podcast') => {
+    setWorkspaceFilter((current) => current === value ? null : value);
+    setCurrentPage(1);
+    setSelectedProjects(new Set());
+  }, []);
 
   const handlePageChange = useCallback((page: number) => {
     setSelectedProjects(new Set());
@@ -194,6 +202,12 @@ export const History: React.FC<{ showNavigation?: boolean }> = ({ showNavigation
   const handlePageSizeChange = useCallback((size: number) => {
     localStorage.setItem(PAGE_SIZE_KEY, String(size));
     setPageSize(size);
+    setCurrentPage(1);
+    setSelectedProjects(new Set());
+  }, []);
+
+  const handleStatusFilter = useCallback((value: 'completed' | 'generating' | 'in_progress') => {
+    setStatusFilter((current) => current === value ? null : value);
     setCurrentPage(1);
     setSelectedProjects(new Set());
   }, []);
@@ -368,7 +382,7 @@ export const History: React.FC<{ showNavigation?: boolean }> = ({ showNavigation
           projectId,
           type: 'video',
           status: 'PENDING',
-          progress: { total: 100, completed: 0, percent: 0, current_step: '等待 Proof 渲染', render_profile: 'proof' },
+          progress: { total: 100, completed: 0, percent: 0, current_step: '等待生成预览', render_profile: 'proof' },
         });
         void pollTask(taskKey, projectId, taskId);
       } else if (kind === 'podcast') {
@@ -505,7 +519,7 @@ export const History: React.FC<{ showNavigation?: boolean }> = ({ showNavigation
   }, [handleSaveEdit, handleCancelEdit]);
 
   return (
-    <div className="min-h-screen bg-[var(--app-background)] text-[var(--app-text)] lg:pl-[216px]">
+    <div className="min-h-screen bg-[var(--app-background)] text-[var(--app-text)] lg:pl-[var(--project-nav-offset,216px)]">
       {showNavigation && <AppTopNav />}
 
       <main>
@@ -515,7 +529,7 @@ export const History: React.FC<{ showNavigation?: boolean }> = ({ showNavigation
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--app-text-tertiary)]">EasySlide · Editorial Workbench</p>
               <h1 className="mt-1 text-xl font-semibold">作品工作台</h1>
-              <p className="mt-1 text-sm text-[var(--app-text-secondary)]">在一个内容项目中组织内容主线、PPT、视频与播客。</p>
+              <p className="mt-1 text-sm text-[var(--app-text-secondary)]">在一个内容项目中组织 PPT、视频与播客。</p>
             </div>
             <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row xl:max-w-[620px]">
               <label className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-background)] px-3 text-[var(--app-text-tertiary)] focus-within:border-[var(--app-accent)]">
@@ -549,11 +563,12 @@ export const History: React.FC<{ showNavigation?: boolean }> = ({ showNavigation
                   { label: t('history.generating'), value: generatingCount, icon: Clock3, tone: 'var(--app-accent-coral)', bg: 'var(--app-accent-coral-soft)' },
                 ].map((item, index) => {
                   const Icon = item.icon;
+                  const filter = index === 1 ? 'completed' : index === 2 ? 'in_progress' : index === 3 ? 'generating' : null;
                   return (
-                    <div key={item.label} className={`flex min-w-0 items-center gap-3 px-4 py-4 ${index % 2 === 0 ? 'border-r border-[var(--app-border)]' : ''} ${index < 2 ? 'border-b border-[var(--app-border)]' : ''}`}>
+                    <button key={item.label} type="button" disabled={!filter} onClick={() => filter && handleStatusFilter(filter)} aria-pressed={filter ? statusFilter === filter : undefined} className={`flex min-w-0 items-center gap-3 px-4 py-4 text-left transition-colors ${index % 2 === 0 ? 'border-r border-[var(--app-border)]' : ''} ${index < 2 ? 'border-b border-[var(--app-border)]' : ''} ${filter ? 'cursor-pointer hover:bg-[var(--app-surface-hover)]' : 'cursor-default'} ${filter && statusFilter === filter ? 'bg-[var(--app-surface-hover)]' : ''}`}>
                       <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--app-radius-control)]" style={{ background: item.bg, color: item.tone }}><Icon size={17} aria-hidden="true" /></span>
                       <div className="min-w-0"><div className="truncate text-xs text-[var(--app-text-secondary)]">{item.label}</div><div className="mt-0.5 text-lg font-semibold tabular-nums" style={{ color: item.tone }}>{item.value}</div></div>
-                    </div>
+                    </button>
                   );
                 })}
               </div>
@@ -598,6 +613,11 @@ export const History: React.FC<{ showNavigation?: boolean }> = ({ showNavigation
             </div>
 
             <div className="mb-3 flex min-h-10 flex-wrap items-center gap-3 border-y border-[var(--app-border)] py-2">
+              <div className="flex items-center gap-1" role="group" aria-label="项目类型筛选">
+                {([['ppt', 'PPT'], ['video', '视频'], ['podcast', '播客']] as const).map(([value, label]) => (
+                  <button key={value} type="button" aria-pressed={workspaceFilter === value} onClick={() => handleWorkspaceFilter(value)} className={`h-8 rounded-[var(--app-radius-control)] px-3 text-xs font-medium transition-colors ${workspaceFilter === value ? 'bg-[var(--app-text)] text-[var(--app-surface)]' : 'text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]'}`}>{label}</button>
+                ))}
+              </div>
               <label className="flex cursor-pointer items-center gap-2">
                 <input
                   type="checkbox"

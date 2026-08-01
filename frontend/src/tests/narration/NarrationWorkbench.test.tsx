@@ -94,6 +94,17 @@ describe('NarrationWorkbench', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('请先保存或放弃当前修改');
   });
 
+  it('returns to the current workspace without navigating when closed', async () => {
+    const onClose = vi.fn();
+    render(<NarrationWorkbench open projectId="project-1" initialPageId="page-1" onClose={onClose} />);
+
+    await screen.findByLabelText('旁白文案');
+    fireEvent.click(screen.getByRole('button', { name: '返回当前工作区' }));
+
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(screen.getByRole('dialog')).toHaveClass('lg:left-[var(--project-nav-offset,216px)]');
+  });
+
   it('generates candidates for missing pages and refreshes without applying them', async () => {
     vi.mocked(endpoints.getProjectNarrations).mockResolvedValue({
       success: true, message: '', data: { ...summary, total_pages: 3, missing_pages: 2 },

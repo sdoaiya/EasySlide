@@ -40,22 +40,37 @@ describe('ContentProjectLayout', () => {
 
   it('keeps project content inside the shared app shell without mounting a second rail', () => {
     render(
-      <MemoryRouter initialEntries={['/project/project-1/spine']}>
+      <MemoryRouter initialEntries={['/project/project-1/video']}>
         <Routes>
           <Route path="/project/:projectId" element={<ContentProjectLayout />}>
-            <Route path="spine" element={<div>主线页面</div>} />
+            <Route path="video" element={<div>视频页面</div>} />
           </Route>
         </Routes>
       </MemoryRouter>,
     );
 
-    expect(screen.getByText('主线页面')).toBeInTheDocument();
+    expect(screen.getByText('视频页面')).toBeInTheDocument();
     expect(document.querySelector('[data-content-project-nav]')).not.toBeInTheDocument();
     expect(document.querySelector('[data-content-project-rail-slot]')).not.toBeInTheDocument();
-    expect(mocks.setLastProjectEntry).toHaveBeenCalledWith('project-1', 'spine');
+    expect(mocks.setLastProjectEntry).toHaveBeenCalledWith('project-1', 'video');
   });
 
-  it('keeps the export task center mounted outside workspace routes', () => {
+  it('does not record retired spine entries as the last workspace', () => {
+    render(
+      <MemoryRouter initialEntries={['/project/project-1/spine']}>
+        <Routes>
+          <Route path="/project/:projectId" element={<ContentProjectLayout />}>
+            <Route path="spine" element={<div>旧主线页面</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText('旧主线页面')).toBeInTheDocument();
+    expect(mocks.setLastProjectEntry).not.toHaveBeenCalled();
+  });
+
+  it('keeps export task tracking out of workspace routes', () => {
     useExportTasksStore.setState({
       tasks: [{
         id: 'video-export-1', taskId: 'video-task-1', projectId: 'project-1', type: 'video', status: 'COMPLETED',
@@ -73,7 +88,7 @@ describe('ContentProjectLayout', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText(/导出任务/)).toBeInTheDocument();
+    expect(screen.queryByText(/导出任务/)).not.toBeInTheDocument();
     expect(screen.getByText('视频页面')).toBeInTheDocument();
   });
 });

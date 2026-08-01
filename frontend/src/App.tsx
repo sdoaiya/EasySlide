@@ -8,13 +8,12 @@ import { DetailEditor } from './pages/DetailEditor';
 import { SlidePreview } from './pages/SlidePreview';
 import { SettingsPage } from './pages/Settings';
 import { TaskCenter } from './pages/TaskCenter';
+import { LandingPage } from './pages/Landing';
 import { useProjectStore } from './store/useProjectStore';
 import { useContentProjectStore } from './store/useContentProjectStore';
-import { useToast, AccessCodeGuard, AppTopNav, DesktopTitleBar, ExportTasksPanel } from './components/shared';
+import { useToast, AccessCodeGuard, AppTopNav, DesktopTitleBar, Loading } from './components/shared';
 import { ContentProjectLayout } from './components/content-project/ContentProjectLayout';
-import { ContentSpinePage } from './components/content-project/ContentSpinePage';
 import { WorkspaceEntryPage } from './components/content-project/WorkspaceEntryPage';
-import { WorkspaceProjectRailContext } from './components/workspace/WorkspaceShell';
 
 const isDesktop = typeof window !== 'undefined' && 'electronAPI' in window;
 
@@ -43,15 +42,12 @@ function WorkspaceLayout() {
   }, [location.pathname]);
 
   return (
-    <WorkspaceProjectRailContext.Provider value={location.pathname.startsWith('/project/')}>
+    <>
       <AppTopNav />
-      {!location.pathname.startsWith('/project/') && location.pathname !== '/tasks' && (
-        <ExportTasksPanel className="fixed right-4 top-4 z-[100] w-[min(380px,calc(100vw-2rem))]" />
-      )}
       <div ref={contentRef} tabIndex={0} aria-label="工作区内容" data-workspace-content className="focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)]">
         <Outlet />
       </div>
-    </WorkspaceProjectRailContext.Provider>
+    </>
   );
 }
 
@@ -69,11 +65,35 @@ export function PptWorkspaceRoute() {
     : <Outlet />;
 }
 
+/**
+ * 旧内容主线 URL 兼容：/project/:id/spine 按最近访问的目标工作区跳转。
+ * 历史值 last_workspace === 'spine' 时按已创建工作区优先级解析，优先 PPT。
+ */
+export function SpineLegacyRedirect() {
+  const { projectId } = useParams();
+  const project = useContentProjectStore((state) => state.project);
+  const workspaceEntries = (project?.workspaces || []).filter((workspace) => workspace.state !== 'uninitialized');
+  if (!project) return <Loading fullscreen message="正在打开项目" />;
+  const last = project.last_workspace;
+  const target =
+    last === 'video' || last === 'podcast'
+      ? last
+      : last === 'ppt'
+        ? 'ppt/outline'
+        : workspaceEntries[0]?.kind === 'video'
+          ? 'video'
+          : workspaceEntries[0]?.kind === 'podcast'
+            ? 'podcast'
+            : 'ppt/outline';
+  return <Navigate to={`/project/${projectId}/${target}`} replace />;
+}
+
 function AppRoutes() {
   return (
     <Routes>
-      <Route path="/" element={<Navigate to="/home" replace />} />
-      {['/landing', '/privacy', '/terms', '/cookies', '/app'].map((path) => (
+      <Route path="/" element={<LandingPage />} />
+      <Route path="/landing" element={<LandingPage />} />
+      {['/privacy', '/terms', '/cookies', '/app'].map((path) => (
         <Route key={path} path={path} element={<Navigate to="/home" replace />} />
       ))}
       <Route element={<ProtectedRoute><WorkspaceLayout /></ProtectedRoute>}>
@@ -83,7 +103,7 @@ function AppRoutes() {
         <Route path="/settings" element={<SettingsPage showNavigation={false} />} />
         <Route path="/tasks" element={<TaskCenter />} />
         <Route element={<ContentProjectLayout />}>
-          <Route path="/project/:projectId/spine" element={<ContentSpinePage />} />
+          <Route path="/project/:projectId/spine" element={<SpineLegacyRedirect />} />
           <Route path="/project/:projectId/ppt" element={<PptWorkspaceRoute />}>
             <Route index element={<Navigate to="outline" replace />} />
             <Route path="outline" element={<OutlineEditor />} />

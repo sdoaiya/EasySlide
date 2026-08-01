@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import * as api from '@/api/endpoints';
 import type { ContentProject, ContentWorkspaceKind, ProjectWorkspace } from '@/types';
+import type { ContentSpineOptimization } from '@/api/endpoints';
 import { useExportTasksStore } from './useExportTasksStore';
 
 export const selectContentWorkspace = (
@@ -22,8 +23,9 @@ type ContentProjectState = {
   error: string | null;
   load: (projectId: string) => Promise<void>;
   confirmSpine: () => Promise<void>;
+  updateSpine: (document: Record<string, unknown>) => Promise<void>;
+  optimizeSpine: (context: Pick<ContentSpineOptimization, 'topic' | 'audience' | 'goal'>) => Promise<ContentSpineOptimization>;
   initializeWorkspace: (kind: ContentWorkspaceKind) => Promise<void>;
-  initializeVideoFromPpt: () => Promise<void>;
   clear: () => void;
 };
 
@@ -53,6 +55,21 @@ export const useContentProjectStore = create<ContentProjectState>((set, get) => 
     await get().load(project.project_id);
   },
 
+  updateSpine: async (document) => {
+    const project = get().project;
+    if (!project) return;
+    await api.updateContentSpine(project.project_id, document, project.spine.revision);
+    await get().load(project.project_id);
+  },
+
+  optimizeSpine: async (context) => {
+    const project = get().project;
+    if (!project) throw new Error('项目简报尚未加载');
+    const response = await api.optimizeContentSpine(project.project_id, context);
+    if (!response.data) throw new Error('AI 未返回项目简报建议');
+    return response.data;
+  },
+
   initializeWorkspace: async (kind) => {
     const project = get().project;
     if (!project) return;
@@ -75,13 +92,6 @@ export const useContentProjectStore = create<ContentProjectState>((set, get) => 
       });
       void useExportTasksStore.getState().pollTask(taskKey, project.project_id, taskId);
     }
-    await get().load(project.project_id);
-  },
-
-  initializeVideoFromPpt: async () => {
-    const project = get().project;
-    if (!project) return;
-    await api.initializeVideoWorkspaceFromPpt(project.project_id);
     await get().load(project.project_id);
   },
 

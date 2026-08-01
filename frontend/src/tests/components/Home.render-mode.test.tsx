@@ -115,6 +115,7 @@ describe('Home render mode selection', () => {
       undefined,
       undefined,
       'ppt',
+      undefined, // 可选的简报字段，未填写时为空
     ]);
   });
 

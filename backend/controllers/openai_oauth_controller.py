@@ -148,7 +148,7 @@ def list_models():
     if not token:
         return error_response("OPENAI_OAUTH_NOT_CONNECTED", "OpenAI 授权未连接", 401)
 
-    text_models = [
+    fallback_text_models = [
         "gpt-5.5",
         "gpt-5.5-pro",
         "gpt-5.4",
@@ -168,17 +168,39 @@ def list_models():
         "o1-pro",
         "codex-mini-latest",
     ]
-    image_models = [
+    fallback_image_models = [
         "gpt-image-2",
         "gpt-image-1.5",
         "gpt-image-1",
         "gpt-image-1-mini",
     ]
+    try:
+        response = http_requests.get(
+            "https://chatgpt.com/backend-api/models",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=15,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        raw_models = payload.get("models", payload.get("data", [])) if isinstance(payload, dict) else payload
+        models = []
+        for item in raw_models or []:
+            value = item if isinstance(item, str) else item.get("slug") or item.get("id") or item.get("name")
+            if value and value not in models:
+                models.append(str(value).removeprefix("models/"))
+        if models:
+            image_models = [model for model in models if "image" in model.lower()]
+            text_models = [model for model in models if model not in image_models]
+            if text_models or image_models:
+                return success_response({"text_models": text_models, "image_models": image_models, "models": models})
+    except Exception:
+        current_app.logger.warning("[openai-oauth] upstream model list unavailable; using fallback", exc_info=True)
+
     return success_response({
-        "text_models": text_models,
-        "image_models": image_models,
-        # Keep flat list for backward compatibility
-        "models": text_models + image_models,
+        "text_models": fallback_text_models,
+        "image_models": fallback_image_models,
+        "models": fallback_text_models + fallback_image_models,
+        "source": "fallback",
     })
 
 

@@ -98,3 +98,46 @@ def test_content_spine_source_fields_preserve_legacy_api_values(client, app):
             'description_text': '完整描述',
         }
         assert project.content_spine.revision == 2
+
+
+def test_confirm_materializes_source_sections_without_changing_revision(client, app):
+    from models import Project, db
+    from services.content_spine_service import confirm_spine, create_spine
+
+    with app.app_context():
+        project = Project(creation_type='idea', status='active')
+        db.session.add(project)
+        db.session.flush()
+        spine = create_spine(project.id, {
+            'idea_prompt': '第一部分：背景\n现状说明。\n\n第二部分：方案\n落地路径。',
+        })
+        assert json.loads(spine.document_json)['sections'] == []
+
+        confirm_spine(spine, expected_revision=1)
+
+        document = json.loads(spine.document_json)
+        assert spine.revision == 1
+        assert spine.status == 'confirmed'
+        assert [item['title'] for item in document['sections']] == ['背景', '方案']
+
+
+def test_workspace_adapters_fallback_to_frozen_source_when_sections_are_empty():
+    from services.content_spine_service import get_spine_sections
+    from services.podcast_service import build_podcast_document_from_spine
+    from services.video_workspace_service import build_video_document_from_spine
+
+    spine = {
+        'topic': {'value': '视频播客首版'},
+        'sections': [],
+        'sources': [{
+            'source_id': 'input.idea_prompt',
+            'kind': 'prompt',
+            'content': '第一部分：背景\n- 现状\n第二部分：方案\n说明落地路径。',
+        }],
+    }
+
+    sections = get_spine_sections(spine)
+    assert [item['title'] for item in sections] == ['背景', '方案']
+    assert sections[0]['key_points'] == ['现状']
+    assert len(build_video_document_from_spine(spine)['scenes']) == 2
+    assert len(build_podcast_document_from_spine(spine)['segments']) == 2

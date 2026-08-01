@@ -130,7 +130,7 @@ interface ProjectState {
   setError: (error: string | null) => void;
   
   // 项目操作
-  initializeProject: (type: 'idea' | 'outline' | 'description' | 'blank', content: string, templateImage?: File, templateStyle?: string, referenceFileIds?: string[], aspectRatio?: string, renderMode?: RenderMode, nativeTheme?: string, templatePackId?: string, nativeImageSettings?: NativeImageSettings, initialWorkspace?: ContentWorkspaceKind) => Promise<void>;
+  initializeProject: (type: 'idea' | 'outline' | 'description' | 'blank', content: string, templateImage?: File, templateStyle?: string, referenceFileIds?: string[], aspectRatio?: string, renderMode?: RenderMode, nativeTheme?: string, templatePackId?: string, nativeImageSettings?: NativeImageSettings, initialWorkspace?: ContentWorkspaceKind, brief?: { audience?: string; goal?: string }) => Promise<void>;
   syncProject: (projectId?: string) => Promise<Project | undefined>;
   
   // 页面操作
@@ -240,7 +240,7 @@ const debouncedUpdatePage = debounce(
   setError: (error) => set({ error }),
 
   // 初始化项目
-  initializeProject: async (type, content, templateImage, templateStyle, referenceFileIds, aspectRatio, renderMode = 'image', nativeTheme = 'theme01', templatePackId, nativeImageSettings, initialWorkspace = 'ppt') => {
+  initializeProject: async (type, content, templateImage, templateStyle, referenceFileIds, aspectRatio, renderMode = 'image', nativeTheme = 'theme01', templatePackId, nativeImageSettings, initialWorkspace = 'ppt', brief) => {
     set({ isGlobalLoading: true, error: null });
     try {
       const request: any = {};
@@ -275,6 +275,10 @@ const debouncedUpdatePage = debounce(
       }
       if (nativeImageSettings) request.native_image_settings = nativeImageSettings;
       request.initial_workspace = initialWorkspace;
+      if (brief) {
+        if (brief.audience) request.audience = brief.audience.trim();
+        if (brief.goal) request.goal = brief.goal.trim();
+      }
 
       // 1. 创建项目
       const response = await api.createProject(request);

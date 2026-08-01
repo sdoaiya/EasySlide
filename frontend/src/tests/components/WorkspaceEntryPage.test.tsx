@@ -4,7 +4,6 @@ import { WorkspaceEntryPage } from '@/components/content-project/WorkspaceEntryP
 
 const mocks = vi.hoisted(() => ({
   initializeWorkspace: vi.fn(),
-  initializeVideoFromPpt: vi.fn(),
   project: {
     project_id: 'project-1',
     spine: { status: 'confirmed' },
@@ -20,7 +19,6 @@ vi.mock('@/store/useContentProjectStore', () => ({
     project: mocks.project,
     loading: false,
     initializeWorkspace: mocks.initializeWorkspace,
-    initializeVideoFromPpt: mocks.initializeVideoFromPpt,
   }),
 }));
 
@@ -29,15 +27,14 @@ describe('WorkspaceEntryPage', () => {
     vi.clearAllMocks();
   });
 
-  it('offers the two approved video sources without starting either automatically', () => {
+  it('offers the workspace initialization action without starting it automatically', () => {
     render(<WorkspaceEntryPage kind="video" />);
 
     expect(mocks.initializeWorkspace).not.toHaveBeenCalled();
-    expect(mocks.initializeVideoFromPpt).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: '从内容主线生成' }));
-    fireEvent.click(screen.getByRole('button', { name: '从现有 PPT 生成' }));
+    fireEvent.click(screen.getByRole('button', { name: '生成脚本结构' }));
     expect(mocks.initializeWorkspace).toHaveBeenCalledWith('video');
-    expect(mocks.initializeVideoFromPpt).toHaveBeenCalledTimes(1);
+    // PPT 派生视频不再从入口页直接同步写正式工作区
+    expect(screen.queryByRole('button', { name: '从现有 PPT 生成' })).not.toBeInTheDocument();
   });
 
   it('shows a non-repeatable preparation state while initialization is running', () => {
@@ -45,7 +42,7 @@ describe('WorkspaceEntryPage', () => {
     render(<WorkspaceEntryPage kind="video" />);
 
     expect(screen.getByText('正在准备视频工作区')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '从内容主线生成' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '生成脚本结构' })).not.toBeInTheDocument();
     expect(mocks.initializeWorkspace).not.toHaveBeenCalled();
     delete (mocks.project.workspaces[1] as any).stage;
   });

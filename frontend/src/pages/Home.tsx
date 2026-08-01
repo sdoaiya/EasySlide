@@ -5,7 +5,7 @@ import { Sparkles, FileText, FileEdit, ImagePlus, Paperclip, Palette, Lightbulb,
 import { AppTopNav, Button, SegmentedControl, useToast, MaterialSelector, ReferenceFileList, ReferenceFileSelector, FilePreviewModal, TextStyleSelector } from '@/components/shared';
 import { MarkdownTextarea, type MarkdownTextareaRef } from '@/components/shared/MarkdownTextarea';
 import { TemplateSelector, getTemplateFile } from '@/components/shared/TemplateSelector';
-import { listUserTemplates, type UserTemplate, uploadReferenceFile, type ReferenceFile, associateFileToProject, triggerFileParse, associateMaterialsToProject, createPptRenovationProject, extractStyleFromImage } from '@/api/endpoints';
+import { listUserTemplates, type UserTemplate, uploadReferenceFile, type ReferenceFile, associateFileToProject, triggerFileParse, associateMaterialsToProject, createPptRenovationProject, extractStyleFromImage, optimizeProjectBrief } from '@/api/endpoints';
 import { NativeThemePicker } from '@/components/native-deck/NativeThemePicker';
 import { useProjectStore } from '@/store/useProjectStore';
 import { devLog } from '@/utils/logger';
@@ -342,6 +342,11 @@ export const Home: React.FC<{ showNavigation?: boolean }> = ({ showNavigation = 
   const [isAspectRatioOpen, setIsAspectRatioOpen] = useState(false);
   const [renovationFile, setRenovationFile] = useState<File | null>(null);
   const [keepLayout, setKeepLayout] = useState(false);
+  const [audience, setAudience] = useState('');
+  const [goal, setGoal] = useState('');
+  const [isOptimizingBrief, setIsOptimizingBrief] = useState(false);
+  const [briefNote, setBriefNote] = useState('');
+  const [briefError, setBriefError] = useState('');
   const renovationFileInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const styleImageInputRef = useRef<HTMLInputElement>(null);
@@ -698,6 +703,43 @@ export const Home: React.FC<{ showNavigation?: boolean }> = ({ showNavigation = 
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // AI 优化简报：只回填表单，不落库、不创建工作区；429/超时显示稳定中文错误。
+  const handleOptimizeBrief = async () => {
+    setBriefError('');
+    setBriefNote('');
+    if (!content.trim() && !audience.trim() && !goal.trim()) {
+      setBriefError('请先填写主题、受众或目标中的至少一项，再让 AI 优化。');
+      return;
+    }
+    setIsOptimizingBrief(true);
+    try {
+      const topicCandidate = activeTab === 'idea' ? content.trim() : '';
+      const result = await optimizeProjectBrief({
+        topic: topicCandidate,
+        audience: audience.trim(),
+        goal: goal.trim(),
+      });
+      if (result.data) {
+        setAudience(result.data.audience || audience);
+        setGoal(result.data.goal || goal);
+        if (topicCandidate && result.data.topic) {
+          setContent(result.data.topic);
+        }
+        setBriefNote(result.data.rationale || 'AI 已生成优化建议，请检查后开始生成。');
+      } else {
+        setBriefError('AI 优化失败，请稍后重试');
+      }
+    } catch (error: any) {
+      const status = error?.response?.status;
+      const message = error?.response?.data?.error?.message || error?.message || '';
+      setBriefError(status === 429 || message.includes('429')
+        ? 'AI 服务当前请求过于频繁，请稍后重试，或在设置中切换文本模型。'
+        : (message || 'AI 优化失败，请稍后重试'));
+    } finally {
+      setIsOptimizingBrief(false);
+    }
+  };
+
   const handleSubmit = async () => {
     // For ppt_renovation, validate file instead of content
     if (activeTab === 'ppt_renovation') {
@@ -788,7 +830,7 @@ export const Home: React.FC<{ showNavigation?: boolean }> = ({ showNavigation = 
         .filter(f => f.parse_status === 'completed')
         .map(f => f.id);
 
-      await initializeProject(activeTab as 'idea' | 'outline' | 'description' | 'blank', content, templateFile || undefined, styleDesc, refFileIds.length > 0 ? refFileIds : undefined, aspectRatio, renderMode, nativeTheme, selectedGordenTemplate?.id, renderMode === 'image' ? templateVisualSettings : undefined, initialWorkspace);
+      await initializeProject(activeTab as 'idea' | 'outline' | 'description' | 'blank', content, templateFile || undefined, styleDesc, refFileIds.length > 0 ? refFileIds : undefined, aspectRatio, renderMode, nativeTheme, selectedGordenTemplate?.id, renderMode === 'image' ? templateVisualSettings : undefined, initialWorkspace, audience.trim() || goal.trim() ? { audience, goal } : undefined);
       
       // 根据类型跳转到不同页面
       const projectId = localStorage.getItem('currentProjectId');
@@ -836,9 +878,12 @@ export const Home: React.FC<{ showNavigation?: boolean }> = ({ showNavigation = 
         devLog('No materials to associate');
       }
       
-      navigate(initialWorkspace === 'ppt'
-        ? `/project/${projectId}/ppt/outline`
-        : `/project/${projectId}/${initialWorkspace}`);
+      const nextRoute = initialWorkspace === 'video'
+        ? `/project/${projectId}/video`
+        : initialWorkspace === 'podcast'
+          ? `/project/${projectId}/podcast`
+          : `/project/${projectId}/ppt/outline`;
+      navigate(nextRoute);
     } catch (error: any) {
       console.error('创建项目失败:', error);
       const msg = error?.response?.data?.error?.message || error?.message || t('home.messages.projectCreateFailed');
@@ -849,7 +894,7 @@ export const Home: React.FC<{ showNavigation?: boolean }> = ({ showNavigation = 
   };
 
   return (
-    <div className="create-reference-canvas min-h-screen bg-[var(--app-background)] text-[var(--app-text)] lg:pl-[216px]">
+    <div className="create-reference-canvas min-h-screen bg-[var(--app-background)] text-[var(--app-text)] lg:pl-[var(--project-nav-offset,216px)]">
       {showNavigation && <AppTopNav />}
 
       <main className="mx-auto w-full max-w-[1152px] px-5 pb-12 pt-6 md:px-10">
@@ -1109,6 +1154,54 @@ export const Home: React.FC<{ showNavigation?: boolean }> = ({ showNavigation = 
             />
             )}
           </div>
+
+          {/* 项目简报：可选定位字段 + AI 优化，不阻塞生成 */}
+          {activeTab !== 'ppt_renovation' && (
+            <section aria-label="项目简报" className="mb-4 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] p-4">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-sm font-semibold text-[var(--app-text)]">项目简报（可选）</p>
+                  <p className="mt-0.5 text-xs text-[var(--app-text-tertiary)]">受众与目标会作为跨工作区的共享上下文，可留空直接开始。</p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  icon={isOptimizingBrief ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                  loading={isOptimizingBrief}
+                  disabled={isSubmitting || isGlobalLoading || (!content.trim() && !audience.trim() && !goal.trim())}
+                  onClick={() => void handleOptimizeBrief()}
+                >
+                  AI 优化简报
+                </Button>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="space-y-1.5 text-xs font-medium text-[var(--app-text-secondary)]">
+                  <span>受众</span>
+                  <input
+                    aria-label="受众"
+                    value={audience}
+                    onChange={(event) => setAudience(event.target.value)}
+                    placeholder="例如：管理层、客户或公众"
+                    disabled={isSubmitting || isGlobalLoading}
+                    className="h-9 w-full rounded-md border border-[var(--app-border)] bg-[var(--app-surface)] px-2.5 text-sm text-[var(--app-text)] placeholder:text-[var(--app-text-tertiary)] focus:border-[var(--app-accent)] focus:outline-none"
+                  />
+                </label>
+                <label className="space-y-1.5 text-xs font-medium text-[var(--app-text-secondary)]">
+                  <span>内容目标</span>
+                  <input
+                    aria-label="内容目标"
+                    value={goal}
+                    onChange={(event) => setGoal(event.target.value)}
+                    placeholder="例如：形成决策共识或推动下一步行动"
+                    disabled={isSubmitting || isGlobalLoading}
+                    className="h-9 w-full rounded-md border border-[var(--app-border)] bg-[var(--app-surface)] px-2.5 text-sm text-[var(--app-text)] placeholder:text-[var(--app-text-tertiary)] focus:border-[var(--app-accent)] focus:outline-none"
+                  />
+                </label>
+              </div>
+              {briefNote && <p className="mt-2 text-xs text-[var(--app-accent)]">{briefNote}</p>}
+              {briefError && <p role="alert" className="mt-2 text-xs text-[var(--app-danger)]">{briefError}</p>}
+            </section>
+          )}
 
           {/* 隐藏的文件输入 */}
           <input

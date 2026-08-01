@@ -27,14 +27,14 @@ vi.mock('@/store/useProjectStore', () => ({
 }));
 
 describe('EasySlide public routes', () => {
-  it('redirects the root page to the canonical home route', async () => {
+  it('opens the public landing page at the root route', async () => {
     window.history.pushState({}, '', '/');
 
     render(<App />);
 
-    expect(await screen.findByRole('navigation', { name: '工作台导航' })).toBeInTheDocument();
-    await waitFor(() => expect(window.location.pathname).toBe('/home'));
-    expect(checkAccessCode).toHaveBeenCalled();
+    expect(await screen.findByRole('heading', { level: 1, name: /让每一页/ })).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/');
+    expect(checkAccessCode).not.toHaveBeenCalled();
   });
 
   it('opens the canonical home route directly', async () => {

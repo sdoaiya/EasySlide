@@ -100,6 +100,7 @@ export interface FishAudioVoice {
   author?: string | null;
   like_count?: number;
   task_count?: number;
+  preview_url?: string | null;
 }
 
 export interface PronunciationEntry {
@@ -317,6 +318,7 @@ export interface ContentSpine {
   status: 'draft' | 'confirmed';
   content_hash: string;
   document: Record<string, any>;
+  preview_sections?: Array<Record<string, any>>;
   created_at?: string;
   updated_at?: string;
 }

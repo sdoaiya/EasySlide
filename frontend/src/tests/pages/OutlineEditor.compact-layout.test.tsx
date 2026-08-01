@@ -116,7 +116,7 @@ describe('OutlineEditor compact layout', () => {
     expect(scrollRegion).toHaveClass('flex-1', 'min-h-0', 'overflow-y-auto');
     expect(scrollRegion).not.toContainElement(footer);
     expect(scrollRegion).toHaveClass('pb-20');
-    expect(footer).toHaveClass('fixed', 'bottom-0', 'pointer-events-none');
+    expect(footer).toHaveClass('fixed', 'bottom-0', 'pointer-events-none', 'lg:left-[216px]');
     const footerBar = screen.getByTestId('outline-editor-footer-bar');
     expect(footerBar).toHaveClass('min-h-[44px]', 'max-w-5xl');
     expect(footerBar).toHaveClass('rounded-[var(--app-radius-panel)]', 'shadow-[var(--app-shadow-floating)]');

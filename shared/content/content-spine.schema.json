@@ -20,6 +20,7 @@
   "properties": {
     "schema_version": { "const": 1 },
     "topic": { "$ref": "#/$defs/semanticField" },
+    "content": { "$ref": "#/$defs/semanticField" },
     "audience": { "$ref": "#/$defs/semanticField" },
     "goal": { "$ref": "#/$defs/semanticField" },
     "sources": {

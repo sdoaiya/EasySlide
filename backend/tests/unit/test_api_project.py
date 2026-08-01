@@ -71,6 +71,59 @@ class TestProjectCreate:
         assert 'project_id' in data['data']
         assert data['data']['initialization_task'] is None
         assert data['data']['status'] == 'DRAFT'
+        assert data['data']['next_route'].endswith('/ppt/outline')
+
+    def test_create_project_returns_next_route_per_target_workspace(self, client):
+        created = client.post('/api/projects', json={
+            'creation_type': 'idea',
+            'idea_prompt': '创建路由',
+            'target_workspace': 'video',
+        })
+        data = assert_success_response(created, 202)['data']
+        assert data['initial_workspace'] == 'video'
+        assert data['target_workspace'] == 'video'
+        assert data['next_route'].endswith('/video')
+
+        podcast = client.post('/api/projects', json={
+            'creation_type': 'idea',
+            'idea_prompt': '创建路由',
+            'target_workspace': 'podcast',
+        })
+        podcast_data = assert_success_response(podcast, 202)['data']
+        assert podcast_data['next_route'].endswith('/podcast')
+
+        invalid = client.post('/api/projects', json={
+            'creation_type': 'idea',
+            'idea_prompt': '创建路由',
+            'target_workspace': 'blog',
+        })
+        assert invalid.status_code == 400
+
+    def test_create_project_accepts_description_alias(self, client):
+        created = client.post('/api/projects', json={
+            'creation_type': 'description',
+            'description_text': '第一页：标题\n介绍内容',
+        })
+        data = assert_success_response(created, 201)['data']
+        assert data['next_route'].endswith('/ppt/outline')
+        detail = client.get(f"/api/projects/{data['project_id']}")
+        assert detail.get_json()['data']['creation_type'] == 'descriptions'
+
+    def test_create_project_stores_brief_fields(self, client):
+        created = client.post('/api/projects', json={
+            'creation_type': 'idea',
+            'idea_prompt': '季度复盘',
+            'audience': '管理层',
+            'goal': '形成决策共识',
+        })
+        data = assert_success_response(created, 201)['data']
+        project_id = data['project_id']
+        summary = assert_success_response(
+            client.get(f'/api/content-projects/{project_id}')
+        )['data']
+        assert summary['brief']['topic'] == '季度复盘'
+        assert summary['brief']['audience'] == '管理层'
+        assert summary['brief']['goal'] == '形成决策共识'
 
     def test_create_and_update_template_pack_id(self, client):
         response = client.post('/api/projects', json={
@@ -489,6 +542,8 @@ class TestProjectList:
         _add_project_with_ppt_workspace(
             project, {'render_mode': 'native'}, stage='NATIVE_DECK_GENERATED'
         )
+        # PPT 工作区初始化会按内容主线预填页面；本用例构造自己的页面，先移除预填页
+        Page.query.filter_by(project_id=project.id).delete(synchronize_session=False)
         db.session.add(page)
         db.session.commit()
 
@@ -540,6 +595,8 @@ class TestImageGenerationConcurrency:
             existing_path.parent.mkdir(parents=True, exist_ok=True)
             Image.new('RGB', (16, 9), 'white').save(existing_path)
             _add_project_with_ppt_workspace(project, stage='DESCRIPTIONS_GENERATED')
+            # PPT 工作区初始化会按内容主线预填页面；本用例构造自己的页面，先移除预填页
+            Page.query.filter_by(project_id=project.id).delete(synchronize_session=False)
             db.session.add_all([completed_page, pending_page])
             db.session.commit()
 
@@ -642,6 +699,8 @@ class TestImageGenerationConcurrency:
             page.set_outline_content({'title': page.id, 'points': []})
             page.set_description_content({'text': page.id})
             _add_project_with_ppt_workspace(project, stage='COMPLETED')
+            # PPT 工作区初始化会按内容主线预填页面；本用例构造自己的页面，先移除预填页
+            Page.query.filter_by(project_id=project.id).delete(synchronize_session=False)
             db.session.add(page)
             db.session.commit()
 

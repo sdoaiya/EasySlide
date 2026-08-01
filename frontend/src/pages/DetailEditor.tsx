@@ -1,10 +1,9 @@
 ﻿import React, { useEffect, useCallback, useState, useRef } from 'react';
-import { useNavigate, useParams, useLocation } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, FileText, Sparkles, Download, Upload, ChevronDown, Settings2, X, Plus, HelpCircle, ImageIcon } from 'lucide-react';
 import { useT } from '@/hooks/useT';
 import { MarkdownTextarea, type MarkdownTextareaRef } from '@/components/shared/MarkdownTextarea';
 import PresetCapsules from '@/components/shared/PresetCapsules';
-import { getStaticAssetUrl } from '@/api/client';
 import { useImagePaste, buildMaterialsMarkdown } from '@/hooks/useImagePaste';
 import type { Material } from '@/types';
 import {
@@ -205,10 +204,8 @@ const SortableFieldPill: React.FC<{
 
 export const DetailEditor: React.FC = () => {
   const navigate = useNavigate();
-  const location = useLocation();
   const t = useT(detailI18n);
   const { projectId } = useParams<{ projectId: string }>();
-  const fromHistory = (location.state as any)?.from === 'history';
   const {
     currentProject,
     syncProject,
@@ -603,30 +600,9 @@ export const DetailEditor: React.FC = () => {
       {/* 顶栏 */}
       <header className="shrink-0 border-b border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 md:px-6">
         <div className="flex items-center justify-between gap-2 md:gap-4">
-          {/* 左侧：Logo 和标题 */}
+          {/* 左侧：标题 */}
           <div className="flex items-center gap-2 md:gap-4 flex-shrink-0">
-            <Button
-              variant="ghost"
-              size="sm"
-              icon={<ArrowLeft size={16} className="md:w-[18px] md:h-[18px]" />}
-              onClick={() => {
-                if (fromHistory) {
-                  navigate('/history');
-                } else {
-                  navigate(`/project/${projectId}/ppt/outline`);
-                }
-              }}
-              disabled={isRenovationProcessing}
-              className="flex-shrink-0"
-            >
-              <span className="hidden sm:inline">{t('common.back')}</span>
-            </Button>
-            <div className="flex items-center gap-1.5 md:gap-2">
-              <img src={getStaticAssetUrl('/logo-nav.png')} alt="EasySlide Logo" className="h-7 md:h-8 w-auto" />
-              <span className="text-base md:text-xl font-bold">{t('home.title')}</span>
-            </div>
-            <span className="hidden text-[var(--app-text-tertiary)] lg:inline">|</span>
-            <div className="hidden lg:flex flex-col leading-tight">
+            <div className="flex flex-col leading-tight">
               <div className="flex items-center gap-2">
                 <span className="text-sm md:text-lg font-semibold">{t('detail.title')}</span>
                 <span className="rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-2 py-0.5 text-[11px] font-semibold text-[var(--app-text-secondary)]">
@@ -1001,7 +977,7 @@ export const DetailEditor: React.FC = () => {
           )}
         </div>
       </main>
-      <footer data-testid="detail-editor-footer" className="pointer-events-none fixed inset-x-0 bottom-0 z-20 px-4 md:px-6">
+      <footer data-testid="detail-editor-footer" className="pointer-events-none fixed inset-x-0 bottom-0 z-20 px-4 md:px-6 lg:left-[216px]">
         <div data-testid="detail-editor-footer-bar" className="pointer-events-auto mx-auto flex min-h-[44px] max-w-5xl items-center justify-between gap-3 rounded-[var(--app-radius-panel)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 shadow-[var(--app-shadow-floating)]">
           <Button
             variant="secondary"

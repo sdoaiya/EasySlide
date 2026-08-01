@@ -78,7 +78,7 @@ describe('VideoWorkspace', () => {
     mocks.fetch.mockResolvedValue({ ok: true, blob: async () => new Blob(['png'], { type: 'image/png' }) });
   });
 
-  it('edits a scene, saves a new revision, then creates a sync proposal', async () => {
+  it('edits a scene and saves a new revision without a spine sync proposal', async () => {
     const onChanged = vi.fn();
     render(
       <>
@@ -87,7 +87,7 @@ describe('VideoWorkspace', () => {
       </>
     );
 
-    expect(document.querySelector('[data-content-project-rail-slot]')).toHaveTextContent('开场');
+    expect(screen.getByRole('complementary', { name: '页面栏' })).toHaveTextContent('开场');
     fireEvent.change(screen.getByLabelText('旁白'), { target: { value: '新旁白' } });
     fireEvent.click(screen.getByRole('button', { name: '选择' }));
     fireEvent.click(screen.getByTestId('video-material-image-video'));
@@ -98,9 +98,9 @@ describe('VideoWorkspace', () => {
     expect(mocks.update.mock.calls[0][3].scenes[0].narration.text).toBe('新旁白');
     expect(mocks.update.mock.calls[0][3].scenes[0].visual.source_ref).toBe('/files/materials/scene.mp4');
     expect(mocks.update.mock.calls[0][3].scenes[0].audio_cues[0].asset_ref).toBe('/files/materials/music.mp3');
-    fireEvent.click(screen.getByRole('button', { name: '提议同步' }));
-    await waitFor(() => expect(mocks.propose).toHaveBeenCalledWith('project-1', 3));
-    expect(onChanged).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole('button', { name: '提交同步候选' })).not.toBeInTheDocument();
+    expect(mocks.propose).not.toHaveBeenCalled();
+    expect(onChanged).toHaveBeenCalledTimes(1);
   });
 
   it('keeps 20-scene rail selection local instead of rerendering every item', () => {
@@ -138,7 +138,7 @@ describe('VideoWorkspace', () => {
       </>
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '生成 Proof' }));
+    fireEvent.click(screen.getByRole('button', { name: '生成预览' }));
     await waitFor(() => expect(mocks.exportVideo).toHaveBeenCalledWith('project-1', { renderProfile: 'proof', sourceProofTaskId: undefined }));
     await waitFor(() => expect(useExportTasksStore.getState().tasks[0]).toMatchObject({
       taskId: 'video-task-1',
@@ -146,7 +146,7 @@ describe('VideoWorkspace', () => {
       status: 'COMPLETED',
       progress: { render_profile: 'proof', workspace_version_id: 'version-1' },
     }));
-    expect(screen.getByText('Proof 已完成，可导出高清')).toBeInTheDocument();
+    expect(screen.getByText('预览已完成，可导出高清')).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole('button', { name: '导出高清' })).not.toBeDisabled());
     fireEvent.click(screen.getByRole('button', { name: '导出高清' }));
     await waitFor(() => expect(mocks.exportVideo).toHaveBeenLastCalledWith('project-1', { renderProfile: 'final', sourceProofTaskId: 'video-task-1' }));

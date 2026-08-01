@@ -45,7 +45,7 @@ describe('WorkspaceShell', () => {
     expect(screen.getByRole('complementary', { name: '属性栏' })).toHaveAttribute('data-collapsed', 'true');
   });
 
-  it('reuses the content-project rail instead of reserving a second sidebar', () => {
+  it('keeps the page rail inside the workspace instead of embedding it in project navigation', () => {
     render(
       <>
         <div data-content-project-rail-slot />
@@ -56,9 +56,10 @@ describe('WorkspaceShell', () => {
     );
 
     const shell = screen.getByRole('main').parentElement;
-    expect(document.querySelector('[data-content-project-rail-slot]')).toHaveTextContent('项目页面');
+    expect(screen.getByRole('complementary', { name: '页面栏' })).toHaveTextContent('项目页面');
+    expect(document.querySelector('[data-content-project-rail-slot]')).not.toHaveTextContent('项目页面');
     expect(shell).toHaveStyle({
-      gridTemplateColumns: 'minmax(0, 0) minmax(0, 1fr) minmax(0, var(--workspace-inspector-width))',
+      gridTemplateColumns: 'minmax(0, var(--workspace-sidebar-width)) minmax(0, 1fr) minmax(0, var(--workspace-inspector-width))',
     });
   });
 

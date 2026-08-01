@@ -1,4 +1,5 @@
 from io import BytesIO
+import json
 from unittest.mock import Mock
 
 import pytest
@@ -66,7 +67,7 @@ def test_create_content_project_initializes_only_selected_workspace(
     assert 'stage' in summary_data['workspaces'][0]
 
 
-def test_other_workspace_requires_confirmed_spine_then_uses_task(client, app, monkeypatch):
+def test_other_workspace_initializes_without_spine_confirmation(client, app, monkeypatch):
     from models import ProjectWorkspace, Task
 
     monkeypatch.setattr(
@@ -80,18 +81,7 @@ def test_other_workspace_requires_confirmed_spine_then_uses_task(client, app, mo
     }).get_json()['data']
     project_id = created['project_id']
 
-    blocked = client.post(
-        f'/api/content-projects/{project_id}/workspaces/video/initialize',
-        json={},
-    )
-    assert blocked.status_code == 409
-    assert blocked.get_json()['error']['code'] == 'SPINE_CONFIRMATION_REQUIRED'
-
-    confirmed = client.post(
-        f'/api/content-projects/{project_id}/spine/confirm',
-        json={'expected_revision': 1},
-    )
-    assert confirmed.status_code == 200
+    # 工作区初始化不再要求先确认内容主线
     initialized = client.post(
         f'/api/content-projects/{project_id}/workspaces/video/initialize',
         json={'settings': {'aspect_ratio': '16:9'}},
@@ -133,14 +123,7 @@ def test_video_workspace_can_initialize_from_existing_ppt(client, app, monkeypat
         db.session.add(page)
         db.session.commit()
 
-    assert client.post(
-        f'/api/content-projects/{project_id}/workspaces/video/initialize-from-ppt',
-        json={},
-    ).status_code == 409
-    assert client.post(
-        f'/api/content-projects/{project_id}/spine/confirm',
-        json={'expected_revision': 1},
-    ).status_code == 200
+    # PPT 派生视频不要求先确认内容主线
     initialized = client.post(
         f'/api/content-projects/{project_id}/workspaces/video/initialize-from-ppt',
         json={'settings': {'aspect_ratio': '16:9'}},
@@ -175,6 +158,23 @@ def test_video_workspace_can_initialize_from_existing_ppt(client, app, monkeypat
         assert WorkspaceVersion.query.filter_by(workspace_id=video.id).count() == 2
 
 
+def test_initialize_from_ppt_is_deprecated_when_legacy_switch_is_off(client, monkeypatch):
+    monkeypatch.setenv('LEGACY_WORKSPACE_INITIALIZATION_ENABLED', 'false')
+    project_id = client.post('/api/projects', json={
+        'creation_type': 'idea',
+        'idea_prompt': '旧入口防护',
+        'initial_workspace': 'ppt',
+    }).get_json()['data']['project_id']
+
+    response = client.post(
+        f'/api/content-projects/{project_id}/workspaces/video/initialize-from-ppt',
+        json={},
+    )
+
+    assert response.status_code == 410
+    assert response.get_json()['error']['code'] == 'DEPRECATED_WORKSPACE_INITIALIZATION'
+
+
 def test_native_browser_frames_create_a_video_workspace_revision(client, app, monkeypatch):
     from PIL import Image
     from models import Page, ProjectWorkspace, db
@@ -195,6 +195,10 @@ def test_native_browser_frames_create_a_video_workspace_revision(client, app, mo
         db.session.add(page)
         db.session.commit()
         page_id = page.id
+        page_ids = [
+            item.id
+            for item in Page.query.filter_by(project_id=project_id).order_by(Page.order_index).all()
+        ]
     assert client.post(
         f'/api/content-projects/{project_id}/spine/confirm',
         json={'expected_revision': 1},
@@ -206,13 +210,17 @@ def test_native_browser_frames_create_a_video_workspace_revision(client, app, mo
     image = BytesIO()
     Image.new('RGB', (8, 8), 'white').save(image, format='PNG')
     image.seek(0)
+    image_bytes = image.getvalue()
 
     response = client.post(
         f'/api/content-projects/{project_id}/workspaces/video/browser-frames',
         data={
-            'page_ids': f'["{page_id}"]',
-            'frame_counts': '[1]',
-            'frames': (image, 'frame.png'),
+            'page_ids': json.dumps(page_ids),
+            'frame_counts': json.dumps([1] * len(page_ids)),
+            'frames': [
+                (BytesIO(image_bytes), f'frame-{index}.png')
+                for index in range(len(page_ids))
+            ],
         },
         content_type='multipart/form-data',
     )
@@ -225,8 +233,8 @@ def test_native_browser_frames_create_a_video_workspace_revision(client, app, mo
         handoff = video.current_version and __import__('json').loads(
             video.current_version.settings_json,
         )['browser_frame_handoff']
-        assert handoff['frames'][0]['page_id'] == page_id
-        assert len(handoff['frames'][0]['sha256'][0]) == 64
+        assert handoff['frames'][-1]['page_id'] == page_id
+        assert len(handoff['frames'][-1]['sha256'][0]) == 64
 
 
 def test_video_workspace_export_freezes_current_workspace_version(client, app, monkeypatch):
@@ -527,11 +535,12 @@ def test_content_project_summary_and_last_entry_are_available_from_project_list(
         json={'entry': 'spine'},
     )
     assert updated.status_code == 200
-    assert updated.get_json()['data']['last_workspace'] == 'spine'
+    # 旧版 'spine' 入口被归一化为已初始化的目标工作区，而不是写回旧页面
+    assert updated.get_json()['data']['last_workspace'] == 'video'
 
     projects = client.get('/api/projects?limit=8&offset=0').get_json()['data']['projects']
     project = next(item for item in projects if item['project_id'] == project_id)
-    assert project['last_workspace'] == 'spine'
+    assert project['last_workspace'] == 'video'
     assert {item['kind'] for item in project['workspaces']} == {'ppt', 'video', 'podcast'}
     assert next(item for item in project['workspaces'] if item['kind'] == 'video')['state'] == 'draft'
 
@@ -623,3 +632,155 @@ def test_paused_workspace_task_resumes_with_frozen_input(client, monkeypatch):
 
     assert resumed.status_code == 200
     assert submitted == ['冻结输入']
+
+
+def test_content_spine_optimization_returns_editable_suggestion_without_persisting(
+    client, app, monkeypatch,
+):
+    from types import SimpleNamespace
+
+    created = client.post('/api/projects', json={
+        'creation_type': 'idea',
+        'idea_prompt': '季度复盘',
+    }).get_json()['data']
+    project_id = created['project_id']
+    response_text = '{"topic":"季度复盘与下一步行动","audience":"管理层","goal":"形成决策共识","rationale":"补齐行动目标"}'
+    provider = SimpleNamespace(generate_text=lambda prompt, thinking_budget=0: response_text)
+    monkeypatch.setattr(
+        'controllers.content_workspace_controller.get_ai_service',
+        lambda: SimpleNamespace(text_provider=provider),
+    )
+
+    response = client.post(
+        f'/api/content-projects/{project_id}/spine/optimize',
+        json={'topic': '季度复盘', 'audience': '管理层', 'goal': ''},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()['data']['topic'] == '季度复盘与下一步行动'
+    assert response.get_json()['data']['rationale'] == '补齐行动目标'
+    with app.app_context():
+        from models import ContentSpine
+        spine = ContentSpine.query.filter_by(project_id=project_id).one()
+        assert spine.revision == 1
+
+
+def test_content_spine_optimization_requires_positioning_input(client):
+    created = client.post('/api/projects', json={
+        'creation_type': 'idea',
+        'idea_prompt': '',
+    }).get_json()['data']
+
+    response = client.post(
+        f"/api/content-projects/{created['project_id']}/spine/optimize",
+        json={'topic': '', 'audience': '', 'goal': ''},
+    )
+
+    assert response.status_code == 400
+
+
+def test_content_spine_optimization_maps_upstream_rate_limit(client, monkeypatch):
+    from types import SimpleNamespace
+
+    created = client.post('/api/projects', json={
+        'creation_type': 'idea',
+        'idea_prompt': '限流提示',
+    }).get_json()['data']
+
+    error = RuntimeError('429 Client Error')
+    error.response = SimpleNamespace(status_code=429)
+
+    def raise_rate_limit(*_args, **_kwargs):
+        raise error
+
+    provider = SimpleNamespace(generate_text=raise_rate_limit)
+    monkeypatch.setattr(
+        'controllers.content_workspace_controller.get_ai_service',
+        lambda: SimpleNamespace(text_provider=provider),
+    )
+
+    response = client.post(
+        f"/api/content-projects/{created['project_id']}/spine/optimize",
+        json={'topic': '限流提示'},
+    )
+
+    assert response.status_code == 429
+    assert response.get_json()['error']['code'] == 'RATE_LIMIT_EXCEEDED'
+    assert '稍后重试' in response.get_json()['error']['message']
+
+
+def test_project_brief_optimize_is_stateless_and_returns_suggestions(client, monkeypatch):
+    from models import Project
+    from types import SimpleNamespace
+
+    response_text = '{"topic":"季度复盘与下一步行动","audience":"管理层","goal":"形成决策共识","rationale":"补齐行动目标"}'
+    provider = SimpleNamespace(generate_text=lambda prompt, thinking_budget=0: response_text)
+    monkeypatch.setattr(
+        'controllers.project_controller.get_ai_service',
+        lambda: SimpleNamespace(text_provider=provider),
+    )
+
+    response = client.post('/api/projects/brief/optimize', json={
+        'topic': '季度复盘', 'audience': '管理层', 'goal': '',
+    })
+
+    assert response.status_code == 200
+    data = response.get_json()['data']
+    assert data['topic'] == '季度复盘与下一步行动'
+    assert data['rationale'] == '补齐行动目标'
+    # 无状态：不创建任何项目
+    assert Project.query.count() == 0
+
+    empty = client.post('/api/projects/brief/optimize', json={
+        'topic': '', 'audience': '', 'goal': '',
+    })
+    assert empty.status_code == 400
+
+
+def test_project_brief_optimize_maps_upstream_rate_limit(client, monkeypatch):
+    from types import SimpleNamespace
+
+    error = RuntimeError('429 Client Error')
+    error.response = SimpleNamespace(status_code=429)
+
+    def raise_rate_limit(*_args, **_kwargs):
+        raise error
+
+    provider = SimpleNamespace(generate_text=raise_rate_limit)
+    monkeypatch.setattr(
+        'controllers.project_controller.get_ai_service',
+        lambda: SimpleNamespace(text_provider=provider),
+    )
+
+    response = client.post('/api/projects/brief/optimize', json={
+        'topic': '限流提示',
+    })
+
+    assert response.status_code == 429
+    assert response.get_json()['error']['code'] == 'RATE_LIMIT_EXCEEDED'
+    assert '稍后重试' in response.get_json()['error']['message']
+
+
+def test_get_content_project_normalizes_legacy_spine_last_workspace(client, app, monkeypatch):
+    monkeypatch.setattr(
+        'controllers.content_workspace_controller.submit_workspace_task',
+        _run_workspace_task_now,
+    )
+    created = client.post('/api/projects', json={
+        'creation_type': 'idea',
+        'idea_prompt': '旧值兼容',
+        'target_workspace': 'podcast',
+    }).get_json()['data']
+    project_id = created['project_id']
+    with app.app_context():
+        from models import Project, db
+        project = db.session.get(Project, project_id)
+        project.last_workspace = 'spine'
+        db.session.commit()
+
+    summary = client.get(f'/api/content-projects/{project_id}')
+    assert summary.status_code == 200
+    data = summary.get_json()['data']
+    # spine 解析为已初始化的目标工作区
+    assert data['last_workspace'] == 'podcast'
+    assert data['brief']['topic'] == '旧值兼容'

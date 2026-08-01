@@ -638,6 +638,10 @@ export const Settings: React.FC<SettingsProps> = ({ embedded = false }) => {
   const [fishVoices, setFishVoices] = useState<FishAudioVoice[]>([]);
   const [fishVoiceScope, setFishVoiceScope] = useState<'public' | 'private'>('public');
   const [fishVoiceAssets, setFishVoiceAssets] = useState<FishAudioVoiceAsset[]>([]);
+  const [fishVoiceSearch, setFishVoiceSearch] = useState('');
+  const [fishVoicePage, setFishVoicePage] = useState(1);
+  const [fishPreviewing, setFishPreviewing] = useState<string | null>(null);
+  const [fishPreviewUrl, setFishPreviewUrl] = useState<string | null>(null);
   const [fishVoicesLoading, setFishVoicesLoading] = useState(false);
   const [fishVerifyLoading, setFishVerifyLoading] = useState(false);
   const [fishCloneOpen, setFishCloneOpen] = useState(false);
@@ -1815,13 +1819,36 @@ export const Settings: React.FC<SettingsProps> = ({ embedded = false }) => {
     );
   }
 
+  const fishPageSize = 6;
+  const filteredFishVoices = fishVoices.filter((voice) => {
+    const query = fishVoiceSearch.trim().toLowerCase();
+    return !query || `${voice.title} ${voice.author || ''} ${(voice.languages || []).join(' ')}`.toLowerCase().includes(query);
+  });
+  const fishPageCount = Math.max(1, Math.ceil(filteredFishVoices.length / fishPageSize));
+  const visibleFishVoices = filteredFishVoices.slice((fishVoicePage - 1) * fishPageSize, fishVoicePage * fishPageSize);
+  const previewFishVoice = async (voice: FishAudioVoice) => {
+    setFishPreviewing(voice.id);
+    try {
+      if (fishPreviewUrl) URL.revokeObjectURL(fishPreviewUrl);
+      const blob = await api.previewFishAudioVoice(voice.id);
+      const url = URL.createObjectURL(blob);
+      setFishPreviewUrl(url);
+      const audio = new Audio(url);
+      audio.onended = () => setFishPreviewing(null);
+      await audio.play();
+    } catch (error) {
+      setFishPreviewing(null);
+      show({ message: apiErrorMessage(error, '试听生成失败，请稍后重试'), type: 'error' });
+    }
+  };
+
   const settingsNavigation = (
     <nav
       aria-label={t('nav.settings')}
       data-layout={embedded ? 'embedded' : 'sidebar'}
       className={embedded
         ? 'sticky top-0 z-10 grid grid-cols-2 gap-1 border-b border-[var(--app-border)] bg-[var(--app-surface)] py-3 shadow-[var(--app-shadow-card)] sm:grid-cols-6'
-        : 'sticky top-16 z-10 grid grid-cols-2 gap-1 border-b border-[var(--app-border)] bg-[var(--app-surface)] px-5 py-3 shadow-[var(--app-shadow-card)] sm:grid-cols-3 md:px-8 lg:top-0 lg:grid-cols-1 lg:content-start lg:gap-1 lg:border-b-0 lg:border-r lg:px-3 lg:py-4 lg:shadow-none'}
+        : 'sticky top-0 z-10 grid grid-cols-2 gap-1 border-b border-[var(--app-border)] bg-[var(--app-surface)] px-5 py-3 shadow-[var(--app-shadow-card)] sm:grid-cols-3 md:grid-cols-6 md:px-8'}
     >
       {[
         { id: 'settings-provider', label: t('settings.sections.apiConfig'), icon: Key },
@@ -1958,9 +1985,9 @@ export const Settings: React.FC<SettingsProps> = ({ embedded = false }) => {
           </div>
         </div>
       </Modal>
-      <div className={embedded ? 'min-h-0' : 'min-h-0 lg:grid lg:grid-cols-[176px_minmax(0,1fr)] lg:items-start'}>
+      <div className="min-h-0">
         {settingsNavigation}
-        <div className={embedded ? 'min-w-0 space-y-0' : 'mx-auto min-w-0 w-full max-w-[1040px] space-y-0 px-5 md:px-8'}>
+        <div className={embedded ? 'min-w-0 space-y-0' : 'mx-auto min-w-0 w-full max-w-[1200px] space-y-0 px-5 md:px-8'}>
 
         <section id="settings-openai" data-testid="openai-primary-section" className="scroll-mt-32 border-b border-[var(--app-border)] py-7">
           <h2 className="mb-1 flex items-center text-xl font-semibold text-[var(--app-text)]">
@@ -2301,14 +2328,14 @@ export const Settings: React.FC<SettingsProps> = ({ embedded = false }) => {
                   <Button
                     variant={fishVoiceScope === 'public' ? 'primary' : 'ghost'}
                     size="sm"
-                    onClick={() => setFishVoiceScope('public')}
+                    onClick={() => { setFishVoiceScope('public'); setFishVoicePage(1); }}
                   >
                     {t('settings.fishAudio.publicVoices')}
                   </Button>
                   <Button
                     variant={fishVoiceScope === 'private' ? 'primary' : 'ghost'}
                     size="sm"
-                    onClick={() => setFishVoiceScope('private')}
+                    onClick={() => { setFishVoiceScope('private'); setFishVoicePage(1); }}
                   >
                     {t('settings.fishAudio.privateVoices')}
                   </Button>
@@ -2338,11 +2365,13 @@ export const Settings: React.FC<SettingsProps> = ({ embedded = false }) => {
             </div>
 
             <div className="mt-3" aria-live="polite">
+              <input aria-label="搜索 Fish 声音" value={fishVoiceSearch} onChange={(event) => { setFishVoiceSearch(event.target.value); setFishVoicePage(1); }} placeholder="搜索声音名称、作者或语言" className="mb-3 h-9 w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 text-sm" />
               {fishVoicesLoading && fishVoices.length === 0 ? (
                 <Loading message={t('common.loading')} />
               ) : fishVoices.length > 0 ? (
-                <div className="divide-y divide-[var(--app-border)] border-y border-[var(--app-border)]">
-                  {fishVoices.map((voice) => (
+                <>
+                <div className="h-[320px] overflow-y-auto divide-y divide-[var(--app-border)] border-y border-[var(--app-border)]">
+                  {visibleFishVoices.map((voice) => (
                     <div key={voice.id} className="flex min-h-14 items-center justify-between gap-3 py-3">
                       <div className="min-w-0">
                         <div className="truncate text-sm font-medium text-[var(--app-text)]">{voice.title}</div>
@@ -2354,6 +2383,7 @@ export const Settings: React.FC<SettingsProps> = ({ embedded = false }) => {
                         </div>
                       </div>
                       <div className="flex items-center gap-1">
+                        <Button variant="ghost" size="sm" loading={fishPreviewing === voice.id} onClick={() => void previewFishVoice(voice)}>试听</Button>
                         <Button variant="ghost" size="sm" disabled={fishVoiceAssets.some((asset) => asset.voice === voice.id)} onClick={() => addFishVoiceAsset(voice)}>
                           {fishVoiceAssets.some((asset) => asset.voice === voice.id) ? '已保存角色' : '保存为角色'}
                         </Button>
@@ -2371,6 +2401,8 @@ export const Settings: React.FC<SettingsProps> = ({ embedded = false }) => {
                     </div>
                   ))}
                 </div>
+                <div className="mt-3 flex items-center justify-between text-xs text-[var(--app-text-tertiary)]"><span>第 {fishVoicePage} / {fishPageCount} 页 · 共 {filteredFishVoices.length} 个</span><div className="flex gap-2"><Button size="sm" variant="secondary" disabled={fishVoicePage <= 1} onClick={() => setFishVoicePage((page) => page - 1)}>上一页</Button><Button size="sm" variant="secondary" disabled={fishVoicePage >= fishPageCount} onClick={() => setFishVoicePage((page) => page + 1)}>下一页</Button></div></div>
+                </>
               ) : (
                 <p className="py-5 text-sm text-[var(--app-text-tertiary)]">
                   {(settings?.fish_audio_api_key_length || 0) > 0
@@ -2391,10 +2423,9 @@ export const Settings: React.FC<SettingsProps> = ({ embedded = false }) => {
                       <div className="grid min-w-0 gap-2 sm:grid-cols-2">
                         <input aria-label={`角色名称 ${asset.id}`} value={asset.name} onChange={(event) => updateFishVoiceAsset(asset.id, { name: event.target.value })} placeholder="角色名称" className="h-9 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-sm" />
                         <input aria-label={`适用场景 ${asset.id}`} value={asset.use_case} onChange={(event) => updateFishVoiceAsset(asset.id, { use_case: event.target.value })} placeholder="适用场景" className="h-9 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-sm" />
-                        <input aria-label={`角色头像 ${asset.id}`} value={asset.avatar} onChange={(event) => updateFishVoiceAsset(asset.id, { avatar: event.target.value })} placeholder="头像 URL 或表情" className="h-9 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-sm" />
                         <div className="grid grid-cols-2 gap-2">
                           <select aria-label={`默认语速 ${asset.id}`} value={asset.rate} onChange={(event) => updateFishVoiceAsset(asset.id, { rate: event.target.value })} className="h-9 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-sm"><option value="-10%">慢</option><option value="+0%">正常</option><option value="+10%">快</option></select>
-                          <select aria-label={`默认语气 ${asset.id}`} value={asset.default_emotion} onChange={(event) => updateFishVoiceAsset(asset.id, { default_emotion: event.target.value as FishAudioVoiceAsset['default_emotion'] })} className="h-9 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-sm">{['curious', 'emphasis', 'confident', 'calm', 'warm', 'excited'].map((emotion) => <option key={emotion} value={emotion}>{emotion}</option>)}</select>
+                          <select aria-label={`默认情绪 ${asset.id}`} title="生成旁白时默认采用的表达情绪，不改变声音本身" value={asset.default_emotion} onChange={(event) => updateFishVoiceAsset(asset.id, { default_emotion: event.target.value as FishAudioVoiceAsset['default_emotion'] })} className="h-9 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-sm">{[['curious', '好奇'], ['emphasis', '强调'], ['confident', '自信'], ['calm', '平静'], ['warm', '温暖'], ['excited', '兴奋']].map(([emotion, label]) => <option key={emotion} value={emotion}>{label}</option>)}</select>
                         </div>
                       </div>
                       <div className="flex items-start gap-1">
@@ -2640,7 +2671,7 @@ export const Settings: React.FC<SettingsProps> = ({ embedded = false }) => {
 };
 
 export const SettingsPage: React.FC<{ showNavigation?: boolean }> = ({ showNavigation = true }) => (
-  <div className="flex min-h-screen flex-col bg-[var(--app-bg)] text-[var(--app-text)] lg:pl-[216px]">
+  <div className="flex min-h-screen flex-col bg-[var(--app-bg)] text-[var(--app-text)] lg:pl-[var(--project-nav-offset,216px)]">
     {showNavigation && <AppTopNav />}
     <main className="mx-auto w-full max-w-[1280px] flex-1 bg-[var(--app-surface)] shadow-[var(--app-shadow-card)]">
       <Settings />

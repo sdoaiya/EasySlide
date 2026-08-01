@@ -68,10 +68,12 @@ export const uploadTemplate = async (
 /**
  * 获取项目列表（历史项目）
  */
-export const listProjects = async (limit?: number, offset?: number): Promise<ApiResponse<{ projects: Project[]; total: number; stats?: ProjectDashboardStats }>> => {
+export const listProjects = async (limit?: number, offset?: number, status?: 'completed' | 'generating' | 'in_progress', workspace?: 'ppt' | 'video' | 'podcast'): Promise<ApiResponse<{ projects: Project[]; total: number; stats?: ProjectDashboardStats }>> => {
   const params = new URLSearchParams();
   if (limit !== undefined) params.append('limit', limit.toString());
   if (offset !== undefined) params.append('offset', offset.toString());
+  if (status) params.append('status', status);
+  if (workspace) params.append('workspace', workspace);
 
   const queryString = params.toString();
   const url = `/api/projects${queryString ? `?${queryString}` : ''}`;
@@ -596,6 +598,47 @@ export const confirmContentSpine = async (
   return response.data;
 };
 
+export const updateContentSpine = async (
+  projectId: string,
+  document: Record<string, unknown>,
+  expectedRevision: number,
+): Promise<ApiResponse<ContentSpine>> => {
+  const response = await apiClient.put<ApiResponse<ContentSpine>>(
+    `/api/content-projects/${projectId}/spine`,
+    { document, expected_revision: expectedRevision },
+  );
+  return response.data;
+};
+
+export interface ContentSpineOptimization {
+  topic: string;
+  audience: string;
+  goal: string;
+  rationale?: string;
+}
+
+export const optimizeContentSpine = async (
+  projectId: string,
+  context: Pick<ContentSpineOptimization, 'topic' | 'audience' | 'goal'>,
+): Promise<ApiResponse<ContentSpineOptimization>> => {
+  const response = await apiClient.post<ApiResponse<ContentSpineOptimization>>(
+    `/api/content-projects/${projectId}/spine/optimize`,
+    context,
+  );
+  return response.data;
+};
+
+/** 创建页使用的无状态简报优化：只返回建议，不落库、不创建工作区。 */
+export const optimizeProjectBrief = async (
+  context: Pick<ContentSpineOptimization, 'topic' | 'audience' | 'goal'>,
+): Promise<ApiResponse<ContentSpineOptimization>> => {
+  const response = await apiClient.post<ApiResponse<ContentSpineOptimization>>(
+    '/api/projects/brief/optimize',
+    context,
+  );
+  return response.data;
+};
+
 export const initializeContentWorkspace = async (
   projectId: string,
   kind: ContentWorkspaceKind,
@@ -613,17 +656,6 @@ export const setLastProjectEntry = async (
   entry: ContentProjectEntry,
 ): Promise<ApiResponse<{ project_id: string; last_workspace: ContentProjectEntry }>> => {
   const response = await apiClient.put(`/api/content-projects/${projectId}/last-workspace`, { entry });
-  return response.data;
-};
-
-export const initializeVideoWorkspaceFromPpt = async (
-  projectId: string,
-  settings: Record<string, unknown> = {},
-): Promise<ApiResponse<ProjectWorkspace>> => {
-  const response = await apiClient.post(
-    `/api/content-projects/${projectId}/workspaces/video/initialize-from-ppt`,
-    { settings },
-  );
   return response.data;
 };
 
@@ -2114,6 +2146,11 @@ export const getFishAudioVoices = async (params?: { scope?: 'private' | 'public'
       page_size: params?.pageSize,
     },
   });
+  return response.data;
+};
+
+export const previewFishAudioVoice = async (voiceId: string, text?: string): Promise<Blob> => {
+  const response = await apiClient.post(`/api/settings/fish-audio/voices/${encodeURIComponent(voiceId)}/preview`, { text }, { responseType: 'blob' });
   return response.data;
 };
 

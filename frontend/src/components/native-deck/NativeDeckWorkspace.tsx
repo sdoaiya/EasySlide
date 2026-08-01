@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MutableRefObject } from 'react'
-import { ArrowLeft, Download, FileText, Home, ListTodo, Maximize2, MonitorPlay, Plus, Redo2, RefreshCw, Settings2, Sparkles, Trash2, Undo2, X, ZoomIn, ZoomOut } from 'lucide-react'
+import { Download, FileText, ListTodo, Maximize2, MonitorPlay, Plus, Redo2, RefreshCw, Settings2, Sparkles, Trash2, Undo2, X, ZoomIn, ZoomOut } from 'lucide-react'
 import type { NativeSlideSpec } from '@/native-deck/types'
 import type { FishAudioVoice, NarrationPreferences, NarrationSpeaker, ProjectNarrationSummary, PronunciationEntry } from '@/types'
 import { useNativeDeckStore } from '@/store/useNativeDeckStore'
@@ -94,7 +94,7 @@ function validate(slide: NativeSlideSpec, contract: NativeLayoutContract | undef
   return errors
 }
 
-export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutContracts, pageGenerationAction, pageGenerationStatus, singlePageGenerationAction, autoSaveDelay = 800, onBack, onHome }: NativeDeckWorkspaceProps) {
+export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutContracts, pageGenerationAction, pageGenerationStatus, singlePageGenerationAction, autoSaveDelay = 800 }: NativeDeckWorkspaceProps) {
   const { slides, selectedPageId, dirtyPageIds, savePage } = useNativeDeckStore()
   const { currentProject, syncProject } = useProjectStore()
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
@@ -701,8 +701,6 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
       toolbar={(
         <div className="flex min-w-0 items-center justify-between gap-3">
           <div className="flex min-w-0 flex-1 items-center gap-3">
-            {onHome && <button type="button" onClick={onHome} className="inline-flex h-10 items-center gap-2 rounded-lg px-2 text-sm font-semibold text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]"><Home size={18} aria-hidden="true" />首页</button>}
-            {onBack && <button type="button" onClick={onBack} className="inline-flex h-10 items-center gap-2 rounded-lg px-2 text-sm font-semibold text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]"><ArrowLeft size={18} aria-hidden="true" />返回</button>}
             <div className="hidden min-w-0 flex-col leading-tight md:flex">
               <div className="flex min-w-0 items-center gap-2">
                 <strong className="truncate text-lg">预览</strong>

@@ -150,15 +150,15 @@ describe('Settings Fish Audio', () => {
     endpointMocks.updateSettings.mockImplementation(async (payload) => ({ data: { ...settings, ...payload } }));
     render(<MemoryRouter><Settings embedded /></MemoryRouter>);
 
-    fireEvent.change(await screen.findByLabelText('角色头像 asset-host'), { target: { value: '🎙️' } });
+    await screen.findByText('品牌主讲人');
     fireEvent.change(screen.getByLabelText('默认语速 asset-host'), { target: { value: '+10%' } });
-    fireEvent.change(screen.getByLabelText('默认语气 asset-host'), { target: { value: 'confident' } });
+    fireEvent.change(screen.getByLabelText('默认情绪 asset-host'), { target: { value: 'confident' } });
     const assetSection = screen.getByText('人物声线资产库').parentElement!;
     fireEvent.click(within(assetSection).getByRole('button', { name: '保存' }));
 
     await waitFor(() => expect(endpointMocks.updateSettings).toHaveBeenCalledWith({
       fish_audio_voice_assets: [expect.objectContaining({
-        id: 'asset-host', avatar: '🎙️', rate: '+10%', default_emotion: 'confident',
+        id: 'asset-host', rate: '+10%', default_emotion: 'confident',
       })],
     }));
   });

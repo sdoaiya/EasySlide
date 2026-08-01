@@ -112,7 +112,7 @@ export const SlideCard: React.FC<SlideCardProps> = memo(function SlideCard({
         ) : (
           <div className="flex h-full w-full items-center justify-center text-[var(--app-text-tertiary)]">
             <div className="text-center">
-              <img src={getStaticAssetUrl('/logo-nav.png')} alt="EasySlide Logo" className="h-8 w-auto mx-auto mb-1 opacity-70" />
+              <img src={getStaticAssetUrl('/logo-nav-transparent.png')} alt="EasySlide Logo" className="h-8 w-auto mx-auto mb-1 opacity-70" />
               <div className="text-xs">{t('slideCard.notGenerated')}</div>
             </div>
           </div>

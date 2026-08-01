@@ -17,6 +17,8 @@ def _add_20_page_project(app, *, title, content_project=False):
             from backend.tests.content_project_factory import add_content_project
 
             add_content_project(project)
+            # 工作区初始化会按内容主线预填 1 页，基准要求恰好 20 页，先移除预填页
+            Page.query.filter_by(project_id=project.id).delete(synchronize_session=False)
         else:
             db.session.add(project)
             db.session.flush()
@@ -33,7 +35,7 @@ def _add_20_page_project(app, *, title, content_project=False):
         return project.id
 
 
-def _measure_project_read_p95_ms(client, project_id, *, samples=30):
+def _measure_project_read_p95_ms(client, project_id, *, samples=100):
     for _ in range(5):
         assert client.get(f"/api/projects/{project_id}").status_code == 200
 

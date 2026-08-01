@@ -180,6 +180,11 @@ def test_stable_diff_items_apply_to_every_content_target(
 
     with app.app_context():
         project = _project_with_workspaces()
+        if target_kind == 'ppt':
+            # PPT 工作区初始化会按内容主线预填页面，page_refs 不再恒为空列表
+            ppt = next(item for item in project.workspaces if item.kind == 'ppt')
+            document = json.loads(ppt.document_json)
+            before = document.get('page_refs', [])
         proposal = create_sync_proposal(
             project,
             source_kind=source_kind,

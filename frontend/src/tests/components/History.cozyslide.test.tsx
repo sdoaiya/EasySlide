@@ -57,7 +57,7 @@ describe('History EasySlide clone', () => {
     expect(container.firstElementChild?.className).toContain('bg-[var(--app-background)]');
     expect(container.firstElementChild?.className).not.toContain('banana');
     expect(await screen.findByRole('heading', { name: '作品工作台' })).toBeInTheDocument();
-    expect(screen.getByText(/内容主线、PPT、视频与播客/)).toBeInTheDocument();
+    expect(screen.getByText(/PPT、视频与播客/)).toBeInTheDocument();
     expect(screen.getByRole('searchbox', { name: '搜索项目或灵感...' })).toBeInTheDocument();
     expect(screen.queryByText(/从想法到成稿/)).not.toBeInTheDocument();
     expect(await screen.findByText('暂无项目')).toBeInTheDocument();
@@ -133,14 +133,15 @@ describe('History EasySlide clone', () => {
     expect(screen.getByText('支持项目编辑、重命名、删除及批量管理。')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /刷新/ })).toBeInTheDocument();
     expect(screen.getByText((content) => content.includes('16') && content.includes('1') && content.includes('4'))).toBeInTheDocument();
-    expect(screen.getByText('PPT')).toBeInTheDocument();
+    // PPT 同时出现在类型筛选按钮与项目卡片徽标中，需断言存在而非唯一
+    expect(screen.getAllByText('PPT').length).toBeGreaterThan(0);
     expect(screen.getByTestId('project-grid')).toHaveClass('xl:grid-cols-4');
     const inspirationWall = screen.getByRole('heading', { name: '灵感墙' }).closest('section');
     expect(inspirationWall).not.toBeNull();
     expect(within(inspirationWall!).getAllByRole('img')).toHaveLength(3);
     expect(within(inspirationWall!).getByRole('img', { name: '共赢出海 - 为企业搭建出海高速路 项目预览' })).toHaveAttribute('src', '/files/p1/page.png');
     expect(within(inspirationWall!).getByRole('img', { name: '精选模板 2' })).toBeInTheDocument();
-    expect(endpointMocks.listProjects).toHaveBeenCalledWith(4, 0);
+    expect(endpointMocks.listProjects).toHaveBeenCalledWith(4, 0, undefined, undefined);
     expect(screen.getByTestId('project-grid').innerHTML).not.toContain('shadow-sm');
   });
 
@@ -153,7 +154,7 @@ describe('History EasySlide clone', () => {
       </MemoryRouter>
     );
 
-    await waitFor(() => expect(endpointMocks.listProjects).toHaveBeenCalledWith(4, 0));
+    await waitFor(() => expect(endpointMocks.listProjects).toHaveBeenCalledWith(4, 0, undefined, undefined));
   });
 
   it('keeps the original list layout on /history', async () => {

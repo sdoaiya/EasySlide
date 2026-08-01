@@ -43,7 +43,7 @@ export default defineConfig(({ mode }) => {
   // 端口：优先读 env，否则按 worktree 目录名自动计算
   const backendPort = env.BACKEND_PORT || String(computeWorktreePort(5011))
   const frontendPort = Number(env.FRONTEND_PORT) || computeWorktreePort(3011)
-  const backendUrl = `http://localhost:${backendPort}`
+  const backendUrl = `http://127.0.0.1:${backendPort}`
   const gitTag = env.VITE_APP_VERSION_TAG || gitValue('git describe --tags --exact-match HEAD')
   const gitSha = env.VITE_APP_COMMIT_SHA || gitValue('git rev-parse HEAD')
   const gitShortSha = env.VITE_APP_COMMIT_SHORT_SHA || gitSha.slice(0, 7)

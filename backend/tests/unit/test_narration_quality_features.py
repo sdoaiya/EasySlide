@@ -176,6 +176,8 @@ def test_fish_preflight_returns_usage_estimate(client):
         generated_image_path='slide.png',
     )
     _add_content_project(project)
+    # PPT 工作区初始化会按内容主线预填页面；本用例构造自己的页面，先移除预填页
+    Page.query.filter_by(project_id=project.id).delete(synchronize_session=False)
     db.session.add(page)
     settings = Settings.get_settings()
     settings.fish_audio_api_key = 'fish-secret'

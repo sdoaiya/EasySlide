@@ -272,7 +272,6 @@ const previewI18n = {
   }
 };
 import {
-  Home,
   ArrowLeft,
   Download,
   RefreshCw,
@@ -563,7 +562,6 @@ export const SlidePreview: React.FC = () => {
   const { i18n } = useTranslation();
   const t = useT(previewI18n);
   const { projectId } = useParams<{ projectId: string }>();
-  const fromHistory = (location.state as any)?.from === 'history';
   const {
     currentProject,
     syncProject,
@@ -2149,8 +2147,6 @@ export const SlidePreview: React.FC = () => {
         slides={nativeSlides}
         totalPages={currentProject.pages.length}
         generationTaskId={generationTaskId || undefined}
-        onHome={() => navigate('/home')}
-        onBack={() => fromHistory ? navigate('/history') : navigate(`/project/${nativeProjectId}/ppt/detail`)}
       />
     );
   }
@@ -2467,30 +2463,6 @@ export const SlidePreview: React.FC = () => {
       {/* 顶栏 */}
       <WorkspaceToolbar className="justify-between px-3 md:px-4">
         <div className="flex items-center gap-2 md:gap-4 min-w-0 flex-1">
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<Home size={16} className="md:w-[18px] md:h-[18px]" />}
-            onClick={() => navigate('/home')}
-            className="hidden sm:inline-flex flex-shrink-0"
-            >
-              <span className="hidden md:inline">{t('nav.home')}</span>
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              icon={<ArrowLeft size={16} className="md:w-[18px] md:h-[18px]" />}
-              onClick={() => {
-                if (fromHistory) {
-                  navigate('/history');
-                } else {
-                  navigate(`/project/${projectId}/ppt/detail`);
-                }
-              }}
-              className="flex-shrink-0"
-            >
-              <span className="hidden sm:inline">{t('common.back')}</span>
-            </Button>
             <div className="hidden md:flex flex-col leading-tight min-w-0">
               <div className="flex items-center gap-2 min-w-0">
                 <span className="text-sm md:text-lg font-semibold truncate">{t('preview.title')}</span>
@@ -3688,7 +3660,7 @@ export const SlidePreview: React.FC = () => {
                     ) : (
                       <div className="w-full h-full flex items-center justify-center bg-[var(--app-surface-muted)]">
                         <div className="text-center">
-                          <img src={getStaticAssetUrl('/logo-nav.png')} alt="EasySlide Logo" className="h-16 w-auto mx-auto mb-4 opacity-70" />
+                          <img src={getStaticAssetUrl('/logo-nav-transparent.png')} alt="EasySlide Logo" className="h-16 w-auto mx-auto mb-4 opacity-70" />
                           <p className="text-[var(--app-text-tertiary)] mb-4">
                             {selectedPage?.status === 'QUEUED'
                               ? t('preview.queued')
@@ -3731,10 +3703,9 @@ export const SlidePreview: React.FC = () => {
                       icon={<ChevronLeft size={16} className="md:w-[18px] md:h-[18px]" />}
                       onClick={() => setSelectedIndex(Math.max(0, selectedIndex - 1))}
                       disabled={selectedIndex === 0}
-                      className="text-xs md:text-sm"
+                      className="whitespace-nowrap text-xs md:text-sm"
                     >
-                      <span className="hidden sm:inline">{t('preview.prevPage')}</span>
-                      <span className="sm:hidden">{t('preview.prevPage')}</span>
+                      <span>{t('preview.prevPage')}</span>
                     </Button>
                     <span className="px-2 md:px-4 text-xs md:text-sm text-[var(--app-text-tertiary)] whitespace-nowrap">
                       {selectedIndex + 1} / {currentProject.pages.length}
@@ -3749,10 +3720,9 @@ export const SlidePreview: React.FC = () => {
                         )
                       }
                       disabled={selectedIndex === currentProject.pages.length - 1}
-                      className="text-xs md:text-sm"
+                      className="whitespace-nowrap text-xs md:text-sm"
                     >
-                      <span className="hidden sm:inline">{t('preview.nextPage')}</span>
-                      <span className="sm:hidden">{t('preview.nextPage')}</span>
+                      <span>{t('preview.nextPage')}</span>
                     </Button>
                   </div>
 
@@ -3794,7 +3764,7 @@ export const SlidePreview: React.FC = () => {
                           onClick={() => setShowVersionMenu(!showVersionMenu)}
                           className="text-xs md:text-sm"
                         >
-                          <span className="hidden md:inline">
+                          <span className="whitespace-nowrap">
                             {currentImageVersion?.scene_status === 'ready'
                               ? t('preview.sceneReady')
                               : currentImageVersion?.scene_status === 'building'
@@ -3805,7 +3775,6 @@ export const SlidePreview: React.FC = () => {
                                     ? t('preview.sceneFailed')
                                     : `${t('preview.historyVersions')} (${imageVersions.length})`}
                           </span>
-                          <span className="md:hidden">{t('preview.versions')}</span>
                         </Button>
                         {showVersionMenu && (
                           <div className="absolute right-0 bottom-full mb-2 w-56 md:w-64 bg-[var(--app-surface)] rounded-[var(--app-radius-card)] shadow-[var(--app-shadow-floating)] border border-[var(--app-border)] py-2 z-20 max-h-96 overflow-y-auto">

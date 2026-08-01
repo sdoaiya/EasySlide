@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 
 from flask import Blueprint, current_app, request
 from werkzeug.utils import secure_filename
@@ -19,9 +20,13 @@ from services.content_sync_service import (
 from services.content_spine_service import (
     SpineRevisionConflict,
     confirm_spine,
+    get_project_brief,
+    optimize_positioning,
+    resolve_initial_workspace,
     revise_spine,
     spine_to_dict,
 )
+from services.ai_service_manager import get_ai_service
 from services.project_workspace_service import (
     SpineNotConfirmed,
     WorkspaceRevisionConflict,
@@ -41,7 +46,7 @@ from services.task_manager import (
 )
 from services.video_workspace_service import propose_video_to_spine
 from services.podcast_service import propose_podcast_to_spine
-from utils import bad_request, error_response, not_found, success_response
+from utils import bad_request, error_response, not_found, rate_limit_error, success_response
 
 
 content_workspace_bp = Blueprint(
@@ -88,7 +93,8 @@ def get_content_project(project_id):
         'project_id': project.id,
         'project_title': project.project_title,
         'lifecycle_state': project.status,
-        'last_workspace': project.last_workspace,
+        'last_workspace': resolve_initial_workspace(project, project.last_workspace),
+        'brief': get_project_brief(project),
         'project_settings': {
             'pronunciation_lexicon': project.get_pronunciation_lexicon(),
             'narration_preferences': project.get_narration_preferences(),
@@ -111,11 +117,14 @@ def set_last_workspace(project_id):
         return not_found('Content project')
     data = request.get_json() or {}
     entry = data.get('entry')
+    # Legacy 'spine' values are accepted for old clients but normalized to a
+    # real target workspace so navigation never depends on the retired page.
     if entry not in {'spine', 'ppt', 'video', 'podcast'}:
         return bad_request('entry must be spine, ppt, video, or podcast')
-    project.last_workspace = entry
+    resolved = resolve_initial_workspace(project, entry)
+    project.last_workspace = resolved
     db.session.commit()
-    return success_response({'project_id': project.id, 'last_workspace': entry})
+    return success_response({'project_id': project.id, 'last_workspace': resolved})
 
 
 @content_workspace_bp.route('/<project_id>/spine', methods=['PUT'])
@@ -140,6 +149,40 @@ def update_content_spine(project_id):
     except ValueError as exc:
         db.session.rollback()
         return bad_request(str(exc))
+
+
+@content_workspace_bp.route('/<project_id>/spine/optimize', methods=['POST'])
+def optimize_content_spine(project_id):
+    """Generate editable positioning suggestions without persisting them."""
+    project = db.session.get(Project, project_id)
+    if not project or not project.content_spine:
+        return not_found('Content project')
+    data = request.get_json() or {}
+    if not isinstance(data, dict):
+        return bad_request('request body must be an object')
+
+    document = json.loads(project.content_spine.document_json)
+    values = {}
+    for field in ('topic', 'audience', 'goal'):
+        value = data.get(field)
+        if value is None:
+            value = (document.get(field) or {}).get('value', '')
+        if not isinstance(value, str):
+            return bad_request(f'{field} must be a string')
+        values[field] = value.strip()
+    if not any(values.values()):
+        return bad_request('at least one positioning field is required')
+
+    try:
+        return success_response(optimize_positioning(values, get_ai_service().text_provider))
+    except (ValueError, json.JSONDecodeError) as exc:
+        return error_response('AI_SERVICE_ERROR', str(exc), 503)
+    except Exception as exc:
+        upstream_status = getattr(getattr(exc, 'response', None), 'status_code', None)
+        if upstream_status == 429:
+            return rate_limit_error('AI 服务当前请求过于频繁，请稍后重试，或在设置中切换文本模型。')
+        current_app.logger.exception('Content Spine optimization failed')
+        return error_response('AI_SERVICE_ERROR', str(exc), 503)
 
 
 @content_workspace_bp.route('/<project_id>/spine/confirm', methods=['POST'])
@@ -178,7 +221,7 @@ def initialize_content_workspace(project_id, workspace_kind):
             project,
             workspace_kind,
             settings=settings,
-            require_confirmed=True,
+            require_confirmed=False,
         )
         db.session.add(task)
         db.session.commit()
@@ -254,6 +297,19 @@ def update_content_workspace(project_id, workspace_kind):
     '/<project_id>/workspaces/video/initialize-from-ppt', methods=['POST'],
 )
 def initialize_video_from_ppt(project_id):
+    """Deprecated PPT → video shortcut (reconstruction plan §11.5).
+
+    The reconstruction flow replaces this synchronous write with a
+    workspace generation run (candidate → review → publish). New UI must
+    not call this endpoint. During the compatibility period it stays
+    available behind LEGACY_WORKSPACE_INITIALIZATION_ENABLED.
+    """
+    if str(os.getenv('LEGACY_WORKSPACE_INITIALIZATION_ENABLED', 'true')).lower() not in {'1', 'true', 'yes'}:
+        return error_response(
+            'DEPRECATED_WORKSPACE_INITIALIZATION',
+            'PPT 转视频已迁移到生成运行流程，请从 PPT 编辑器的项目操作中发起。',
+            410,
+        )
     project = db.session.get(Project, project_id)
     if not project or not project.content_spine:
         return not_found('Content project')

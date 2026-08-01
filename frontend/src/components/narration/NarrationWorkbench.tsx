@@ -244,7 +244,7 @@ export function NarrationWorkbench({
   ])).map((id) => ({ id, name: id === 'host' ? '主持人' : id === 'expert' ? '嘉宾' : id }));
 
   return (
-    <div className="fixed inset-0 z-[130] bg-[var(--app-bg)] text-[var(--app-text)]" role="dialog" aria-modal="true" aria-label="视频文案工作台">
+    <div className="fixed inset-y-0 left-0 right-0 z-[130] bg-[var(--app-bg)] text-[var(--app-text)] lg:left-[var(--project-nav-offset,216px)]" role="dialog" aria-modal="true" aria-label="视频文案工作台">
       <div className="grid h-[100dvh] min-h-0 grid-rows-[auto_minmax(0,1fr)_auto]">
         <header className="flex min-h-14 items-center justify-between gap-4 border-b border-[var(--app-border)] bg-[var(--app-surface)] px-4">
           <div className="min-w-0">
@@ -293,7 +293,8 @@ export function NarrationWorkbench({
               size="sm"
               className="h-10 w-10 px-0"
               icon={<X size={18} aria-hidden="true" />}
-              aria-label="关闭视频文案工作台"
+              aria-label="返回当前工作区"
+              title="返回当前工作区"
               onClick={requestClose}
             ><span className="sr-only">关闭</span></Button>
           </div>

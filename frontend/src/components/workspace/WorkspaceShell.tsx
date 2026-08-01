@@ -1,12 +1,8 @@
-import { createContext, useContext, useEffect, useState, type CSSProperties, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react';
-import { useProjectRailTarget } from '@/components/content-project/useProjectRailTarget';
 import { WorkspaceToolbar } from './WorkspaceToolbar';
 
 const inspectorDrawerQuery = '(max-width: 1279px)';
-
-export const WorkspaceProjectRailContext = createContext(false);
 
 type WorkspaceShellProps = {
   toolbar: ReactNode;
@@ -29,9 +25,6 @@ export function WorkspaceShell({ toolbar, sidebar, children, inspector, statusBa
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [inspectorDrawer, setInspectorDrawer] = useState(() => window.matchMedia(inspectorDrawerQuery).matches);
   const [inspectorCollapsed, setInspectorCollapsed] = useState(inspectorDrawer);
-  const projectRailTarget = useProjectRailTarget();
-  const workspaceProvidesProjectRail = useContext(WorkspaceProjectRailContext);
-  const usesProjectRail = Boolean(projectRailTarget) || workspaceProvidesProjectRail;
 
   useEffect(() => {
     const media = window.matchMedia(inspectorDrawerQuery);
@@ -61,7 +54,7 @@ export function WorkspaceShell({ toolbar, sidebar, children, inspector, statusBa
       : `${hideToolbar ? '' : '"toolbar toolbar toolbar" '}"sidebar canvas inspector"`,
     gridTemplateColumns: presenting
       ? 'minmax(0, 1fr)'
-      : `minmax(0, ${usesProjectRail ? '0' : sidebarCollapsed ? 'var(--workspace-sidebar-collapsed-width)' : sidebarWidth}) minmax(0, 1fr) minmax(0, ${inspector && !inspectorDrawer ? (inspectorCollapsed ? 'var(--workspace-sidebar-collapsed-width)' : inspectorWidth) : '0'})`,
+      : `minmax(0, ${sidebarCollapsed ? 'var(--workspace-sidebar-collapsed-width)' : sidebarWidth}) minmax(0, 1fr) minmax(0, ${inspector && !inspectorDrawer ? (inspectorCollapsed ? 'var(--workspace-sidebar-collapsed-width)' : inspectorWidth) : '0'})`,
   } satisfies CSSProperties;
 
   const inspectorLabel = inspectorDrawer
@@ -107,16 +100,10 @@ export function WorkspaceShell({ toolbar, sidebar, children, inspector, statusBa
         aria-label="页面栏"
         data-collapsed={sidebarCollapsed}
         className={`min-h-0 overflow-hidden bg-[var(--app-surface)] ${softBorders ? 'shadow-[inset_-1px_0_0_rgba(60,60,67,0.16)]' : 'border-r border-[var(--app-border)]'}`}
-        style={{ gridArea: 'sidebar', display: presenting || usesProjectRail ? 'none' : undefined }}
+        style={{ gridArea: 'sidebar', display: presenting ? 'none' : undefined }}
       >
         {!sidebarCollapsed && <div className="h-full overflow-auto pb-[var(--workspace-statusbar-height)]">{sidebar}</div>}
       </aside>
-      {projectRailTarget && !presenting && createPortal(
-        <aside aria-label="页面栏" data-collapsed={sidebarCollapsed} className="h-full min-h-0 overflow-hidden">
-          {!sidebarCollapsed && <div className="h-full min-h-0 overflow-auto">{sidebar}</div>}
-        </aside>,
-        projectRailTarget,
-      )}
 
       <main
         className="min-h-0 min-w-0 w-full overflow-hidden"

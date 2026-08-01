@@ -27,6 +27,7 @@ from services.image_generation_manifest import (
 from services.image_template_profiles import has_gorden_template_pack
 from services.content_spine_service import (
     get_spine_source_fields,
+    optimize_positioning,
     update_spine_source_fields,
 )
 from services.ppt_workspace_service import (
@@ -46,7 +47,7 @@ from services.task_manager import (
     recover_historical_image_scenes_task,
 )
 from utils import (
-    success_response, error_response, not_found, bad_request,
+    success_response, error_response, not_found, bad_request, rate_limit_error,
     parse_page_ids_from_body, get_filtered_pages
 )
 
@@ -102,6 +103,8 @@ def _derive_image_project_status(project, pages):
 
 def _calibrate_stale_image_generation_state(project):
     """Turn DB-only running image tasks into resumable paused tasks before listing."""
+    if not any(workspace.kind == 'ppt' for workspace in (project.workspaces or [])):
+        return False
     changed = False
     pages = list(project.pages or [])
     if get_ppt_settings(project)['render_mode'] != 'native':
@@ -221,35 +224,13 @@ def _get_project_dashboard_stats():
     generating = 0
 
     for project in all_projects:
-        pages = list(project.pages or [])
-        has_active_pages = any(page.status in ACTIVE_PAGE_STATUSES for page in pages)
-        ppt_status = get_ppt_status(project)
-        workspace_statuses = [
-            _get_non_ppt_workspace_status(workspace, project.tasks or [])
-            for workspace in (project.workspaces or [])
-            if workspace.kind in {'video', 'podcast'}
-        ]
-        if (
-            ppt_status in {'GENERATING_DESCRIPTIONS', 'GENERATING_IMAGES'}
-            or has_active_pages
-            or 'generating' in workspace_statuses
-        ):
+        bucket = _get_project_dashboard_bucket(project)
+        if bucket == 'generating':
             generating += 1
             continue
-
-        if (
-            ppt_status in {'COMPLETED', 'NATIVE_DECK_GENERATED'}
-            or 'completed' in workspace_statuses
-        ):
+        if bucket == 'completed':
             completed += 1
             continue
-
-        if pages and all(
-            page.status in {'COMPLETED', 'NATIVE_GENERATED'}
-            or bool(page.generated_image_path)
-            for page in pages
-        ):
-            completed += 1
 
     total = len(all_projects)
     return {
@@ -258,6 +239,38 @@ def _get_project_dashboard_stats():
         'generating': generating,
         'in_progress': max(total - completed - generating, 0),
     }
+
+
+def _get_project_dashboard_bucket(project):
+    """Return the same status bucket used by the dashboard counters."""
+    pages = list(project.pages or [])
+    has_active_pages = any(page.status in ACTIVE_PAGE_STATUSES for page in pages)
+    ppt_status = get_ppt_status(project) if any(workspace.kind == 'ppt' for workspace in (project.workspaces or [])) else None
+    workspace_statuses = [
+        _get_non_ppt_workspace_status(workspace, project.tasks or [])
+        for workspace in (project.workspaces or [])
+        if workspace.kind in {'video', 'podcast'}
+    ]
+    if (
+        ppt_status in {'GENERATING_DESCRIPTIONS', 'GENERATING_IMAGES'}
+        or has_active_pages
+        or 'generating' in workspace_statuses
+    ):
+        return 'generating'
+
+    if (
+        ppt_status in {'COMPLETED', 'NATIVE_DECK_GENERATED'}
+        or 'completed' in workspace_statuses
+    ):
+        return 'completed'
+
+    if pages and all(
+        page.status in {'COMPLETED', 'NATIVE_GENERATED'}
+        or bool(page.generated_image_path)
+        for page in pages
+    ):
+        return 'completed'
+    return 'in_progress'
 
 
 def _resolve_image_generation_workers(requested, configured):
@@ -668,6 +681,12 @@ def list_projects():
         # Parameter validation
         limit = request.args.get('limit', 50, type=int)
         offset = request.args.get('offset', 0, type=int)
+        status = request.args.get('status')
+        workspace_kind = request.args.get('workspace')
+        if status not in {None, 'completed', 'generating', 'in_progress'}:
+            return error_response('INVALID_STATUS', '无效的项目状态筛选', 400)
+        if workspace_kind not in {None, 'ppt', 'video', 'podcast'}:
+            return error_response('INVALID_WORKSPACE', '无效的项目类型筛选', 400)
 
         # Enforce limits to prevent performance issues
         limit = min(max(1, limit), 100)  # Between 1-100
@@ -677,16 +696,22 @@ def list_projects():
         stats = _get_project_dashboard_stats()
         total = stats['total']
 
-        projects = Project.query\
+        all_projects = Project.query\
             .options(
                 joinedload(Project.pages),
                 joinedload(Project.tasks),
                 joinedload(Project.workspaces),
             )\
             .order_by(desc(Project.updated_at))\
-            .limit(limit)\
-            .offset(offset)\
             .all()
+        if status:
+            all_projects = [project for project in all_projects if _get_project_dashboard_bucket(project) == status]
+        if workspace_kind:
+            all_projects = [project for project in all_projects if (
+                workspace_kind == 'ppt' and not project.workspaces
+            ) or any(workspace.kind == workspace_kind and workspace.state != 'uninitialized' for workspace in (project.workspaces or []))]
+        total = len(all_projects) if status else total
+        projects = all_projects[offset:offset + limit]
 
         return success_response({
             'projects': [project.to_dict(include_pages=True) for project in projects],
@@ -726,6 +751,8 @@ def create_project():
             return bad_request("creation_type is required")
         
         creation_type = data.get('creation_type')
+        if creation_type == 'description':
+            creation_type = 'descriptions'
         
         if creation_type not in ['idea', 'outline', 'descriptions', 'blank']:
             return bad_request("Invalid creation_type")
@@ -734,9 +761,11 @@ def create_project():
         if render_mode not in ('image', 'native'):
             return bad_request("Invalid render_mode")
         native_theme = data.get('native_theme') or ('theme01' if render_mode == 'native' else None)
-        initial_workspace = data.get('initial_workspace')
+        # `target_workspace` is the convergence-plan alias; `initial_workspace`
+        # remains accepted for older clients.
+        initial_workspace = data.get('target_workspace') or data.get('initial_workspace')
         if initial_workspace is not None and initial_workspace not in ('ppt', 'video', 'podcast'):
-            return bad_request('Invalid initial_workspace')
+            return bad_request('Invalid target_workspace')
         workspace_settings = data.get('workspace_settings') or {}
         if not isinstance(workspace_settings, dict):
             return bad_request('workspace_settings must be an object')
@@ -822,6 +851,12 @@ def create_project():
                 'project_id': project.id,
                 'status': get_ppt_status(project),
                 'initial_workspace': initial_workspace,
+                'target_workspace': initial_workspace,
+                'next_route': (
+                    f'/project/{project.id}/ppt/outline'
+                    if initial_workspace == 'ppt'
+                    else f'/project/{project.id}/{initial_workspace}'
+                ),
                 'task_id': task.id,
                 'task_status': task.status,
                 'initialization_task': workspace_initialization_task_summary(task, initial_workspace),
@@ -844,6 +879,9 @@ def create_project():
         return success_response({
             'project_id': project.id,
             'status': get_ppt_status(project),
+            'initial_workspace': 'ppt',
+            'target_workspace': 'ppt',
+            'next_route': f'/project/{project.id}/ppt/outline',
             'render_mode': ppt_settings['render_mode'],
             'native_theme': ppt_settings['native_theme'],
             'native_image_settings': ppt_settings['native_image_settings'],
@@ -864,6 +902,37 @@ def create_project():
         error_trace = traceback.format_exc()
         logger.error(f"create_project failed: {str(e)}", exc_info=True)
         return error_response('SERVER_ERROR', str(e), 500)
+
+
+@project_bp.route('/brief/optimize', methods=['POST'])
+def optimize_project_brief():
+    """Stateless project-brief optimization used by the create page.
+
+    Returns suggestions only; never persists and never creates a workspace.
+    """
+    data = request.get_json() or {}
+    if not isinstance(data, dict):
+        return bad_request('request body must be an object')
+    values = {}
+    for field in ('topic', 'audience', 'goal'):
+        value = data.get(field)
+        if value is None:
+            value = ''
+        if not isinstance(value, str):
+            return bad_request(f'{field} must be a string')
+        values[field] = value.strip()
+    if not any(values.values()):
+        return bad_request('at least one positioning field is required')
+    try:
+        return success_response(optimize_positioning(values, get_ai_service().text_provider))
+    except (ValueError, json.JSONDecodeError) as exc:
+        return error_response('AI_SERVICE_ERROR', str(exc), 503)
+    except Exception as exc:
+        upstream_status = getattr(getattr(exc, 'response', None), 'status_code', None)
+        if upstream_status == 429:
+            return rate_limit_error('AI 服务当前请求过于频繁，请稍后重试，或在设置中切换文本模型。')
+        current_app.logger.exception('Project brief optimization failed')
+        return error_response('AI_SERVICE_ERROR', str(exc), 503)
 
 
 @project_bp.route('/<project_id>', methods=['GET'])

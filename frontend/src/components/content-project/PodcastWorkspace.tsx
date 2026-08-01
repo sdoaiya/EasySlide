@@ -3,7 +3,6 @@ import {
   AudioLines,
   Check,
   Download,
-  GitCompareArrows,
   Image as ImageIcon,
   Link2,
   Mic2,
@@ -17,7 +16,6 @@ import { MaterialSelector } from '@/components/shared/MaterialSelector';
 import {
   exportPodcastWorkspace,
   previewPodcastWorkspace,
-  proposePodcastToSpine,
   updateContentWorkspace,
   type Material,
 } from '@/api/endpoints';
@@ -137,7 +135,7 @@ const PodcastSegmentRailItem = memo(function PodcastSegmentRailItem({
   );
 });
 
-export function PodcastWorkspace({ projectId, spineRevision, workspace, onChanged }: { projectId: string; spineRevision: number; workspace: ProjectWorkspace; onChanged: () => void }) {
+export function PodcastWorkspace({ projectId, workspace, onChanged }: { projectId: string; spineRevision: number; workspace: ProjectWorkspace; onChanged: () => void }) {
   const [document, setDocument] = useState(() => normalizeDocument(workspace.document));
   const loadedRevision = useRef(workspace.revision);
   const [selectedId, setSelectedId] = useState(document.segments[0]?.segment_id || '');
@@ -226,11 +224,6 @@ export function PodcastWorkspace({ projectId, spineRevision, workspace, onChange
       setDirty(false); setMessage('已保存新版本'); onChanged();
     } catch (cause: any) { setMessage(cause?.response?.data?.error?.message || cause.message); } finally { setBusy(null); }
   };
-  const propose = async () => {
-    setBusy('sync'); setMessage('');
-    try { await proposePodcastToSpine(projectId, spineRevision); setMessage('已创建内容主线同步候选'); onChanged(); }
-    catch (cause: any) { setMessage(cause?.response?.data?.error?.message || cause.message); } finally { setBusy(null); }
-  };
   const exportAudio = async (format: 'mp3' | 'wav') => {
     setBusy('export'); setMessage('');
     try {
@@ -309,7 +302,7 @@ export function PodcastWorkspace({ projectId, spineRevision, workspace, onChange
     className="h-full"
     sidebarWidth="216px"
     inspectorWidth="320px"
-    toolbar={<div className="flex h-full items-center gap-3"><Mic2 size={17} aria-hidden="true" /><span className="truncate text-sm font-semibold">{document.title}</span><span className="text-xs text-[var(--app-text-tertiary)]">R{workspace.revision}</span><div className="ml-auto flex items-center gap-2"><Button size="sm" variant="secondary" icon={<Download size={15} />} loading={busy === 'export'} disabled={dirty || busy !== null || !preflight.canExport} onClick={() => void exportAudio('mp3')}>导出 MP3</Button><Button size="sm" variant="secondary" icon={<Download size={15} />} loading={busy === 'export'} disabled={dirty || busy !== null || !preflight.canExport} onClick={() => void exportAudio('wav')}>导出 WAV</Button><Button size="sm" variant="secondary" icon={<GitCompareArrows size={15} />} loading={busy === 'sync'} disabled={dirty || busy !== null} onClick={() => void propose()}>提议同步</Button><Button size="sm" icon={<Save size={15} />} loading={busy === 'save'} disabled={!dirty || busy !== null} onClick={() => void save()}>保存版本</Button></div></div>}
+    toolbar={<div className="flex h-full min-w-0 items-center gap-3"><Mic2 size={17} className="shrink-0" aria-hidden="true" /><span className="min-w-0 truncate text-sm font-semibold">{document.title}</span><span className="shrink-0 text-xs text-[var(--app-text-tertiary)]">R{workspace.revision}</span><div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2"><Button className="whitespace-nowrap" size="sm" variant="secondary" icon={<Download size={15} />} loading={busy === 'export'} disabled={dirty || busy !== null || !preflight.canExport} onClick={() => void exportAudio('mp3')}>导出 MP3</Button><Button className="whitespace-nowrap" size="sm" variant="secondary" icon={<Download size={15} />} loading={busy === 'export'} disabled={dirty || busy !== null || !preflight.canExport} onClick={() => void exportAudio('wav')}>导出 WAV</Button><Button className="whitespace-nowrap" size="sm" icon={<Save size={15} />} loading={busy === 'save'} disabled={!dirty || busy !== null} onClick={() => void save()}>保存版本</Button></div></div>}
     sidebar={<div className="flex h-full min-h-0 flex-col"><p className="px-3 pb-2 text-xs font-medium text-[var(--app-text-tertiary)]">片段 · {document.segments.length}</p><div className="min-h-0 flex-1 space-y-1 overflow-y-auto px-2 pb-3">{document.segments.map((segment, index) => <PodcastSegmentRailItem key={segment.segment_id} segment={segment} index={index} selected={selectedId === segment.segment_id} onSelect={setSelectedId} />)}</div></div>}
     inspector={inspector}
     statusBar={<WorkspaceStatusBar>{message || (dirty ? '有未保存修改' : preflight.canExport ? '混音预检通过，可导出' : '请处理混音预检中的阻塞项')}</WorkspaceStatusBar>}

@@ -11,7 +11,7 @@ import requests as http_requests
 from pathlib import Path
 from datetime import datetime, timezone
 from contextlib import contextmanager
-from flask import Blueprint, request, current_app
+from flask import Blueprint, request, current_app, after_this_request, send_file
 from PIL import Image
 from models import db, Settings, Task
 from utils import success_response, error_response, bad_request
@@ -600,6 +600,40 @@ def get_fish_audio_voices():
         return success_response({'voices': list_voices(key, scope=scope, sort_by=sort_by, page_size=page_size)})
     except FishAudioAPIError as exc:
         return _fish_audio_error(exc)
+
+
+@settings_bp.post('/fish-audio/voices/<voice_id>/preview')
+def preview_fish_audio_voice(voice_id: str):
+    from services.fish_audio_service import FishAudioAPIError, synthesize
+
+    if not re.fullmatch(r'[A-Za-z0-9_-]{8,128}', voice_id):
+        return bad_request('声音 ID 格式无效')
+    key = _fish_audio_key()
+    if not key:
+        return bad_request('请先在设置中保存 Fish Audio API Key')
+    text = str((request.get_json(silent=True) or {}).get('text') or '这是声音试听示例。').strip()[:120]
+    output_path = os.path.join(tempfile.gettempdir(), f'easyslide-fish-preview-{os.urandom(8).hex()}.mp3')
+    try:
+        synthesize(
+            api_key=key,
+            text=text,
+            output_path=output_path,
+            reference_id=voice_id,
+            model=current_app.config.get('FISH_AUDIO_MODEL', 's2.1-pro-free'),
+        )
+        @after_this_request
+        def cleanup(response):
+            try:
+                os.remove(output_path)
+            except OSError:
+                pass
+            return response
+        return send_file(output_path, mimetype='audio/mpeg', as_attachment=False, download_name='fish-preview.mp3')
+    except FishAudioAPIError as exc:
+        return error_response('FISH_AUDIO_PREVIEW_FAILED', str(exc), getattr(exc, 'status_code', 502) or 502)
+    except Exception:
+        logger.exception('Fish Audio preview failed')
+        return error_response('FISH_AUDIO_PREVIEW_FAILED', '试听生成失败，请稍后重试', 502)
 
 
 @settings_bp.get('/fish-audio/capabilities')

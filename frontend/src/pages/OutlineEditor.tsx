@@ -3,8 +3,6 @@ import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Plus, FileText, Sparkle, Download, Upload, ChevronDown, List, SlidersHorizontal } from 'lucide-react';
 import { useT } from '@/hooks/useT';
 import PresetCapsules from '@/components/shared/PresetCapsules';
-import { ProjectRailPortal, useProjectRailTarget } from '@/components/content-project/useProjectRailTarget';
-import { getStaticAssetUrl } from '@/api/client';
 
 // 组件内翻译
 const outlineI18n = {
@@ -165,7 +163,6 @@ export const OutlineEditor: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const t = useT(outlineI18n);
-  const projectRailTarget = useProjectRailTarget();
   const { projectId } = useParams<{ projectId: string }>();
   const fromHistory = (location.state as any)?.from === 'history';
   const handleBack = useCallback(() => {
@@ -481,16 +478,6 @@ export const OutlineEditor: React.FC = () => {
         <div className="flex min-h-[52px] items-center px-4 md:px-6">
         <div className="flex w-full flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
-            <Button
-              variant="ghost"
-              size="sm"
-              icon={<ArrowLeft size={16} />}
-              onClick={handleBack}
-              className="flex-shrink-0"
-            >
-              <span className="hidden sm:inline">{t('common.back')}</span>
-            </Button>
-            <img src={getStaticAssetUrl('/logo-nav.png')} alt="EasySlide Logo" className="h-8 w-auto" />
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <span className="text-lg font-semibold text-[var(--app-text)]">{t('outline.title')}</span>
@@ -600,8 +587,8 @@ export const OutlineEditor: React.FC = () => {
               onFiles={handleImageFiles}
               onSelectFromLibrary={() => { setActiveMaterialTarget('input'); setIsMaterialSelectorOpen(true); }}
               placeholder={inputPlaceholder}
-              rows={4}
-              editorHeight={190}
+              rows={3}
+              editorHeight={150}
               className="border-0 rounded-none shadow-none min-h-[96px]"
             />
           </div>
@@ -620,8 +607,8 @@ export const OutlineEditor: React.FC = () => {
                 onFiles={handleReqImageFiles}
                 onSelectFromLibrary={() => { setActiveMaterialTarget('requirements'); setIsMaterialSelectorOpen(true); }}
                 placeholder={t('outline.outlineRequirementsPlaceholder')}
-                rows={4}
-                editorHeight={190}
+                rows={3}
+                editorHeight={150}
                 showImagePreview={false}
                 className="border-0 rounded-none shadow-none min-h-[96px]"
               />
@@ -646,9 +633,8 @@ export const OutlineEditor: React.FC = () => {
           showToast={show}
         />
 
-        <section className={`mt-3 ${projectRailTarget ? 'block' : 'grid grid-cols-1 gap-4 lg:grid-cols-[260px_1fr]'}`}>
-          <ProjectRailPortal target={projectRailTarget}>
-          <aside className={`flex flex-col overflow-hidden ${projectRailTarget ? 'h-full min-h-0' : 'rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)] p-3 shadow-[var(--app-shadow-soft)] lg:sticky lg:top-3 lg:max-h-[calc(100dvh-210px)]'}`}>
+        <section className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-[260px_1fr]">
+          <aside className="flex flex-col overflow-hidden rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)] p-3 shadow-[var(--app-shadow-soft)] lg:sticky lg:top-3 lg:max-h-[calc(100dvh-210px)]">
             <div className="flex items-center justify-between px-2 pb-3">
               <div>
                 <h3 className="flex items-center gap-2 font-semibold text-[var(--app-text)]">
@@ -689,7 +675,6 @@ export const OutlineEditor: React.FC = () => {
               })}
             </div>
           </aside>
-          </ProjectRailPortal>
 
           <div className="min-w-0">
           {currentProject.pages.length === 0 && !isOutlineStreaming ? (
@@ -768,7 +753,7 @@ export const OutlineEditor: React.FC = () => {
           </div>
         </section>
       </main>
-      <footer data-testid="outline-editor-footer" className="pointer-events-none fixed inset-x-0 bottom-0 z-20 px-4 md:px-6">
+      <footer data-testid="outline-editor-footer" className="pointer-events-none fixed inset-x-0 bottom-0 z-20 px-4 md:px-6 lg:left-[216px]">
         <div data-testid="outline-editor-footer-bar" className="pointer-events-auto mx-auto flex min-h-[44px] max-w-5xl items-center justify-between gap-3 rounded-[var(--app-radius-panel)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 py-2 shadow-[var(--app-shadow-floating)]">
           <Button
             variant="secondary"

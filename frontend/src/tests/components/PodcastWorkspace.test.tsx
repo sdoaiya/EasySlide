@@ -14,7 +14,7 @@ const workspace = { id: 'podcast-1', project_id: 'project-1', kind: 'podcast' as
 
 describe('PodcastWorkspace', () => {
   beforeEach(() => { vi.clearAllMocks(); mocks.update.mockResolvedValue({ data: {} }); mocks.propose.mockResolvedValue({ data: {} }); mocks.export.mockResolvedValue({ data: { task_id: 'export-1' } }); mocks.preview.mockResolvedValue({ data: { audio_url: 'blob:preview', provider: 'edge', timing_quality: 'segment_exact', cache_hit: false } }); });
-  it('edits a segment, saves a revision, then creates a sync proposal', async () => {
+  it('edits a segment, saves a revision, then exports without a spine sync proposal', async () => {
     const onChanged = vi.fn();
     render(<><div data-content-project-rail-slot /><PodcastWorkspace projectId="project-1" spineRevision={3} workspace={workspace} onChanged={onChanged} /></>);
     expect(screen.getAllByRole('main')).toHaveLength(1);
@@ -26,9 +26,9 @@ describe('PodcastWorkspace', () => {
     await waitFor(() => expect(mocks.update).toHaveBeenCalled());
     expect(mocks.update.mock.calls[0][3].segments[0].text).toBe('新脚本');
     expect(mocks.update.mock.calls[0][3].segments[0].source_ref).toBe('/files/materials/script.md');
-    fireEvent.click(screen.getByRole('button', { name: '提议同步' }));
-    await waitFor(() => expect(mocks.propose).toHaveBeenCalledWith('project-1', 3));
-    expect(onChanged).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole('button', { name: '提交同步候选' })).not.toBeInTheDocument();
+    expect(mocks.propose).not.toHaveBeenCalled();
+    expect(onChanged).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole('button', { name: '导出 MP3' }));
     await waitFor(() => expect(mocks.export).toHaveBeenCalledWith('project-1', { format: 'mp3' }));
     expect(mocks.addTask).toHaveBeenCalledWith(expect.objectContaining({ id: 'podcast-export-export-1', taskId: 'export-1', type: 'podcast', status: 'PENDING', progress: expect.objectContaining({ format: 'mp3', workspace_version_id: 'version-1' }) }));

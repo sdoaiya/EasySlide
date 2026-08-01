@@ -1,10 +1,10 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { Download, Film, GitCompareArrows, Link2, RefreshCw, Save } from 'lucide-react';
+import { Download, Film, Link2, RefreshCw, Save } from 'lucide-react';
 import { Button, Textarea } from '@/components/shared';
 import { MaterialSelector } from '@/components/shared/MaterialSelector';
 import { WorkspaceShell } from '@/components/workspace/WorkspaceShell';
 import { WorkspaceStatusBar } from '@/components/workspace/WorkspaceStatusBar';
-import { exportVideoWorkspace, getProject, handoffVideoWorkspaceFrames, proposeVideoToSpine, updateContentWorkspace, type Material } from '@/api/endpoints';
+import { exportVideoWorkspace, getProject, handoffVideoWorkspaceFrames, updateContentWorkspace, type Material } from '@/api/endpoints';
 import { getImageUrl } from '@/api/client';
 import { useExportTasksStore } from '@/store/useExportTasksStore';
 import type { ProjectWorkspace } from '@/types';
@@ -30,6 +30,10 @@ type VideoDocument = {
 };
 
 type ProofStatus = 'PENDING' | 'PROCESSING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | null;
+
+const actionError = (cause: any) => cause?.response?.status === 429
+  ? '服务请求过于频繁，请稍后重试。'
+  : cause?.response?.data?.error?.message || cause?.message || '操作失败，请稍后重试。';
 
 const VideoSceneRailItem = memo(function VideoSceneRailItem({
   scene,
@@ -61,7 +65,6 @@ const VideoSceneRailItem = memo(function VideoSceneRailItem({
 
 export function VideoWorkspace({
   projectId,
-  spineRevision,
   workspace,
   onChanged,
 }: {
@@ -113,10 +116,12 @@ export function VideoWorkspace({
     () => document.scenes.find((scene) => scene.scene_id === selectedId),
     [document.scenes, selectedId],
   );
+  const displayTitle = selected?.title?.trim() || document.title?.trim() || '未命名视频';
 
   const updateSelected = (patch: Partial<VideoScene>) => {
     setDocument((current) => ({
       ...current,
+      ...(patch.title !== undefined ? { title: patch.title } : {}),
       scenes: current.scenes.map((scene) => (
         scene.scene_id === selectedId ? { ...scene, ...patch } : scene
       )),
@@ -168,21 +173,7 @@ export function VideoWorkspace({
       setMessage('已保存新版本');
       onChanged();
     } catch (cause: any) {
-      setMessage(cause?.response?.data?.error?.message || cause.message);
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const propose = async () => {
-    setBusy('sync');
-    setMessage('');
-    try {
-      await proposeVideoToSpine(projectId, spineRevision);
-      setMessage('已创建内容主线同步候选');
-      onChanged();
-    } catch (cause: any) {
-      setMessage(cause?.response?.data?.error?.message || cause.message);
+      setMessage(actionError(cause));
     } finally {
       setBusy(null);
     }
@@ -209,7 +200,7 @@ export function VideoWorkspace({
           total: 100,
           completed: 0,
           percent: 0,
-          current_step: renderProfile === 'proof' ? '等待 Proof 渲染' : '等待高清渲染',
+          current_step: renderProfile === 'proof' ? '等待生成预览' : '等待高清渲染',
           render_profile: renderProfile,
           source_proof_task_id: renderProfile === 'final' ? proofTask?.taskId : undefined,
           workspace_version_id: workspace.current_version_id ?? undefined,
@@ -217,13 +208,13 @@ export function VideoWorkspace({
       });
       if (renderProfile === 'proof') {
         setProofTaskId(taskId);
-        setMessage(`已提交 Proof 任务 ${taskId}，正在等待完成`.trim());
+        setMessage(`已提交预览任务 ${taskId}，正在等待完成`.trim());
       } else {
         setMessage(`已提交高清导出任务 ${taskId}`.trim());
       }
       void pollTask(taskKey, projectId, taskId);
     } catch (cause: any) {
-      setMessage(cause?.response?.data?.error?.message || cause.message);
+      setMessage(actionError(cause));
     } finally {
       setBusy(null);
     }
@@ -270,7 +261,7 @@ export function VideoWorkspace({
       setMessage(`已同步 ${frames.length} 页 PPT 静态阶段帧`);
       onChanged();
     } catch (cause: any) {
-      setMessage(cause?.response?.data?.error?.message || cause.message);
+      setMessage(actionError(cause));
     } finally {
       setBusy(null);
     }
@@ -282,13 +273,13 @@ export function VideoWorkspace({
       sidebarWidth="216px"
       inspectorWidth="320px"
       toolbar={(
-        <div className="flex h-full items-center gap-3">
-          <Film size={17} aria-hidden="true" />
-          <span className="truncate text-sm font-semibold">{document.title}</span>
-          <span className="text-xs text-[var(--app-text-tertiary)]">R{workspace.revision}</span>
-          <div className="ml-auto flex items-center gap-2">
-            <Button size="sm" variant="secondary" icon={<Download size={15} />} disabled={dirty || busy !== null} loading={busy === 'export'} onClick={() => void exportVideo('proof')}>
-              生成 Proof
+        <div className="flex h-full min-w-0 items-center gap-3">
+          <Film size={17} className="shrink-0" aria-hidden="true" />
+          <span className="min-w-0 truncate text-sm font-semibold" title={displayTitle}>{displayTitle}</span>
+          <span className="shrink-0 text-xs text-[var(--app-text-tertiary)]">R{workspace.revision}</span>
+          <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
+            <Button className="whitespace-nowrap" size="sm" variant="secondary" icon={<Download size={15} />} title="生成低清预览，用于检查画面和节奏" disabled={dirty || busy !== null} loading={busy === 'export'} onClick={() => void exportVideo('proof')}>
+              生成预览
             </Button>
             {workspace.source_kind === 'ppt' && (
               <Button size="sm" variant="secondary" icon={<RefreshCw size={15} />} title="同步可访问的 PPT 静态画面；动态阶段帧请在 PPT 编辑器捕获" disabled={dirty || busy !== null} loading={busy === 'frames'} onClick={() => void syncPptFrames()}>
@@ -297,9 +288,6 @@ export function VideoWorkspace({
             )}
             <Button size="sm" variant="secondary" icon={<Download size={15} />} disabled={dirty || busy !== null || proofStatus !== 'COMPLETED'} loading={busy === 'export'} onClick={() => void exportVideo('final')}>
               导出高清
-            </Button>
-            <Button size="sm" variant="secondary" icon={<GitCompareArrows size={15} />} disabled={dirty || busy !== null} loading={busy === 'sync'} onClick={() => void propose()}>
-              提议同步
             </Button>
             <Button size="sm" icon={<Save size={15} />} disabled={!dirty || busy !== null} loading={busy === 'save'} onClick={() => void save()}>
               保存版本
@@ -363,17 +351,23 @@ export function VideoWorkspace({
           <WorkspaceVersionHistory projectId={projectId} kind="video" revision={workspace.revision} onRestored={onChanged} />
         </div>
       ) : null}
-      statusBar={<WorkspaceStatusBar>{proofStatus === 'COMPLETED' ? 'Proof 已完成，可导出高清' : proofStatus === 'FAILED' ? 'Proof 导出失败，请查看任务中心' : message || `${document.aspect_ratio} · ${dirty ? '有未保存修改' : '已保存'}`}</WorkspaceStatusBar>}
+      statusBar={<WorkspaceStatusBar>{proofStatus === 'COMPLETED' ? '预览已完成，可导出高清' : proofStatus === 'FAILED' ? '预览导出失败，请查看任务中心' : message || `${document.aspect_ratio} · ${dirty ? '有未保存修改' : '已保存'}`}</WorkspaceStatusBar>}
     >
       <div className="flex h-full min-h-0 items-center justify-center overflow-auto bg-[var(--app-canvas)] p-6">
         {selected ? (
           <article className="flex aspect-video w-full max-w-4xl flex-col justify-between overflow-hidden rounded-[var(--app-radius-panel)] border border-[var(--app-border)] bg-[var(--app-surface)] p-8 shadow-[var(--app-shadow-card)]">
-            <div className="text-xs text-[var(--app-text-tertiary)]">{selected.visual.kind} · {selected.visual.source_ref || '待生成画面'}</div>
-            <div>
-              <h1 className="text-3xl font-semibold">{selected.title}</h1>
-              <p className="mt-4 max-w-2xl text-base leading-7 text-[var(--app-text-secondary)]">{selected.narration.text}</p>
-            </div>
-            <div className="text-xs text-[var(--app-text-tertiary)]">{selected.duration_ms}ms · {selected.transition} · {selected.animation.intensity}</div>
+            {proofTask?.status === 'COMPLETED' && proofTask.downloadUrl ? (
+              <video className="h-full w-full rounded-[var(--app-radius-control)] bg-black object-contain" controls src={getImageUrl(proofTask.downloadUrl)} aria-label="视频预览" />
+            ) : (
+              <>
+                <div className="text-xs text-[var(--app-text-tertiary)]">{selected.visual.kind} · {selected.visual.source_ref || '待生成画面'}</div>
+                <div>
+                  <h1 className="text-3xl font-semibold">{selected.title}</h1>
+                  <p className="mt-4 max-w-2xl text-base leading-7 text-[var(--app-text-secondary)]">{selected.narration.text}</p>
+                </div>
+                <div className="text-xs text-[var(--app-text-tertiary)]">{selected.duration_ms}ms · {selected.transition} · {selected.animation.intensity}</div>
+              </>
+            )}
           </article>
         ) : (
           <p className="text-sm text-[var(--app-text-secondary)]">暂无场景</p>

@@ -7,8 +7,8 @@ from pathlib import Path
 
 from jsonschema import Draft202012Validator
 
-from models import Material, ProjectWorkspace, Task, WorkspaceVersion, db
-from services.content_spine_service import canonical_json, document_hash
+from models import Material, Page, ProjectWorkspace, Task, WorkspaceVersion, db
+from services.content_spine_service import canonical_json, document_hash, get_spine_sections
 from services.video_workspace_service import (
     build_video_document_from_ppt,
     build_video_document_from_spine,
@@ -63,14 +63,42 @@ def workspace_to_dict(workspace: ProjectWorkspace) -> dict:
     }
 
 
-def _workspace_document(kind: str, spine_document: dict, settings: dict) -> dict:
-    title = spine_document['topic']['value'] or 'Untitled project'
-    sections = spine_document.get('sections', [])
+def _workspace_document(
+    kind: str,
+    spine_document: dict,
+    settings: dict,
+    *,
+    ppt_page_refs: list[str] | None = None,
+) -> dict:
     if kind == 'ppt':
-        return {'schema_version': 1, 'page_refs': []}
+        return {'schema_version': 1, 'page_refs': list(ppt_page_refs or [])}
     if kind == 'video':
         return build_video_document_from_spine(spine_document, settings)
     return build_podcast_document_from_spine(spine_document, settings)
+
+
+def _ensure_ppt_pages(project_id: str, spine_document: dict) -> list[Page]:
+    existing = Page.query.filter_by(project_id=project_id).order_by(Page.order_index).all()
+    if existing:
+        return existing
+    pages = []
+    for index, section in enumerate(get_spine_sections(spine_document)):
+        title = str(section.get('title') or '').strip() or f'第 {index + 1} 页'
+        page = Page(
+            project_id=project_id,
+            order_index=index,
+            status='DESCRIPTION_GENERATED' if section.get('summary') else 'DRAFT',
+        )
+        page.set_outline_content({
+            'title': title,
+            'points': [str(item) for item in section.get('key_points', []) if str(item).strip()],
+        })
+        if section.get('summary'):
+            page.set_description_content({'text': str(section['summary'])})
+        db.session.add(page)
+        pages.append(page)
+    db.session.flush()
+    return pages
 
 
 def validate_workspace_document(kind: str, document: dict) -> None:
@@ -216,7 +244,13 @@ def initialize_workspace_from_snapshot(
     ).one()
     if workspace.current_version_id:
         return workspace
-    document = _workspace_document(workspace_kind, spine_document, settings)
+    ppt_pages = _ensure_ppt_pages(project_id, spine_document) if workspace_kind == 'ppt' else []
+    document = _workspace_document(
+        workspace_kind,
+        spine_document,
+        settings,
+        ppt_page_refs=[page.id for page in ppt_pages],
+    )
     validate_workspace_document(workspace_kind, document)
     document_json = canonical_json(document)
     settings_json = canonical_json(settings)
@@ -248,8 +282,6 @@ def initialize_workspace_from_snapshot(
 
 
 def initialize_video_workspace_from_ppt(project, settings=None) -> ProjectWorkspace:
-    if not project.content_spine or project.content_spine.status != 'confirmed':
-        raise SpineNotConfirmed('Confirm the Content Spine before initializing another workspace')
     ppt = next((item for item in project.workspaces if item.kind == 'ppt'), None)
     video = next((item for item in project.workspaces if item.kind == 'video'), None)
     if not ppt or not ppt.current_version_id:

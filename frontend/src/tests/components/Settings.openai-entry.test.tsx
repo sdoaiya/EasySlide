@@ -188,7 +188,7 @@ describe('Settings OpenAI entry', () => {
     expect(within(topNav).getByRole('button', { name: '设置' })).toHaveAttribute('aria-current', 'page');
     const settingsNav = screen.getByRole('navigation', { name: '设置' });
     expect(settingsNav.closest('aside')).toBeNull();
-    expect(settingsNav).toHaveClass('lg:grid-cols-1', 'lg:border-r');
+    expect(settingsNav).toHaveClass('grid-cols-2', 'border-b');
     ['默认 AI 提供商', '模型配置', '导出设置', '高级设置', '服务测试'].forEach((label) => {
       expect(within(settingsNav).getByRole('button', { name: label })).toBeInTheDocument();
     });
