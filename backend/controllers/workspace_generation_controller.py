@@ -73,7 +73,8 @@ def _submit_candidate_task(run: WorkspaceGenerationRun) -> WorkspaceGenerationRu
 
 
 def _feature_enabled() -> bool:
-    return str(os.getenv('WORKSPACE_GENERATION_RUNS_ENABLED', 'false')).lower() in {
+    # 上线后默认开启；回滚时显式设 false 即可隐藏新入口（计划 §18）
+    return str(os.getenv('WORKSPACE_GENERATION_RUNS_ENABLED', 'true')).lower() in {
         '1', 'true', 'yes',
     }
 

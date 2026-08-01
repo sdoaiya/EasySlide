@@ -452,7 +452,8 @@ class TestV1V2Adapters:
 
 
 class TestGenerationRunApi:
-    def test_feature_switch_gates_run_creation(self, client, app):
+    def test_feature_switch_gates_run_creation(self, client, app, monkeypatch):
+        monkeypatch.setenv('WORKSPACE_GENERATION_RUNS_ENABLED', 'false')
         project_id = client.post('/api/projects', json={
             'creation_type': 'idea',
             'idea_prompt': '开关测试',
