@@ -155,3 +155,62 @@ def upgrade_podcast_document_v1_to_v2(document: dict) -> dict:
         'mixing': document.get('mixing') or {},
         'cover': document.get('cover') or {},
     }
+
+
+def build_podcast_document_from_brief(brief: dict, options=None) -> dict:
+    """Mechanical first-pass podcast candidate from a frozen brief snapshot.
+
+    V1-shaped so the existing workspace validator and publish transaction
+    accept it; AI adaptation arrives in later stages. Never reads live
+    project or spine state.
+    """
+    from services.video_workspace_service import _split_source_blocks
+
+    options = options or {}
+    title = str(brief.get('title') or brief.get('topic') or '未命名播客')[:255]
+    fmt = str(options.get('format') or 'single').strip()
+    if fmt not in {'single', 'dialogue'}:
+        fmt = 'single'
+    voice_refs = options.get('voice_profile_ids') or []
+    if fmt == 'single':
+        speakers = [{
+            'speaker_id': 'speaker.main',
+            'name': str(options.get('speaker_name') or '主持人'),
+            'voice_ref': str(voice_refs[0] or '') if voice_refs else 'default',
+        }]
+    else:
+        names = list(options.get('speaker_names') or ['主持人', '嘉宾'])
+        speakers = [
+            {
+                'speaker_id': f'speaker.{index + 1}',
+                'name': str(names[index] if index < len(names) else f'角色 {index + 1}'),
+                'voice_ref': str(voice_refs[index] or '') if index < len(voice_refs) else 'default',
+            }
+            for index in range(min(4, max(2, len(voice_refs) or 2)))
+        ]
+    blocks = _split_source_blocks(str(brief.get('source_text') or ''))
+    if not blocks:
+        blocks = [str(brief.get('topic') or title)]
+    segments = []
+    for index, block in enumerate(blocks):
+        speaker = speakers[index % len(speakers)]
+        segments.append({
+            'segment_id': f'segment.{index + 1}',
+            'speaker_id': speaker['speaker_id'],
+            'text': block,
+            'locked': False,
+            'audio_cues': [],
+            # V1 schema 只允许 audio/transcript/null；brief 来源记录在 source_ref
+            'source_kind': None,
+            'source_ref': brief.get('content_hash'),
+        })
+    return {
+        'schema_version': 1,
+        'title': title,
+        'format': fmt,
+        'language': str(options.get('language') or 'zh-CN'),
+        'speakers': speakers,
+        'segments': segments,
+        'mixing': {'bgm_asset_ref': None, 'ducking': True, 'fade_in_ms': 300, 'fade_out_ms': 500},
+        'cover': {'asset_ref': None, 'title': title, 'subtitle': ''},
+    }

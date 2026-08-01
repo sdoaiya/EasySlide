@@ -292,3 +292,46 @@ def publish_run(run: WorkspaceGenerationRun, project) -> WorkspaceGenerationRun:
         db.session.commit()
         raise
     return run
+
+
+def build_candidate_document(run: WorkspaceGenerationRun) -> tuple[dict, list[str]]:
+    """Build the candidate document from the run's frozen snapshot.
+
+    Returns ``(document, item_ids)``. Stage 2 uses the mechanical first-pass
+    builders; AI adaptation for PPT → video and direct generation lands in
+    later stages without changing the pipeline contract.
+    """
+    from services.podcast_service import build_podcast_document_from_brief
+    from services.video_workspace_service import (
+        build_video_document_from_brief,
+        build_video_document_from_ppt_snapshot,
+    )
+
+    snapshot = json.loads(run.source_snapshot_json)
+    options = json.loads(run.options_json or '{}')
+    if run.source_kind == 'ppt':
+        document = build_video_document_from_ppt_snapshot(snapshot, options)
+    elif run.target_workspace_kind == 'video':
+        document = build_video_document_from_brief(snapshot, options)
+    else:
+        document = build_podcast_document_from_brief(snapshot, options)
+    item_ids = [
+        str(item.get('scene_id') or item.get('segment_id'))
+        for item in (document.get('scenes') or document.get('segments') or [])
+    ]
+    return document, item_ids
+
+
+def generation_error_code(exc: Exception) -> str:
+    """Map provider failures to the stable run error contract."""
+    upstream_status = getattr(getattr(exc, 'response', None), 'status_code', None)
+    if upstream_status == 429:
+        return 'RATE_LIMIT_EXCEEDED'
+    return 'GENERATION_FAILED'
+
+
+def generation_error_message(exc: Exception) -> str:
+    upstream_status = getattr(getattr(exc, 'response', None), 'status_code', None)
+    if upstream_status == 429:
+        return 'AI 服务当前请求过于频繁，请稍后重试，或在设置中切换文本模型。'
+    return str(exc) or '生成候选失败'

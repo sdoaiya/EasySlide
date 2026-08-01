@@ -169,6 +169,7 @@ def create_app():
         from bootstrap_settings import import_packaged_credentials
         import_packaged_credentials(os.getenv('EASYSLIDE_BOOTSTRAP_SETTINGS_PATH'))
         _pause_interrupted_export_tasks()
+        _recover_interrupted_generation_runs()
         # Load settings from database and sync to app.config
         _load_settings_to_config(app)
 
@@ -281,6 +282,28 @@ def _pause_interrupted_export_tasks():
                     Page.generated_image_path.is_(None),
                 ).update({'status': 'QUEUED'}, synchronize_session=False)
     if tasks:
+        db.session.commit()
+
+
+def _recover_interrupted_generation_runs():
+    """重启后恢复生成运行：任务已消失/结束的运行标记为可恢复（PAUSED）。
+
+    恢复只调整运行状态，绝不自动发布候选，也不改写正式工作区。
+    """
+    from models import Task, WorkspaceGenerationRun
+
+    runs = WorkspaceGenerationRun.query.filter(
+        WorkspaceGenerationRun.status.in_(['PENDING', 'RUNNING']),
+    ).all()
+    changed = False
+    for run in runs:
+        task = db.session.get(Task, run.task_id) if run.task_id else None
+        if task and task.status in {'PENDING', 'PROCESSING', 'RUNNING', 'PAUSED'}:
+            continue  # 任务仍然存活（含用户暂停）
+        # 系统恢复路径：绕过状态机的 PENDING→PAUSED 限制，标记为用户可恢复
+        run.status = 'PAUSED'
+        changed = True
+    if changed:
         db.session.commit()
 
 

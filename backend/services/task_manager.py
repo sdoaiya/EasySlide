@@ -597,6 +597,99 @@ def sync_resource_limits(description_workers: int, image_workers: int):
     text_resource_limiter.update_capacity(description_workers)
 
 
+def generate_workspace_candidate_task(
+    task_id: str,
+    run_id: str,
+    app=None,
+):
+    """Generate a workspace candidate from a frozen run snapshot (阶段2).
+
+    The task input only carries the run id; the frozen source snapshot and
+    options are read from the run record, never from live project state.
+    Progress only reports stage/total/completed/failed/item_ids.
+    """
+    from contextlib import nullcontext
+
+    from models import WorkspaceGenerationRun
+    from services.workspace_generation_service import (
+        GenerationRunStateError,
+        build_candidate_document,
+        generation_error_code,
+        generation_error_message,
+        set_candidate,
+        transition_run,
+    )
+
+    context = app.app_context() if app else nullcontext()
+    with context:
+        task = db.session.get(Task, task_id)
+        if not task or task.status == 'CANCELLED':
+            return
+        run = db.session.get(WorkspaceGenerationRun, run_id)
+        if not run:
+            task.status = 'FAILED'
+            task.error_message = '生成运行不存在，无法继续'
+            task.completed_at = datetime.utcnow()
+            db.session.commit()
+            return
+        if run.status == 'CANCELLED':
+            task.status = 'CANCELLED'
+            task.completed_at = datetime.utcnow()
+            db.session.commit()
+            return
+        task.status = 'PROCESSING'
+        progress = task.get_progress()
+        progress.update({'stage': 'generating', 'total': 1, 'completed': 0, 'failed': 0})
+        task.set_progress(progress)
+        try:
+            if run.status in {'PENDING', 'PAUSED'}:
+                transition_run(run, 'RUNNING')
+        except GenerationRunStateError:
+            task.status = 'CANCELLED'
+            task.completed_at = datetime.utcnow()
+            db.session.commit()
+            return
+        db.session.commit()
+        try:
+            _wait_if_task_paused(task_id)
+            task = db.session.get(Task, task_id)
+            run = db.session.get(WorkspaceGenerationRun, run_id)
+            if not task or task.status == 'CANCELLED' or run.status == 'CANCELLED':
+                return
+            document, item_ids = build_candidate_document(run)
+            set_candidate(run, document)
+            transition_run(run, 'REVIEW_READY')
+            progress = task.get_progress()
+            progress.update({
+                'stage': 'review_ready',
+                'total': 1,
+                'completed': 1,
+                'failed': 0,
+                'item_ids': item_ids,
+            })
+            task.set_progress(progress)
+            task.status = 'COMPLETED'
+            task.completed_at = datetime.utcnow()
+            db.session.commit()
+        except Exception as exc:
+            db.session.rollback()
+            task = db.session.get(Task, task_id)
+            run = db.session.get(WorkspaceGenerationRun, run_id)
+            if task:
+                progress = task.get_progress()
+                progress.update({'stage': 'failed', 'failed': 1})
+                task.set_progress(progress)
+                task.status = 'FAILED'
+                task.error_message = generation_error_message(exc)
+                task.completed_at = datetime.utcnow()
+            if run:
+                run.status = 'FAILED'
+                run.error_code = generation_error_code(exc)
+                run.error_message = generation_error_message(exc)
+            db.session.commit()
+            raise
+
+
 def initialize_content_workspace_task(
     task_id: str,
     project_id: str,

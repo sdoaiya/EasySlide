@@ -245,3 +245,86 @@ def upgrade_video_document_v1_to_v2(document: dict) -> dict:
         'aspect_ratio': document.get('aspect_ratio', '16:9'),
         'scenes': scenes,
     }
+
+
+def _split_source_blocks(text: str) -> list[str]:
+    """Split raw brief source text into ordered blocks for first-pass scenes."""
+    blocks = [item.strip() for item in re.split(r'\n\s*\n+', text) if item.strip()]
+    if not blocks:
+        blocks = [item.strip() for item in text.splitlines() if item.strip()]
+    return blocks[:24]
+
+
+def _brief_scene_title(first_line: str, index: int) -> str:
+    cleaned = re.sub(
+        r'^(?:第\s*[0-9一二三四五六七八九十]+\s*(?:页|章节|部分)\s*[:：.\-]?\s*|(?:page|slide)\s*\d+\s*[:：.\-]?\s*)',
+        '', first_line,
+        flags=re.IGNORECASE,
+    ).strip()
+    return cleaned or f'场景 {index + 1}'
+
+
+def build_video_document_from_brief(brief: dict, options=None) -> dict:
+    """Mechanical first-pass video candidate from a frozen brief snapshot.
+
+    V1-shaped so the existing workspace validator and publish transaction
+    accept it; AI adaptation arrives in later stages. Never reads live
+    project or spine state.
+    """
+    options = options or {}
+    title = str(brief.get('title') or brief.get('topic') or '未命名视频')[:255]
+    blocks = _split_source_blocks(str(brief.get('source_text') or ''))
+    if not blocks:
+        blocks = [str(brief.get('topic') or title)]
+    target_duration_ms = max(1000, int(options.get('target_duration_seconds') or 120) * 1000)
+    per_scene_ms = max(3000, target_duration_ms // max(1, len(blocks)))
+    scenes = []
+    for index, block in enumerate(blocks):
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
+        scene_title = _brief_scene_title(lines[0] if lines else '', index + 1)
+        scenes.append(_scene(
+            _stable_id(f'scene.brief.{index + 1}', f'scene.{index + 1}'),
+            scene_title,
+            block,
+            visual_kind='blank',
+            source_ref=None,
+            source_revision=brief.get('revision'),
+            segments=[],
+        ))
+    return {
+        'schema_version': 1,
+        'title': title,
+        'aspect_ratio': options.get('aspect_ratio') or '16:9',
+        'scenes': scenes,
+    }
+
+
+def build_video_document_from_ppt_snapshot(snapshot: dict, options=None) -> dict:
+    """Mechanical first-pass video candidate from a frozen PPT snapshot.
+
+    Uses only the frozen pages (never live pages table state), preserving
+    page ids and source revisions for the review page.
+    """
+    options = options or {}
+    title = str(snapshot.get('project_title') or '未命名视频')[:255]
+    scenes = []
+    for page in snapshot.get('pages') or []:
+        scene_title = str(page.get('title') or f'Page {(page.get("order_index") or 0) + 1}')
+        narration = page.get('narration') or ''
+        narration_text = narration if isinstance(narration, str) else str(narration)
+        segments = narration if isinstance(narration, list) else []
+        scenes.append(_scene(
+            _stable_id(f'scene.page.{page.get("page_id")}', f'scene.{len(scenes) + 1}'),
+            scene_title,
+            narration_text or scene_title,
+            visual_kind='native_scene' if page.get('visual_kind') == 'native_scene' else 'page',
+            source_ref=page.get('page_id'),
+            source_revision=page.get('page_revision'),
+            segments=segments,
+        ))
+    return {
+        'schema_version': 1,
+        'title': title,
+        'aspect_ratio': options.get('aspect_ratio') or '16:9',
+        'scenes': scenes,
+    }

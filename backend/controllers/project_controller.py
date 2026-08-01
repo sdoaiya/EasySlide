@@ -61,6 +61,7 @@ ASYNC_EXPORT_TASK_TYPES = {
 }
 PAUSABLE_TASK_TYPES = ASYNC_EXPORT_TASK_TYPES | {
     'GENERATE_IMAGES', 'INITIALIZE_CONTENT_WORKSPACE', 'RECOVER_IMAGE_SCENES',
+    'GENERATE_WORKSPACE_CANDIDATE',
 }
 MAX_IMAGE_GENERATION_WORKERS = 4
 ACTIVE_TASK_STATUSES = {'PENDING', 'PROCESSING', 'RUNNING'}
@@ -69,6 +70,7 @@ WORKSPACE_ACTIVE_TASK_TYPES = {
     'INITIALIZE_CONTENT_WORKSPACE',
     'EXPORT_VIDEO_WORKSPACE',
     'EXPORT_PODCAST_WORKSPACE',
+    'GENERATE_WORKSPACE_CANDIDATE',
 }
 WORKSPACE_READY_STAGES = {
     'READY', 'COMPLETED', 'EXPORTED', 'FINAL',
@@ -1943,6 +1945,40 @@ def resume_export_task(project_id, task_id):
             from controllers.content_workspace_controller import submit_workspace_task
 
             submit_workspace_task(task, current_app._get_current_object())
+        except Exception as exc:
+            task.status = 'PAUSED'
+            task.error_message = str(exc)
+            db.session.commit()
+            return error_response('SERVER_ERROR', str(exc), 500)
+        return success_response(task.to_dict())
+    if task.task_type == 'GENERATE_WORKSPACE_CANDIDATE':
+        # 重启/中断后恢复：任务只携带 run_id，从运行记录重读冻结快照（阶段2）
+        if task.status not in {'PAUSED', 'FAILED'}:
+            return success_response(task.to_dict())
+        if task_manager.is_task_active(task.id):
+            task.status = 'PROCESSING'
+            task.error_message = None
+            db.session.commit()
+            return success_response(task.to_dict())
+        resume = task.get_progress().get('_resume')
+        if not isinstance(resume, dict) or resume.get('kind') != 'workspace-candidate':
+            return bad_request('This workspace candidate task cannot be resumed')
+        run_id = resume.get('kwargs', {}).get('run_id')
+        if not run_id:
+            return bad_request('This workspace candidate task cannot be resumed')
+        task.status = 'PENDING'
+        task.error_message = None
+        task.completed_at = None
+        db.session.commit()
+        try:
+            from services.task_manager import generate_workspace_candidate_task
+
+            task_manager.submit_task(
+                task.id,
+                generate_workspace_candidate_task,
+                run_id=run_id,
+                app=current_app._get_current_object(),
+            )
         except Exception as exc:
             task.status = 'PAUSED'
             task.error_message = str(exc)

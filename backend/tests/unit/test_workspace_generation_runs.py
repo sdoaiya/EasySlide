@@ -409,7 +409,7 @@ class TestV1V2Adapters:
         schema = Draft202012Validator(json.loads(
             (_SHARED_DIR / 'video-workspace-v2.schema.json').read_text(encoding='utf-8'),
         ))
-        assert not sorted(schema.iter_errors(v2)), 'V2 文档必须通过 V2 schema'
+        assert not list(schema.iter_errors(v2)), 'V2 文档必须通过 V2 schema'
 
     def test_podcast_v1_to_v2_adapter_and_schema(self):
         from jsonschema import Draft202012Validator
@@ -448,7 +448,7 @@ class TestV1V2Adapters:
         schema = Draft202012Validator(json.loads(
             (_SHARED_DIR / 'podcast-workspace-v2.schema.json').read_text(encoding='utf-8'),
         ))
-        assert not sorted(schema.iter_errors(v2)), 'V2 文档必须通过 V2 schema'
+        assert not list(schema.iter_errors(v2)), 'V2 文档必须通过 V2 schema'
 
 
 class TestGenerationRunApi:
@@ -470,21 +470,27 @@ class TestGenerationRunApi:
         from models import WorkspaceGenerationRun, db
         from services.workspace_generation_service import set_candidate, transition_run
 
-        project_id = client.post('/api/projects', json={
-            'creation_type': 'idea',
-            'idea_prompt': '完整流程',
-            'initial_workspace': 'ppt',
-        }).get_json()['data']['project_id']
+        # 任务由本用例自行驱动，拦截后台线程提交
+        from controllers import workspace_generation_controller as controller
+        controller.task_manager.submit_task = lambda *a, **k: None
+        try:
+            project_id = client.post('/api/projects', json={
+                'creation_type': 'idea',
+                'idea_prompt': '完整流程',
+                'initial_workspace': 'ppt',
+            }).get_json()['data']['project_id']
 
-        created = client.post(
-            f'/api/projects/{project_id}/workspace-generation-runs',
-            json={
-                'target_workspace_kind': 'video',
-                'source_kind': 'brief',
-                'mode': 'direct',
-                'options': {'aspect_ratio': '16:9'},
-            },
-        )
+            created = client.post(
+                f'/api/projects/{project_id}/workspace-generation-runs',
+                json={
+                    'target_workspace_kind': 'video',
+                    'source_kind': 'brief',
+                    'mode': 'direct',
+                    'options': {'aspect_ratio': '16:9'},
+                },
+            )
+        finally:
+            del controller.task_manager.submit_task
         assert created.status_code == 202
         data = created.get_json()['data']
         assert data['status'] == 'PENDING'

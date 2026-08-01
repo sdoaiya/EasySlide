@@ -22,6 +22,7 @@ from services.workspace_generation_service import (
     publish_run,
     transition_run,
 )
+from services.task_manager import generate_workspace_candidate_task, task_manager
 from utils import bad_request, error_response, not_found, success_response
 
 workspace_generation_bp = Blueprint(
@@ -87,7 +88,40 @@ def create_run(project_id):
             page_ids=page_ids,
             parent_run_id=data.get('parent_run_id'),
         )
+        # 任务输入只保存运行 ID；冻结源快照由任务从运行记录读取（阶段2）。
+        from models import Task
+
+        task = Task(
+            project_id=project.id,
+            task_type='GENERATE_WORKSPACE_CANDIDATE',
+            status='PENDING',
+        )
+        task.set_progress({
+            'total': 1,
+            'completed': 0,
+            'failed': 0,
+            'stage': 'queued',
+            'item_ids': [],
+            '_resume': {
+                'kind': 'workspace-candidate',
+                'kwargs': {'run_id': run.id},
+            },
+        })
+        db.session.add(task)
+        db.session.flush()
+        run.task_id = task.id
         db.session.commit()
+        try:
+            task_manager.submit_task(
+                task.id,
+                generate_workspace_candidate_task,
+                run_id=run.id,
+                app=current_app._get_current_object(),
+            )
+        except Exception as exc:
+            task.status = 'PAUSED'
+            task.error_message = str(exc)
+            db.session.commit()
         return success_response({
             **run.to_dict(),
             'result_route': f'/project/{project.id}/{target}/review/{run.id}',
