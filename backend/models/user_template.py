@@ -24,7 +24,7 @@ class UserTemplate(db.Model):
         """Convert to dictionary"""
         # Use thumbnail for preview if available
         if self.thumb_path:
-            thumb_url = f'/files/user-templates/{self.id}/{_resolve_template_filename(self.thumb_path, self.id)}'
+            thumb_url = f'/files/user-templates/{self.id}/{_resolve_template_filename(self.thumb_path, self.id, thumbnail=True)}'
         else:
             thumb_url = None
 
@@ -42,7 +42,7 @@ class UserTemplate(db.Model):
 
 
 
-def _resolve_template_filename(relative_path, template_id):
+def _resolve_template_filename(relative_path, template_id, thumbnail=False):
     """历史记录的文件名可能缺扩展名（旧版本写入 'template'），
     探测磁盘上的实际文件保证 URL 可加载。"""
     name = str(relative_path or '').split('/')[-1]
@@ -58,10 +58,12 @@ def _resolve_template_filename(relative_path, template_id):
         )
     except Exception:
         return name
-    for candidate in (
-        'template-thumb.webp', 'template-thumb.jpg', 'template-thumb.png',
-        'template.png', 'template.jpg', 'template.webp',
-    ):
+    candidates = (
+        ('template-thumb.webp', 'template-thumb.jpg', 'template-thumb.png')
+        if thumbnail else
+        ('template.png', 'template.jpg', 'template.webp')
+    )
+    for candidate in candidates:
         if os.path.exists(os.path.join(base, candidate)):
             return candidate
     return name

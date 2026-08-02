@@ -230,7 +230,7 @@ def _load_catalog_aggregates(project_ids):
     keyed by project id with page/workspace/task aggregates and a cover URL.
     """
     from models import Page, ProjectWorkspace, Task, db
-    from sqlalchemy import case, func
+    from sqlalchemy import and_, case, func, or_
 
     aggregates = {
         pid: {
@@ -248,13 +248,22 @@ def _load_catalog_aggregates(project_ids):
         return aggregates
     active_statuses = tuple(ACTIVE_PAGE_STATUSES)
     completed_statuses = ('COMPLETED', 'NATIVE_GENERATED')
+    current_image = and_(
+        PageImageVersion.page_id == Page.id,
+        PageImageVersion.is_current.is_(True),
+        PageImageVersion.image_path.isnot(None),
+    )
     page_rows = (
         db.session.query(
             Page.project_id,
             func.count(Page.id),
             func.sum(case((Page.status.in_(active_statuses), 1), else_=0)),
-            func.sum(case((Page.status.in_(completed_statuses), 1), else_=0)),
+            func.count(func.distinct(case((or_(
+                Page.status.in_(completed_statuses),
+                PageImageVersion.id.isnot(None),
+            ), Page.id)))),
         )
+        .outerjoin(PageImageVersion, current_image)
         .filter(Page.project_id.in_(project_ids))
         .group_by(Page.project_id)
         .all()
@@ -277,30 +286,26 @@ def _load_catalog_aggregates(project_ids):
         .order_by(Page.order_index.asc())
         .all()
     )
-    if cover_rows:
-        seen_covers = set()
-        legacy_covers = []
-        for pid, path in cover_rows:
-            if pid in seen_covers:
-                continue
-            seen_covers.add(pid)
-            aggregates[pid]['cover_url'] = path
-    else:
-        cover_rows = (
-            db.session.query(Page.project_id, Page.generated_image_path)
-            .filter(
-                Page.project_id.in_(project_ids),
-                Page.generated_image_path.isnot(None),
-            )
-            .order_by(Page.order_index.asc())
-            .all()
+    seen_covers = set()
+    for pid, path in cover_rows:
+        if pid in seen_covers:
+            continue
+        seen_covers.add(pid)
+        aggregates[pid]['cover_url'] = path
+    legacy_cover_rows = (
+        db.session.query(Page.project_id, Page.generated_image_path)
+        .filter(
+            Page.project_id.in_(project_ids),
+            Page.generated_image_path.isnot(None),
         )
-        seen_covers = set()
-        for pid, path in cover_rows:
-            if pid in seen_covers:
-                continue
-            seen_covers.add(pid)
-            aggregates[pid]['cover_url'] = path
+        .order_by(Page.order_index.asc())
+        .all()
+    )
+    for pid, path in legacy_cover_rows:
+        if pid in seen_covers:
+            continue
+        seen_covers.add(pid)
+        aggregates[pid]['cover_url'] = path
     for workspace in ProjectWorkspace.query.filter(
         ProjectWorkspace.project_id.in_(project_ids),
     ).all():
@@ -359,6 +364,7 @@ def _bucket_from_aggregate(agg) -> str:
     if (
         ppt_stage in {'COMPLETED', 'NATIVE_DECK_GENERATED'}
         or 'completed' in workspace_statuses
+        or agg['export_completed']
     ):
         return 'completed'
     if (
@@ -408,20 +414,35 @@ def _project_summary(project, agg) -> dict:
 def _get_project_dashboard_stats():
     """SQL-aggregated dashboard counters; read-only, never instantiates all rows."""
     from models import Project, db
-    from sqlalchemy import case, func
+    from sqlalchemy import and_, case, func, or_
 
     total = db.session.query(func.count(Project.id)).scalar() or 0
     if total == 0:
         return {'total': 0, 'completed': 0, 'generating': 0, 'in_progress': 0}
+    completed_statuses = ('COMPLETED', 'NATIVE_GENERATED')
     page_rows = (
         db.session.query(
             Page.project_id,
+            func.count(Page.id),
             func.sum(case((Page.status.in_(tuple(ACTIVE_PAGE_STATUSES)), 1), else_=0)),
+            func.count(func.distinct(case((or_(
+                Page.status.in_(completed_statuses),
+                PageImageVersion.id.isnot(None),
+            ), Page.id)))),
         )
+        .outerjoin(PageImageVersion, and_(
+            PageImageVersion.page_id == Page.id,
+            PageImageVersion.is_current.is_(True),
+            PageImageVersion.image_path.isnot(None),
+        ))
         .group_by(Page.project_id)
         .all()
     )
-    active_pages = {pid for pid, _count in page_rows if _count}
+    active_pages = {pid for pid, _total, active, _completed in page_rows if active}
+    completed_page_projects = {
+        pid for pid, page_total, _active, completed_pages in page_rows
+        if page_total and page_total == completed_pages
+    }
     task_rows = (
         db.session.query(Task.project_id)
         .filter(Task.status.in_(tuple(ACTIVE_TASK_STATUSES)))
@@ -460,21 +481,22 @@ def _get_project_dashboard_stats():
             }:
                 generating.add(pid)
                 break
-    completed = 0
-    for pid, rows in by_project.items():
+    completed_projects = set()
+    for pid in set(by_project) | completed_page_projects | exported_projects:
         if pid in generating:
             continue
+        rows = by_project.get(pid, [])
         for kind, stage, state in rows:
             if kind == 'ppt' and stage in {'COMPLETED', 'NATIVE_DECK_GENERATED'}:
-                completed += 1
+                completed_projects.add(pid)
                 break
             if kind != 'ppt' and (state == 'ready' or stage in WORKSPACE_READY_STAGES):
-                completed += 1
+                completed_projects.add(pid)
                 break
         else:
-            # 成功导出的正式交付物视为完成，即使可编辑工作区仍为草稿
-            if pid in exported_projects:
-                completed += 1
+            if pid in exported_projects or pid in completed_page_projects:
+                completed_projects.add(pid)
+    completed = len(completed_projects)
     return {
         'total': total,
         'completed': completed,
@@ -902,49 +924,73 @@ def list_projects():
         limit = min(max(1, limit), 100)
         offset = max(0, offset)
 
-        query = Project.query.order_by(desc(Project.updated_at))
-        if status == 'generating':
-            query = query.filter(db.or_(
-                db.exists().where(
-                    db.and_(
-                        Page.project_id == Project.id,
-                        Page.status.in_(ACTIVE_PAGE_STATUSES),
-                    ),
+        generating_filter = db.or_(
+            db.exists().where(db.and_(
+                Page.project_id == Project.id,
+                Page.status.in_(ACTIVE_PAGE_STATUSES),
+            )),
+            db.exists().where(db.and_(
+                ProjectWorkspace.project_id == Project.id,
+                ProjectWorkspace.stage.in_(('GENERATING_DESCRIPTIONS', 'GENERATING_IMAGES')),
+            )),
+            db.exists().where(db.and_(
+                ProjectWorkspace.project_id == Project.id,
+                ProjectWorkspace.kind.in_(('video', 'podcast')),
+                db.or_(
+                    ProjectWorkspace.stage.like('GENERATING%'),
+                    ProjectWorkspace.stage.in_(('PENDING', 'PROCESSING', 'RUNNING', 'QUEUED', 'EXPORTING')),
                 ),
-                db.exists().where(
+            )),
+            db.exists().where(db.and_(
+                Task.project_id == Project.id,
+                Task.status.in_(ACTIVE_TASK_STATUSES),
+            )),
+        )
+        current_page_image = db.exists().where(db.and_(
+            PageImageVersion.page_id == Page.id,
+            PageImageVersion.is_current.is_(True),
+            PageImageVersion.image_path.isnot(None),
+        ))
+        has_pages = db.exists().where(Page.project_id == Project.id)
+        has_incomplete_pages = db.exists().where(db.and_(
+            Page.project_id == Project.id,
+            ~db.or_(
+                Page.status.in_(('COMPLETED', 'NATIVE_GENERATED')),
+                current_page_image,
+            ),
+        ))
+        completed_filter = db.or_(
+            db.and_(has_pages, ~has_incomplete_pages),
+            db.exists().where(db.and_(
+                ProjectWorkspace.project_id == Project.id,
+                db.or_(
                     db.and_(
-                        ProjectWorkspace.project_id == Project.id,
-                        ProjectWorkspace.stage.in_(
-                            ('GENERATING_DESCRIPTIONS', 'GENERATING_IMAGES'),
-                        ),
+                        ProjectWorkspace.kind == 'ppt',
+                        ProjectWorkspace.stage.in_(('COMPLETED', 'NATIVE_DECK_GENERATED')),
                     ),
-                ),
-                db.exists().where(
                     db.and_(
-                        ProjectWorkspace.project_id == Project.id,
                         ProjectWorkspace.kind.in_(('video', 'podcast')),
                         db.or_(
-                            ProjectWorkspace.stage.like('GENERATING%'),
-                            ProjectWorkspace.stage.in_(
-                                ('PENDING', 'PROCESSING', 'RUNNING', 'QUEUED', 'EXPORTING'),
-                            ),
+                            ProjectWorkspace.state == 'ready',
+                            ProjectWorkspace.stage.in_(tuple(WORKSPACE_READY_STAGES)),
                         ),
                     ),
                 ),
-                db.exists().where(
-                    db.and_(
-                        Task.project_id == Project.id,
-                        Task.status.in_(ACTIVE_TASK_STATUSES),
-                    ),
-                ),
-            ))
-        elif status in {'completed', 'in_progress'}:
-            query = query.filter(~db.exists().where(
-                db.and_(
-                    Page.project_id == Project.id,
-                    Page.status.in_(ACTIVE_PAGE_STATUSES),
-                ),
-            ))
+            )),
+            db.exists().where(db.and_(
+                Task.project_id == Project.id,
+                Task.task_type.like('EXPORT_%'),
+                Task.status == 'COMPLETED',
+            )),
+        )
+
+        query = Project.query.order_by(desc(Project.updated_at))
+        if status == 'generating':
+            query = query.filter(generating_filter)
+        elif status == 'completed':
+            query = query.filter(~generating_filter, completed_filter)
+        elif status == 'in_progress':
+            query = query.filter(~generating_filter, ~completed_filter)
         if workspace_kind:
             if workspace_kind == 'ppt':
                 query = query.filter(~db.exists().where(

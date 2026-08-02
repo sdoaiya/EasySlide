@@ -86,3 +86,46 @@ class TestCatalogReadOnly:
         item = data['projects'][0]
         for field in ('project_id', 'title', 'updated_at', 'workspace_states', 'dashboard_status', 'page_count', 'active_task_count'):
             assert field in item, f'ProjectSummary 缺少字段 {field}'
+
+    def test_mixes_current_version_and_legacy_covers_without_losing_completion(self, client):
+        current_id, legacy_id, draft_id = _seed_projects(client, 3)
+        with client.application.app_context():
+            from models import Page, PageImageVersion, ProjectWorkspace, Task, db
+
+            project_ids = (current_id, legacy_id, draft_id)
+            Task.query.filter(Task.project_id.in_(project_ids)).delete(synchronize_session=False)
+            Page.query.filter(Page.project_id.in_(project_ids)).delete(synchronize_session=False)
+            ProjectWorkspace.query.filter(ProjectWorkspace.project_id.in_(project_ids)).update(
+                {'stage': 'DRAFT', 'state': 'draft'},
+                synchronize_session=False,
+            )
+
+            current_page = Page(project_id=current_id, order_index=0, status='DESCRIPTION_GENERATED')
+            legacy_page = Page(
+                project_id=legacy_id,
+                order_index=0,
+                status='COMPLETED',
+                generated_image_path='legacy/cover.png',
+            )
+            db.session.add_all([current_page, legacy_page])
+            db.session.flush()
+            db.session.add(PageImageVersion(
+                page_id=current_page.id,
+                image_path='current/cover.webp',
+                version_number=1,
+                is_current=True,
+            ))
+            db.session.commit()
+
+        response = client.get('/api/projects?limit=10')
+        items = {item['project_id']: item for item in response.get_json()['data']['projects']}
+
+        assert items[current_id]['cover_url'].endswith('/cover.webp')
+        assert items[current_id]['dashboard_status'] == 'completed'
+        assert items[legacy_id]['cover_url'].endswith('/cover.png')
+        assert items[legacy_id]['dashboard_status'] == 'completed'
+
+        completed = client.get('/api/projects?limit=10&status=completed').get_json()['data']['projects']
+        in_progress = client.get('/api/projects?limit=10&status=in_progress').get_json()['data']['projects']
+        assert {item['project_id'] for item in completed} == {current_id, legacy_id}
+        assert {item['project_id'] for item in in_progress} == {draft_id}
