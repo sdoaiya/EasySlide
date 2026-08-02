@@ -4,26 +4,26 @@
 
 :root {
   color-scheme: light;
-  --app-background: #F5F5F7;
-  --app-canvas: #EDEEF0;
-  --app-surface: #FFFFFF;
-  --app-surface-muted: #F7F7F9;
-  --app-surface-hover: #ECECF0;
+  --app-background: #F1F3F2;
+  --app-canvas: #E7EAE9;
+  --app-surface: #FAFBFA;
+  --app-surface-muted: #F3F5F4;
+  --app-surface-hover: #E9EDEB;
   --app-surface-secondary: var(--app-surface-muted);
-  --app-text: #1D1D1F;
-  --app-text-secondary: #5F5F66;
-  --app-text-tertiary: #86868B;
-  --app-on-color: #FFFFFF;
+  --app-text: #171A1C;
+  --app-text-secondary: #596266;
+  --app-text-tertiary: #7B8588;
+  --app-on-color: #F7FAF9;
   --app-text-muted: var(--app-text-tertiary);
-  --app-border: rgba(60, 60, 67, 0.18);
-  --app-border-strong: rgba(60, 60, 67, 0.32);
+  --app-border: rgba(37, 54, 55, 0.14);
+  --app-border-strong: rgba(37, 54, 55, 0.28);
   --app-border-hover: var(--app-border-strong);
   --app-border-soft: rgba(52, 73, 105, 0.08);
-  --app-accent: #007AFF;
-  --app-accent-hover: #006FE8;
-  --app-accent-soft: rgba(0, 122, 255, 0.16);
-  --app-primary-action: #1D1D1F;
-  --app-primary-action-hover: #000000;
+  --app-accent: #126D78;
+  --app-accent-hover: #0C5B64;
+  --app-accent-soft: rgba(18, 109, 120, 0.14);
+  --app-primary-action: #171A1C;
+  --app-primary-action-hover: #282D30;
   --app-focus: var(--app-accent);
   --app-link: var(--app-accent);
   --app-index-red: #C93F46;
@@ -54,11 +54,11 @@
   --app-radius-card: 8px;
   --app-radius-modal: 12px;
   --app-radius-panel: var(--app-radius-modal);
-  --app-shadow-soft: 0 8px 24px rgba(0, 0, 0, 0.12);
-  --app-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.06);
-  --app-shadow-medium: 0 8px 24px rgba(0, 0, 0, 0.12);
-  --app-shadow-control: 0 1px 2px rgba(0, 0, 0, 0.08);
-  --app-shadow-floating: 0 16px 42px rgba(0, 0, 0, 0.18);
+  --app-shadow-soft: 0 8px 24px rgba(34, 54, 56, 0.10);
+  --app-shadow-card: 0 1px 2px rgba(34, 54, 56, 0.06);
+  --app-shadow-medium: 0 10px 28px rgba(34, 54, 56, 0.13);
+  --app-shadow-control: 0 1px 2px rgba(34, 54, 56, 0.08);
+  --app-shadow-floating: 0 18px 46px rgba(34, 54, 56, 0.18);
   --app-shadow-elevated: var(--app-shadow-floating);
 
   /* Legacy utility aliases keep older colorful UI accents alive. */
@@ -105,24 +105,24 @@
 
 .dark {
   color-scheme: dark;
-  --app-background: #151517;
-  --app-canvas: #202023;
-  --app-surface: #1C1C1E;
-  --app-surface-muted: #242426;
-  --app-surface-hover: #303033;
+  --app-background: #111314;
+  --app-canvas: #181C1D;
+  --app-surface: #171A1B;
+  --app-surface-muted: #202526;
+  --app-surface-hover: #293031;
   --app-surface-secondary: var(--app-surface-muted);
-  --app-text: #F5F5F7;
-  --app-text-secondary: #C7C7CC;
-  --app-text-tertiary: #98989F;
-  --app-on-color: #FFFFFF;
+  --app-text: #EEF2F0;
+  --app-text-secondary: #BCC5C2;
+  --app-text-tertiary: #87928F;
+  --app-on-color: #F4F7F6;
   --app-text-muted: var(--app-text-tertiary);
   --app-border: rgba(84, 84, 88, 0.65);
   --app-border-strong: rgba(99, 99, 102, 0.9);
   --app-border-hover: var(--app-border-strong);
   --app-border-soft: rgba(84, 84, 88, 0.42);
-  --app-accent: #0A84FF;
-  --app-accent-hover: #409CFF;
-  --app-accent-soft: rgba(10, 132, 255, 0.3);
+  --app-accent: #62B7B8;
+  --app-accent-hover: #83C9C9;
+  --app-accent-soft: rgba(98, 183, 184, 0.22);
   --app-primary-action: #F5F5F7;
   --app-primary-action-hover: #FFFFFF;
   --app-focus: var(--app-accent);
