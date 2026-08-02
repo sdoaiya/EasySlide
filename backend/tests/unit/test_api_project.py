@@ -450,6 +450,7 @@ class TestProjectList:
         }
 
     def test_missing_image_downgrades_completed_project_before_counting(self, client):
+        # 阶段3 契约（§7.5.2）：列表 GET 只读，不再校准磁盘状态或写库
         from models import db, Page, Project
 
         project = Project(id='stats-missing-image', creation_type='idea', status='active')
@@ -469,13 +470,10 @@ class TestProjectList:
 
         db.session.refresh(project)
         db.session.refresh(page)
-        assert data['stats']['completed'] == 0
-        assert data['stats']['in_progress'] == 1
-        from services.ppt_workspace_service import get_ppt_status
-        assert project.status == 'active'
-        assert get_ppt_status(project) == 'DESCRIPTIONS_GENERATED'
-        assert page.status == 'DESCRIPTION_GENERATED'
-        assert page.generated_image_path is None
+        # 存储状态如实反映，GET 不产生校准写入
+        assert data['stats']['completed'] == 1
+        assert page.status == 'COMPLETED'
+        assert page.generated_image_path == 'generated/missing-from-disk.png'
 
     def test_project_list_pauses_stale_image_generation_tasks_before_counting(self, client):
         from models import db, Page, Project, Task
@@ -510,18 +508,16 @@ class TestProjectList:
         db.session.refresh(task)
         listed_project = next(item for item in data['projects'] if item['project_id'] == project.id)
 
-        assert task.status == 'PAUSED'
-        assert task.get_progress()['status'] == 'paused'
-        assert page.status == 'DESCRIPTION_GENERATED'
-        from services.ppt_workspace_service import get_ppt_status
-        assert project.status == 'active'
-        assert get_ppt_status(project) == 'DESCRIPTIONS_GENERATED'
-        assert listed_project['active_image_tasks'][0]['status'] == 'PAUSED'
+        # 阶段3 契约（§7.5.2）：列表 GET 不暂停陈旧任务；活动任务如实计入 generating
+        assert task.status == 'PROCESSING'
+        assert page.status == 'GENERATING'
+        assert listed_project['dashboard_status'] == 'generating'
+        assert listed_project['active_task_count'] == 1
         assert data['stats'] == {
             'total': 1,
             'completed': 0,
-            'generating': 0,
-            'in_progress': 1,
+            'generating': 1,
+            'in_progress': 0,
         }
 
     def test_native_project_detail_does_not_run_image_file_calibration(self, client):

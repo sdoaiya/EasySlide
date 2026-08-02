@@ -3,6 +3,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import i18n from '@/i18n';
 import { History } from '@/pages/History';
+import { useProjectCatalogStore } from '@/store/useProjectCatalogStore';
 
 const endpointMocks = vi.hoisted(() => ({
   listProjects: vi.fn(),
@@ -43,6 +44,8 @@ describe('History EasySlide clone', () => {
   beforeEach(async () => {
     await i18n.changeLanguage('zh');
     localStorage.clear();
+    // 目录 store 的 30s 新鲜窗口会缓存首个响应；每个用例重置快照
+    useProjectCatalogStore.setState({ snapshots: {}, inflight: {}, lastFetchedAt: {} });
     endpointMocks.listProjects.mockResolvedValue({ data: { projects: [], total: 0 } });
     endpointMocks.syncProject.mockResolvedValue(undefined);
   });

@@ -249,6 +249,7 @@ def ensure_sqlite_content_project_schema(connection: sqlite3.Connection) -> None
         CREATE INDEX IF NOT EXISTS ix_workspace_generation_runs_parent_run_id ON workspace_generation_runs(parent_run_id);
         CREATE INDEX IF NOT EXISTS ix_workspace_generation_runs_project_target_status
             ON workspace_generation_runs(project_id, target_workspace_kind, status);
+        CREATE INDEX IF NOT EXISTS ix_projects_updated_at ON projects(updated_at);
 
         CREATE TABLE IF NOT EXISTS orphan_task_archive (
             original_task_id TEXT PRIMARY KEY,

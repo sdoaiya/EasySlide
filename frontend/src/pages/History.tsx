@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Trash2, LayoutDashboard, FileText, RefreshCw, CheckCircle, Clock3, Layers3, Plus, Search } from 'lucide-react';
 import { getStaticAssetUrl } from '@/api/client';
@@ -7,10 +7,10 @@ import { ProjectCard } from '@/components/history/ProjectCard';
 import { useProjectStore } from '@/store/useProjectStore';
 import { useT } from '@/hooks/useT';
 import * as api from '@/api/endpoints';
-import { normalizeProject } from '@/utils';
 import { getFirstPageImage, getProjectTitle, getProjectRoute } from '@/utils/projectUtils';
 import type { Project, ProjectDashboardStats } from '@/types';
 import { useExportTasksStore } from '@/store/useExportTasksStore';
+import { useProjectCatalogStore } from '@/store/useProjectCatalogStore';
 
 // 页面特有翻译 - AI 可以直接看到所有文案
 const historyI18n = {
@@ -165,27 +165,56 @@ export const History: React.FC<{ showNavigation?: boolean }> = ({ showNavigation
 
   const loadProjects = useCallback(async (page: number) => {
     setIsLoading(true);
-    setError(null);
     try {
-      const offset = (page - 1) * pageSize;
-      const response = await api.listProjects(pageSize, offset, statusFilter || undefined, workspaceFilter || undefined);
-      if (response.data?.projects) {
-        const normalizedProjects = response.data.projects.map(normalizeProject);
-        setProjects(normalizedProjects);
-        setTotalProjects(response.data.total ?? 0);
-        setProjectStats(response.data.stats ?? null);
-      }
+      const snapshot = await useProjectCatalogStore.getState().loadCatalog({
+        limit: pageSize,
+        offset: (page - 1) * pageSize,
+        status: statusFilter,
+        workspace: workspaceFilter,
+      });
+      setProjects(snapshot.projects);
+      setTotalProjects(snapshot.total);
+      setProjectStats(snapshot.stats);
+      setError(null);
     } catch (err: any) {
       console.error('加载项目失败:', err);
+      // 失败保留已有内容（快照），只显示非阻塞错误与重试
       setError(err.message || t('history.loadFailed'));
     } finally {
       setIsLoading(false);
     }
   }, [pageSize, statusFilter, workspaceFilter]);
 
+  const catalogPageKey = useMemo(() => ({
+    limit: pageSize,
+    offset: (currentPage - 1) * pageSize,
+    status: statusFilter,
+    workspace: workspaceFilter,
+  }), [pageSize, currentPage, statusFilter, workspaceFilter]);
+
+  useEffect(() => {
+    // 有最近成功快照：立即展示作品墙，后台再校准（计划 §7.5.3）
+    const snapshot = useProjectCatalogStore.getState().getSnapshot(catalogPageKey);
+    if (snapshot) {
+      setProjects(snapshot.projects);
+      setTotalProjects(snapshot.total);
+      setProjectStats(snapshot.stats);
+      setIsLoading(false);
+    }
+  }, [catalogPageKey]);
+
   useEffect(() => {
     loadProjects(currentPage);
   }, [currentPage, pageSize, statusFilter, workspaceFilter]);
+
+  useEffect(() => {
+    // 窗口重新获得焦点只在上次校准超过 30 秒时刷新
+    const onFocus = () => {
+      useProjectCatalogStore.getState().refreshOnFocus(catalogPageKey);
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [catalogPageKey]);
 
   const handleWorkspaceFilter = useCallback((value: 'ppt' | 'video' | 'podcast') => {
     setWorkspaceFilter((current) => current === value ? null : value);
@@ -296,6 +325,9 @@ export const History: React.FC<{ showNavigation?: boolean }> = ({ showNavigation
         setCurrentProject(null);
         deletedCurrentProject = true;
       }
+
+      // 目录摘要失效，下次读取强制刷新
+      useProjectCatalogStore.getState().invalidate(catalogPageKey);
 
       // 清空选择
       setSelectedProjects(new Set());
@@ -482,6 +514,7 @@ export const History: React.FC<{ showNavigation?: boolean }> = ({ showNavigation
       const targetProject = projects.find((p) => (p.id || p.project_id) === projectId);
       if (!targetProject) return;
       await api.updateProject(projectId, { project_title: nextTitle });
+      useProjectCatalogStore.getState().invalidate(catalogPageKey);
 
       // 更新本地状态
       setProjects(prev => prev.map(p => {
@@ -578,7 +611,8 @@ export const History: React.FC<{ showNavigation?: boolean }> = ({ showNavigation
           <div className="flex items-center justify-center py-12">
             <Loading message={t('common.loading')} />
           </div>
-        ) : error ? (
+        ) : projects.length === 0 && error ? (
+          // 无快照且加载失败：显示错误与重试（计划 §7.5.3 非阻塞）
           <section className="border-y border-[var(--app-border)] py-10 text-center">
             <p className="mb-4 text-sm text-[var(--app-text-secondary)]">{error}</p>
             <Button variant="primary" onClick={() => loadProjects(currentPage)}>
@@ -597,6 +631,14 @@ export const History: React.FC<{ showNavigation?: boolean }> = ({ showNavigation
           </section>
         ) : (
           <section aria-labelledby="project-list-title">
+            {error && (
+              <div className="mb-3 flex items-center gap-2 rounded-[var(--app-radius-control)] border border-[var(--app-warning-soft)] bg-[var(--app-warning-soft)] px-3 py-2 text-xs text-[var(--app-warning)]">
+                <span className="min-w-0 flex-1 truncate">{error}</span>
+                <Button variant="secondary" size="sm" onClick={() => loadProjects(currentPage)}>
+                  {t('common.retry')}
+                </Button>
+              </div>
+            )}
             <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <h2 id="project-list-title" className="text-[15px] font-semibold leading-[22px]">{t('history.listTitle')}</h2>

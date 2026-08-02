@@ -16,7 +16,7 @@ from sqlalchemy.orm import joinedload
 from werkzeug.exceptions import BadRequest
 from werkzeug.utils import secure_filename
 
-from models import db, Project, Page, PageImageVersion, Task, ReferenceFile
+from models import db, Project, Page, PageImageVersion, Task, ReferenceFile, ProjectWorkspace
 from models.project import normalize_native_image_settings
 from services import ProjectContext, FileService
 from services.ai_service_manager import get_ai_service
@@ -223,65 +223,237 @@ def _get_non_ppt_workspace_status(workspace, tasks):
     return 'in_progress'
 
 
-def _get_project_dashboard_stats():
-    """Calculate project counters across the full project set, not one page."""
-    all_projects = Project.query.options(
-        joinedload(Project.pages),
-        joinedload(Project.tasks),
-        joinedload(Project.workspaces),
-    ).all()
-    _calibrate_projects_for_listing(all_projects)
-    completed = 0
-    generating = 0
+def _load_catalog_aggregates(project_ids):
+    """Batch-load directory aggregates for one page of projects (no ORM N+1).
 
-    for project in all_projects:
-        bucket = _get_project_dashboard_bucket(project)
-        if bucket == 'generating':
-            generating += 1
-            continue
-        if bucket == 'completed':
-            completed += 1
-            continue
+    Read-only by contract: never writes, never calibrates. Returns a dict
+    keyed by project id with page/workspace/task aggregates and a cover URL.
+    """
+    from models import Page, ProjectWorkspace, Task, db
+    from sqlalchemy import case, func
 
-    total = len(all_projects)
-    return {
-        'total': total,
-        'completed': completed,
-        'generating': generating,
-        'in_progress': max(total - completed - generating, 0),
+    aggregates = {
+        pid: {
+            'page_count': 0,
+            'active_page_count': 0,
+            'completed_page_count': 0,
+            'cover_url': None,
+            'workspaces': [],
+            'active_task_count': 0,
+            'export_completed': set(),
+        }
+        for pid in project_ids
     }
+    if not project_ids:
+        return aggregates
+    active_statuses = tuple(ACTIVE_PAGE_STATUSES)
+    completed_statuses = ('COMPLETED', 'NATIVE_GENERATED')
+    page_rows = (
+        db.session.query(
+            Page.project_id,
+            func.count(Page.id),
+            func.sum(case((Page.status.in_(active_statuses), 1), else_=0)),
+            func.sum(case((Page.status.in_(completed_statuses), 1), else_=0)),
+        )
+        .filter(Page.project_id.in_(project_ids))
+        .group_by(Page.project_id)
+        .all()
+    )
+    for pid, count, active, completed in page_rows:
+        aggregates[pid]['page_count'] = int(count)
+        aggregates[pid]['active_page_count'] = int(active or 0)
+        aggregates[pid]['completed_page_count'] = int(completed or 0)
+    # 每个项目第一张有图的页面作为封面（order_index 最小）
+    cover_rows = (
+        db.session.query(Page.project_id, Page.generated_image_path)
+        .filter(
+            Page.project_id.in_(project_ids),
+            Page.generated_image_path.isnot(None),
+        )
+        .order_by(Page.order_index.asc())
+        .all()
+    )
+    seen_covers = set()
+    for pid, path in cover_rows:
+        if pid in seen_covers:
+            continue
+        seen_covers.add(pid)
+        aggregates[pid]['cover_url'] = path
+    for workspace in ProjectWorkspace.query.filter(
+        ProjectWorkspace.project_id.in_(project_ids),
+    ).all():
+        aggregates[workspace.project_id]['workspaces'].append(workspace)
+    active_task_statuses = tuple(ACTIVE_TASK_STATUSES)
+    task_rows = (
+        db.session.query(Task.project_id, Task.task_type, Task.status)
+        .filter(
+            Task.project_id.in_(project_ids),
+            Task.status.in_(active_task_statuses + ('COMPLETED',)),
+        )
+        .all()
+    )
+    for pid, task_type, status in task_rows:
+        if status == 'COMPLETED':
+            if task_type.startswith('EXPORT_'):
+                aggregates[pid]['export_completed'].add(task_type)
+            continue
+        aggregates[pid]['active_task_count'] += 1
+    return aggregates
 
 
-def _get_project_dashboard_bucket(project):
-    """Return the same status bucket used by the dashboard counters."""
-    pages = list(project.pages or [])
-    has_active_pages = any(page.status in ACTIVE_PAGE_STATUSES for page in pages)
-    ppt_status = get_ppt_status(project) if any(workspace.kind == 'ppt' for workspace in (project.workspaces or [])) else None
-    workspace_statuses = [
-        _get_non_ppt_workspace_status(workspace, project.tasks or [])
-        for workspace in (project.workspaces or [])
-        if workspace.kind in {'video', 'podcast'}
-    ]
+def _non_ppt_workspace_status_aggregate(workspace, agg):
+    """Reduce video/podcast workspace state to generating/completed/draft."""
+    stage = str(workspace.stage or '').strip().upper()
+    if stage.startswith('GENERATING') or stage in {
+        'PENDING', 'PROCESSING', 'RUNNING', 'QUEUED', 'EXPORTING',
+    }:
+        return 'generating'
+    export_type = f'EXPORT_{workspace.kind.upper()}_WORKSPACE'
+    if workspace.kind in {'video', 'podcast'} and export_type in agg['export_completed']:
+        return 'completed'
+    if workspace.state == 'ready' or stage in WORKSPACE_READY_STAGES:
+        return 'completed'
+    return 'draft'
+
+
+def _bucket_from_aggregate(agg) -> str:
+    """Dashboard status bucket computed from lightweight aggregates only."""
+    ppt_stage = None
+    has_ppt = False
+    workspace_statuses = []
+    for workspace in agg['workspaces']:
+        if workspace.kind == 'ppt':
+            has_ppt = True
+            ppt_stage = str(workspace.stage or '').strip().upper()
+        else:
+            workspace_statuses.append(_non_ppt_workspace_status_aggregate(workspace, agg))
     if (
-        ppt_status in {'GENERATING_DESCRIPTIONS', 'GENERATING_IMAGES'}
-        or has_active_pages
+        ppt_stage in {'GENERATING_DESCRIPTIONS', 'GENERATING_IMAGES'}
+        or agg['active_page_count'] > 0
         or 'generating' in workspace_statuses
+        or agg['active_task_count'] > 0
     ):
         return 'generating'
-
     if (
-        ppt_status in {'COMPLETED', 'NATIVE_DECK_GENERATED'}
+        ppt_stage in {'COMPLETED', 'NATIVE_DECK_GENERATED'}
         or 'completed' in workspace_statuses
     ):
         return 'completed'
-
-    if pages and all(
-        page.status in {'COMPLETED', 'NATIVE_GENERATED'}
-        or bool(page.generated_image_path)
-        for page in pages
+    if (
+        agg['page_count'] > 0
+        and agg['completed_page_count'] == agg['page_count']
     ):
         return 'completed'
     return 'in_progress'
+
+
+def _project_summary(project, agg) -> dict:
+    """Lightweight list DTO: no pages, no descriptions, no workspace docs."""
+    workspace_states = {
+        workspace.kind: workspace.state
+        for workspace in agg['workspaces']
+    }
+    cover_url = agg['cover_url']
+    if not cover_url:
+        for workspace in agg['workspaces']:
+            if getattr(workspace, 'cover_url', None):
+                cover_url = workspace.cover_url
+                break
+    return {
+        'project_id': project.id,
+        'title': project.project_title or project.idea_prompt or '未命名项目',
+        'updated_at': project.updated_at.isoformat() if project.updated_at else None,
+        'created_at': project.created_at.isoformat() if project.created_at else None,
+        'cover_url': cover_url,
+        'workspace_states': workspace_states,
+        # 轻量工作区列表：只含 kind/state，不含工作区文档
+        'workspaces': [
+            {'kind': workspace.kind, 'state': workspace.state}
+            for workspace in sorted(agg['workspaces'], key=lambda item: item.kind)
+        ],
+        'last_workspace': getattr(project, 'last_workspace', None),
+        'dashboard_status': _bucket_from_aggregate(agg),
+        'page_count': agg['page_count'],
+        'active_task_count': agg['active_task_count'],
+    }
+
+
+def _get_project_dashboard_stats():
+    """SQL-aggregated dashboard counters; read-only, never instantiates all rows."""
+    from models import Project, db
+    from sqlalchemy import case, func
+
+    total = db.session.query(func.count(Project.id)).scalar() or 0
+    if total == 0:
+        return {'total': 0, 'completed': 0, 'generating': 0, 'in_progress': 0}
+    page_rows = (
+        db.session.query(
+            Page.project_id,
+            func.sum(case((Page.status.in_(tuple(ACTIVE_PAGE_STATUSES)), 1), else_=0)),
+        )
+        .group_by(Page.project_id)
+        .all()
+    )
+    active_pages = {pid for pid, _count in page_rows if _count}
+    task_rows = (
+        db.session.query(Task.project_id)
+        .filter(Task.status.in_(tuple(ACTIVE_TASK_STATUSES)))
+        .distinct()
+        .all()
+    )
+    active_task_projects = {pid for (pid,) in task_rows}
+    export_rows = (
+        db.session.query(Task.project_id)
+        .filter(
+            Task.task_type.like('EXPORT_%'),
+            Task.status == 'COMPLETED',
+        )
+        .distinct()
+        .all()
+    )
+    exported_projects = {pid for (pid,) in export_rows}
+    workspace_rows = (
+        db.session.query(ProjectWorkspace.project_id, ProjectWorkspace.kind, ProjectWorkspace.stage, ProjectWorkspace.state)
+        .all()
+    )
+    by_project = {}
+    for pid, kind, stage, state in workspace_rows:
+        by_project.setdefault(pid, []).append((kind, str(stage or '').strip().upper(), state))
+    generating = set(active_pages) | set(active_task_projects)
+    for pid, rows in by_project.items():
+        if pid in generating:
+            continue
+        for kind, stage, state in rows:
+            if kind == 'ppt':
+                if stage in {'GENERATING_DESCRIPTIONS', 'GENERATING_IMAGES'}:
+                    generating.add(pid)
+                    break
+            elif stage.startswith('GENERATING') or stage in {
+                'PENDING', 'PROCESSING', 'RUNNING', 'QUEUED', 'EXPORTING',
+            }:
+                generating.add(pid)
+                break
+    completed = 0
+    for pid, rows in by_project.items():
+        if pid in generating:
+            continue
+        for kind, stage, state in rows:
+            if kind == 'ppt' and stage in {'COMPLETED', 'NATIVE_DECK_GENERATED'}:
+                completed += 1
+                break
+            if kind != 'ppt' and (state == 'ready' or stage in WORKSPACE_READY_STAGES):
+                completed += 1
+                break
+        else:
+            # 成功导出的正式交付物视为完成，即使可编辑工作区仍为草稿
+            if pid in exported_projects:
+                completed += 1
+    return {
+        'total': total,
+        'completed': completed,
+        'generating': len(generating),
+        'in_progress': max(total - completed - len(generating), 0),
+    }
 
 
 def _resolve_image_generation_workers(requested, configured):
@@ -682,15 +854,15 @@ def _smart_merge_pages(project_id, pages_data):
 @project_bp.route('', methods=['GET'])
 def list_projects():
     """
-    GET /api/projects - Get all projects (for history)
-    
-    Query params:
-    - limit: number of projects to return (default: 50, max: 100)
-    - offset: offset for pagination (default: 0)
+    GET /api/projects - lightweight project catalog (plan §7.5).
+
+    SQL-level pagination and filtering, aggregated summary per project,
+    read-only (never commits). Full page/workspace documents stay in
+    GET /api/projects/:id.
     """
     try:
         # Parameter validation
-        limit = request.args.get('limit', 50, type=int)
+        limit = request.args.get('limit', 20, type=int)
         offset = request.args.get('offset', 0, type=int)
         status = request.args.get('status')
         workspace_kind = request.args.get('workspace')
@@ -700,38 +872,80 @@ def list_projects():
             return error_response('INVALID_WORKSPACE', '无效的项目类型筛选', 400)
 
         # Enforce limits to prevent performance issues
-        limit = min(max(1, limit), 100)  # Between 1-100
-        offset = max(0, offset)  # Non-negative
+        limit = min(max(1, limit), 100)
+        offset = max(0, offset)
 
-        # Get counters from the full dataset, independent of pagination.
-        stats = _get_project_dashboard_stats()
-        total = stats['total']
-
-        all_projects = Project.query\
-            .options(
-                joinedload(Project.pages),
-                joinedload(Project.tasks),
-                joinedload(Project.workspaces),
-            )\
-            .order_by(desc(Project.updated_at))\
-            .all()
-        if status:
-            all_projects = [project for project in all_projects if _get_project_dashboard_bucket(project) == status]
+        query = Project.query.order_by(desc(Project.updated_at))
+        if status == 'generating':
+            query = query.filter(db.or_(
+                db.exists().where(
+                    db.and_(
+                        Page.project_id == Project.id,
+                        Page.status.in_(ACTIVE_PAGE_STATUSES),
+                    ),
+                ),
+                db.exists().where(
+                    db.and_(
+                        ProjectWorkspace.project_id == Project.id,
+                        ProjectWorkspace.stage.in_(
+                            ('GENERATING_DESCRIPTIONS', 'GENERATING_IMAGES'),
+                        ),
+                    ),
+                ),
+                db.exists().where(
+                    db.and_(
+                        ProjectWorkspace.project_id == Project.id,
+                        ProjectWorkspace.kind.in_(('video', 'podcast')),
+                        db.or_(
+                            ProjectWorkspace.stage.like('GENERATING%'),
+                            ProjectWorkspace.stage.in_(
+                                ('PENDING', 'PROCESSING', 'RUNNING', 'QUEUED', 'EXPORTING'),
+                            ),
+                        ),
+                    ),
+                ),
+                db.exists().where(
+                    db.and_(
+                        Task.project_id == Project.id,
+                        Task.status.in_(ACTIVE_TASK_STATUSES),
+                    ),
+                ),
+            ))
+        elif status in {'completed', 'in_progress'}:
+            query = query.filter(~db.exists().where(
+                db.and_(
+                    Page.project_id == Project.id,
+                    Page.status.in_(ACTIVE_PAGE_STATUSES),
+                ),
+            ))
         if workspace_kind:
-            all_projects = [project for project in all_projects if (
-                workspace_kind == 'ppt' and not project.workspaces
-            ) or any(workspace.kind == workspace_kind and workspace.state != 'uninitialized' for workspace in (project.workspaces or []))]
-        total = len(all_projects) if status else total
-        projects = all_projects[offset:offset + limit]
+            if workspace_kind == 'ppt':
+                query = query.filter(~db.exists().where(
+                    db.and_(
+                        ProjectWorkspace.project_id == Project.id,
+                        ProjectWorkspace.kind != 'ppt',
+                    ),
+                ))
+            else:
+                query = query.filter(db.exists().where(
+                    db.and_(
+                        ProjectWorkspace.project_id == Project.id,
+                        ProjectWorkspace.kind == workspace_kind,
+                        ProjectWorkspace.state != 'uninitialized',
+                    ),
+                ))
 
+        total = query.count()
+        projects = query.offset(offset).limit(limit).all()
+        aggregates = _load_catalog_aggregates([project.id for project in projects])
+        items = [_project_summary(project, aggregates[project.id]) for project in projects]
         return success_response({
-            'projects': [project.to_dict(include_pages=True) for project in projects],
+            'projects': items,
             'total': total,
-            'stats': stats,
+            'stats': _get_project_dashboard_stats(),
             'limit': limit,
-            'offset': offset
+            'offset': offset,
         })
-    
     except Exception as e:
         logger.error(f"list_projects failed: {str(e)}", exc_info=True)
         return error_response('SERVER_ERROR', str(e), 500)

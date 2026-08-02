@@ -16,6 +16,8 @@ export function normalizeProject(data: any): Project {
   return {
     ...data,
     id: data.project_id || data.id,
+    // 轻量摘要用 title 字段；详情接口用 project_title，二者兼容
+    project_title: data.title ?? data.project_title,
     template_image_path: data.template_image_url || data.template_image_path,
     pages: (data.pages || []).map(normalizePage),
   };

@@ -26,24 +26,38 @@ def _seed_projects(client, count=3):
 
 class TestCatalogReadOnly:
     def test_list_get_does_not_write_database(self, client):
-        _seed_projects(client, 2)
+        # 抑制后台初始化线程，只测量列表 GET 自身是否写库
+        from controllers import workspace_generation_controller as controller
+        controller.task_manager.submit_task = lambda *a, **k: None
+        try:
+            _seed_projects(client, 2)
+        finally:
+            del controller.task_manager.submit_task
 
-        from sqlalchemy import text
+        # 精确捕获 GET 请求自身发出的写语句：SQLAlchemy 事件在请求线程
+        # （has_request_context）内记录非 SELECT 语句；其他测试残留的
+        # 后台线程没有 request context，不会造成假阳性。
+        from flask import has_request_context
+        from sqlalchemy import event
 
-        with client.application.app_context():
-            from models import db
-            with db.engine.connect() as conn:
-                changes_before = conn.execute(text("PRAGMA total_changes")).scalar()
+        from models import db
 
-        client.get('/api/projects')
+        request_writes: list[str] = []
 
-        with client.application.app_context():
-            from models import db
-            with db.engine.connect() as conn:
-                changes_after = conn.execute(text("PRAGMA total_changes")).scalar()
+        @event.listens_for(db.engine, 'before_cursor_execute')
+        def _capture_request_writes(conn, cursor, statement, parameters, context, executemany):
+            if has_request_context():
+                head = statement.lstrip().upper()
+                if head.startswith(('INSERT', 'UPDATE', 'DELETE')):
+                    request_writes.append(statement)
 
-        # 契约：列表 GET 不得产生数据库写入（当前 calibrate 会 commit，测试失败）
-        assert changes_before == changes_after
+        try:
+            client.get('/api/projects')
+        finally:
+            event.remove(db.engine, 'before_cursor_execute', _capture_request_writes)
+
+        # 契约：列表 GET 不得产生数据库写入
+        assert request_writes == [], '列表 GET 发出了写语句: %s' % request_writes
 
     def test_list_returns_summary_without_page_bodies(self, client):
         project_id = _seed_projects(client, 1)[0]

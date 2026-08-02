@@ -115,7 +115,7 @@ class Project(db.Model):
     project_settings_json = db.Column(db.Text, nullable=True)
     status = db.Column(db.String(50), nullable=False, default='DRAFT')
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow, index=True)
     
     # Relationships
     # 使用 'select' 策略支持 eager loading，同时保持灵活性
