@@ -153,7 +153,7 @@ export function ContentProjectLayout() {
     <ProjectEditorSessionContext.Provider value={sessionContext}>
       <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-[var(--app-background)] text-[var(--app-text)]">
         {/* 统一项目栏（阶段4）：返回、项目标题、模式切换、任务面板 */}
-        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-[var(--app-border)] bg-[var(--app-surface)] px-3">
+        <header className="flex h-[52px] shrink-0 items-center gap-2 border-b border-[var(--app-border)] bg-[var(--app-surface)] px-3">
           <Button
             variant="ghost"
             size="sm"
