@@ -24,14 +24,14 @@ class UserTemplate(db.Model):
         """Convert to dictionary"""
         # Use thumbnail for preview if available
         if self.thumb_path:
-            thumb_url = f'/files/user-templates/{self.id}/{self.thumb_path.split("/")[-1]}'
+            thumb_url = f'/files/user-templates/{self.id}/{_resolve_template_filename(self.thumb_path, self.id)}'
         else:
             thumb_url = None
 
         return {
             'template_id': self.id,
             'name': self.name,
-            'template_image_url': f'/files/user-templates/{self.id}/{self.file_path.split("/")[-1]}',
+            'template_image_url': f'/files/user-templates/{self.id}/{_resolve_template_filename(self.file_path, self.id)}',
             'thumb_url': thumb_url,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
@@ -40,3 +40,28 @@ class UserTemplate(db.Model):
     def __repr__(self):
         return f'<UserTemplate {self.id}: {self.name or "Unnamed"}>'
 
+
+
+def _resolve_template_filename(relative_path, template_id):
+    """历史记录的文件名可能缺扩展名（旧版本写入 'template'），
+    探测磁盘上的实际文件保证 URL 可加载。"""
+    name = str(relative_path or '').split('/')[-1]
+    if '.' in name:
+        return name
+    try:
+        import os
+        from flask import current_app
+        base = os.path.join(
+            current_app.config['UPLOAD_FOLDER'],
+            'user-templates',
+            str(template_id),
+        )
+    except Exception:
+        return name
+    for candidate in (
+        'template-thumb.webp', 'template-thumb.jpg', 'template-thumb.png',
+        'template.png', 'template.jpg', 'template.webp',
+    ):
+        if os.path.exists(os.path.join(base, candidate)):
+            return candidate
+    return name

@@ -9,9 +9,9 @@ describe('editorial workbench navigation baseline', () => {
     const nav = source('src/components/shared/AppTopNav.tsx');
     const css = source('src/index.css');
 
-    // 阶段4：应用导航是顶部横条（sticky），不再渲染 216px 项目左栏
-    expect(nav).toContain('sticky top-0 z-40 h-16');
-    expect(nav).not.toContain('lg:w-[216px]');
+    // 应用级左侧工具架（本地工作台形态）：桌面 216px 左栏，无项目 rail
+    expect(nav).toContain('lg:w-[216px]');
+    expect(nav).toContain('lg:fixed');
     expect(nav).not.toContain('ProjectRailSlot');
     expect(nav).not.toContain('blue_noise_med.png');
     expect(css).toContain('background: var(--app-surface-muted) !important;');
@@ -28,6 +28,7 @@ describe('editorial workbench navigation baseline', () => {
     // 应用导航不再承载项目模式入口
     expect(nav).not.toContain("key: 'ppt'");
     expect(nav).not.toContain('contentProject');
+    expect(nav).not.toContain('ProjectRailSlot');
     // 内容主线入口与主线同步审核仍不进入前台导航
     expect(nav).not.toContain("key: 'spine'");
     expect(nav).not.toContain('主线同步审核');

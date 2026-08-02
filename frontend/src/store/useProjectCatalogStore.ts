@@ -13,7 +13,7 @@ import type { Project, ProjectDashboardStats } from '@/types';
  * - 失败保留快照，不切换空页面。
  */
 
-const CACHE_SCHEMA_VERSION = 1;
+const CACHE_SCHEMA_VERSION = 2;  // 阶段7：summary 新增 cover_url/title 后旧快照失效
 const REFRESH_AFTER_MS = 30_000;
 
 export interface CatalogPageKey {

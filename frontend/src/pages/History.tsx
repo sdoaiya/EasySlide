@@ -552,7 +552,7 @@ export const History: React.FC<{ showNavigation?: boolean }> = ({ showNavigation
   }, [handleSaveEdit, handleCancelEdit]);
 
   return (
-    <div className="min-h-screen bg-[var(--app-background)] text-[var(--app-text)] ">
+    <div className="min-h-screen bg-[var(--app-background)] text-[var(--app-text)] lg:pl-[var(--app-nav-offset,216px)]">
       {showNavigation && <AppTopNav />}
 
       <main>
@@ -696,6 +696,8 @@ export const History: React.FC<{ showNavigation?: boolean }> = ({ showNavigation
                 return (
                   <ProjectCard
                     key={projectId}
+                    data-rise
+                    riseDelay={visibleProjects.indexOf(project) * 40}
                     project={project}
                     isSelected={selectedProjects.has(projectId)}
                     isEditing={editingProjectId === projectId}

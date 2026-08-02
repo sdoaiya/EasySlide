@@ -85,6 +85,8 @@ export const getProjectTitle = (project: Project): string => {
  * 获取第一页图片URL
  */
 export const getFirstPageImage = (project: Project): string | null => {
+  // 项目摘要封面（阶段3 ProjectSummary.cover_url）：优先于逐页查找
+  if (project.cover_url) return getImageUrl(project.cover_url, project.updated_at);
   const preferredWorkspace = project.workspaces?.find((workspace) => workspace.kind === project.last_workspace);
   const workspaceCover = preferredWorkspace?.cover_url
     || project.workspaces?.find((workspace) => workspace.cover_url)?.cover_url;

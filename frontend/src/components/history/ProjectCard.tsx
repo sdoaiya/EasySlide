@@ -33,6 +33,9 @@ const projectCardI18n = {
 
 export interface ProjectCardProps {
   project: Project;
+  /** 入场 stagger（finesse-ui）：data-rise 触发 card-rise，riseDelay 为毫秒 */
+  'data-rise'?: boolean;
+  riseDelay?: number;
   isSelected: boolean;
   isEditing: boolean;
   editingTitle: string;
@@ -50,6 +53,8 @@ export interface ProjectCardProps {
 
 export const ProjectCard: React.FC<ProjectCardProps> = ({
   project,
+  'data-rise': rise,
+  riseDelay = 0,
   isSelected,
   isEditing,
   editingTitle,
@@ -115,7 +120,9 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
   if (layout === 'grid') {
     return (
       <Card
-        className={`group relative overflow-hidden p-0 transition-[background-color,border-color,box-shadow,transform] motion-safe:hover:-translate-y-[3px] motion-safe:focus-visible:-translate-y-[3px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)] ${
+        data-rise={rise || undefined}
+        style={rise ? { animationDelay: `${Math.min(riseDelay, 320)}ms` } : undefined}
+        className={`group relative overflow-hidden p-0 transition-[background-color,border-color,box-shadow,transform] motion-safe:hover:-translate-y-[3px] motion-safe:focus-visible:-translate-y-[3px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)] data-[rise]:motion-safe:animate-[card-rise_0.4s_cubic-bezier(0.22,1,0.36,1)_both] ${
           isSelected
             ? 'border-[var(--app-accent)] bg-[var(--app-accent-blue-soft)] shadow-[var(--app-shadow-soft)]'
             : 'border-[var(--app-border)] bg-[var(--app-surface)] hover:border-[var(--app-border-strong)] hover:shadow-[var(--app-shadow-medium)]'
@@ -130,7 +137,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
         </div>
         <div className="aspect-video overflow-hidden border-b border-[var(--app-border)] bg-[var(--app-surface-muted)]">
           {firstPageImage ? (
-            <img src={firstPageImage} alt={t('projectCard.page', { num: 1 })} className="h-full w-full object-cover" />
+            <img src={firstPageImage} alt={t('projectCard.page', { num: 1 })} className="h-full w-full object-cover transition-transform duration-500 ease-out motion-safe:group-hover:scale-[1.045]" />
           ) : (
             <div className="relative flex h-full items-center justify-center bg-[var(--app-surface-muted)] text-[var(--app-text-tertiary)]">
               <span aria-hidden="true" className="absolute inset-x-0 top-0 flex h-1"><i className="flex-1 bg-[var(--app-error)]" /><i className="flex-1 bg-[var(--app-accent-amber)]" /><i className="flex-1 bg-[var(--app-success)]" /></span>

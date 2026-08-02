@@ -50,7 +50,7 @@ export function TaskCenter() {
   };
 
   return (
-    <main className="min-h-screen bg-[var(--app-background)] px-6 py-8">
+    <main className="min-h-screen bg-[var(--app-background)] px-6 py-8 lg:pl-[var(--app-nav-offset,216px)]">
       <div className="mx-auto max-w-4xl">
         <div className="flex items-center gap-3 border-b border-[var(--app-border)] pb-4">
           <ClipboardList size={20} aria-hidden="true" />

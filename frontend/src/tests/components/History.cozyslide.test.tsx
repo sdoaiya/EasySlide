@@ -68,11 +68,9 @@ describe('History EasySlide clone', () => {
     expect(screen.getByRole('heading', { name: '灵感墙' })).toBeInTheDocument();
     expect(screen.getByAltText('EasySlide Logo')).toBeInTheDocument();
 
-    // 阶段4：应用导航为顶部横条，导航项横向排列，无左侧栏偏移
-    const homeButton = screen.getByRole('button', { name: '首页' });
-    expect(homeButton.parentElement).not.toHaveClass('lg:mt-8');
+    // 应用导航为桌面左侧工具架（216px 可折叠）
     const navBar = screen.getByRole('navigation', { name: '工作台导航' });
-    expect(navBar).toHaveClass('sticky', 'top-0');
+    expect(navBar).toHaveClass('lg:fixed', 'lg:w-[216px]');
   });
 
   it('uses server-wide project stats instead of the current page only', async () => {

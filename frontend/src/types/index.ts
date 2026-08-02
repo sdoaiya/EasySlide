@@ -587,6 +587,7 @@ export interface NativeExportQualityReport {
 export interface Project {
   project_id: string;  // 后端返回 project_id
   id?: string;         // 前端使用的别名
+  cover_url?: string | null;  // 项目摘要封面（阶段3 ProjectSummary）
   project_title?: string;
   idea_prompt: string;
   outline_text?: string;  // 用户输入的大纲文本（用于outline类型）

@@ -263,22 +263,44 @@ def _load_catalog_aggregates(project_ids):
         aggregates[pid]['page_count'] = int(count)
         aggregates[pid]['active_page_count'] = int(active or 0)
         aggregates[pid]['completed_page_count'] = int(completed or 0)
-    # 每个项目第一张有图的页面作为封面（order_index 最小）
+    # 每个项目第一张有图的页面作为封面（order_index 最小）：
+    # 图片优先来自 page_image_versions 当前版本（真实数据主要存储于此），
+    # 兼容历史 generated_image_path 列
     cover_rows = (
-        db.session.query(Page.project_id, Page.generated_image_path)
+        db.session.query(Page.project_id, PageImageVersion.image_path)
+        .join(PageImageVersion, PageImageVersion.page_id == Page.id)
         .filter(
             Page.project_id.in_(project_ids),
-            Page.generated_image_path.isnot(None),
+            PageImageVersion.is_current.is_(True),
+            PageImageVersion.image_path.isnot(None),
         )
         .order_by(Page.order_index.asc())
         .all()
     )
-    seen_covers = set()
-    for pid, path in cover_rows:
-        if pid in seen_covers:
-            continue
-        seen_covers.add(pid)
-        aggregates[pid]['cover_url'] = path
+    if cover_rows:
+        seen_covers = set()
+        legacy_covers = []
+        for pid, path in cover_rows:
+            if pid in seen_covers:
+                continue
+            seen_covers.add(pid)
+            aggregates[pid]['cover_url'] = path
+    else:
+        cover_rows = (
+            db.session.query(Page.project_id, Page.generated_image_path)
+            .filter(
+                Page.project_id.in_(project_ids),
+                Page.generated_image_path.isnot(None),
+            )
+            .order_by(Page.order_index.asc())
+            .all()
+        )
+        seen_covers = set()
+        for pid, path in cover_rows:
+            if pid in seen_covers:
+                continue
+            seen_covers.add(pid)
+            aggregates[pid]['cover_url'] = path
     for workspace in ProjectWorkspace.query.filter(
         ProjectWorkspace.project_id.in_(project_ids),
     ).all():
@@ -359,6 +381,11 @@ def _project_summary(project, agg) -> dict:
             if getattr(workspace, 'cover_url', None):
                 cover_url = workspace.cover_url
                 break
+    if cover_url and not cover_url.startswith(('/files/', 'http://', 'https://')):
+        # image_path 是相对 uploads 的路径（bce7ff91-.../pages/x.png）：
+        # 与详情接口一致，转成可访问的 /files/ URL
+        from pathlib import Path
+        cover_url = f'/files/{project.id}/pages/{Path(cover_url).name}'
     return {
         'project_id': project.id,
         'title': project.project_title or project.idea_prompt or '未命名项目',
