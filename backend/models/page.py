@@ -211,6 +211,9 @@ class Page(db.Model):
         """Convert to dictionary"""
         # Use cached image for frontend display, fallback to original if no cache
         display_image_path = self.cached_image_path or self.generated_image_path
+        if not display_image_path:
+            current_version = self.image_versions.filter_by(is_current=True).first()
+            display_image_path = current_version.image_path if current_version else None
         display_image_url = None
         if display_image_path:
             filename = Path(display_image_path).name

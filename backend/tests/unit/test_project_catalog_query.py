@@ -125,6 +125,9 @@ class TestCatalogReadOnly:
         assert items[legacy_id]['cover_url'].endswith('/cover.png')
         assert items[legacy_id]['dashboard_status'] == 'completed'
 
+        current_detail = client.get(f'/api/projects/{current_id}').get_json()['data']
+        assert current_detail['pages'][0]['generated_image_url'].endswith('/cover.webp')
+
         completed = client.get('/api/projects?limit=10&status=completed').get_json()['data']['projects']
         in_progress = client.get('/api/projects?limit=10&status=in_progress').get_json()['data']['projects']
         assert {item['project_id'] for item in completed} == {current_id, legacy_id}
