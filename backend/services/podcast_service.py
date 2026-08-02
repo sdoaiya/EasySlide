@@ -158,35 +158,44 @@ def upgrade_podcast_document_v1_to_v2(document: dict) -> dict:
 
 
 def build_podcast_document_from_brief(brief: dict, options=None) -> dict:
-    """Mechanical first-pass podcast candidate from a frozen brief snapshot.
+    """Direct brief → podcast candidate with program structure and roles (§7.3/阶段2).
 
-    V1-shaped so the existing workspace validator and publish transaction
-    accept it; AI adaptation arrives in later stages. Never reads live
-    project or spine state.
+    Speakers carry canonical ``voice_ref`` IDs (never ``default``/empty);
+    every segment gets its own title derived from the block's first line.
+    Only the frozen snapshot and options are read.
     """
-    from services.video_workspace_service import _split_source_blocks
+    from services.video_workspace_service import _brief_scene_title, _split_source_blocks
+    from services.voice_catalog_service import resolve_voice_id
 
     options = options or {}
     title = str(brief.get('title') or brief.get('topic') or '未命名播客')[:255]
     fmt = str(options.get('format') or 'single').strip()
     if fmt not in {'single', 'dialogue'}:
         fmt = 'single'
-    voice_refs = options.get('voice_profile_ids') or []
+    voice_refs = [
+        resolve_voice_id(item)
+        for item in (options.get('voice_profile_ids') or [])
+    ]
+    voice_refs = [item for item in voice_refs if item]
     if fmt == 'single':
         speakers = [{
             'speaker_id': 'speaker.main',
             'name': str(options.get('speaker_name') or '主持人'),
-            'voice_ref': str(voice_refs[0] or '') if voice_refs else 'default',
+            'voice_ref': voice_refs[0] if voice_refs else _default_role_voice(0),
         }]
     else:
         names = list(options.get('speaker_names') or ['主持人', '嘉宾'])
+        count = min(4, max(2, len(voice_refs) or 2))
         speakers = [
             {
                 'speaker_id': f'speaker.{index + 1}',
                 'name': str(names[index] if index < len(names) else f'角色 {index + 1}'),
-                'voice_ref': str(voice_refs[index] or '') if index < len(voice_refs) else 'default',
+                'voice_ref': (
+                    voice_refs[index] if index < len(voice_refs)
+                    else _default_role_voice(index)
+                ),
             }
-            for index in range(min(4, max(2, len(voice_refs) or 2)))
+            for index in range(count)
         ]
     blocks = _split_source_blocks(str(brief.get('source_text') or ''))
     if not blocks:
@@ -200,7 +209,6 @@ def build_podcast_document_from_brief(brief: dict, options=None) -> dict:
             'text': block,
             'locked': False,
             'audio_cues': [],
-            # V1 schema 只允许 audio/transcript/null；brief 来源记录在 source_ref
             'source_kind': None,
             'source_ref': brief.get('content_hash'),
         })
@@ -214,3 +222,64 @@ def build_podcast_document_from_brief(brief: dict, options=None) -> dict:
         'mixing': {'bgm_asset_ref': None, 'ducking': True, 'fade_in_ms': 300, 'fade_out_ms': 500},
         'cover': {'asset_ref': None, 'title': title, 'subtitle': ''},
     }
+
+
+def enrich_podcast_candidate_document(document: dict) -> dict:
+    """Candidate-time enrichment: independent segment titles (stage-2 contract).
+
+    The V1-shaped builder output stays schema-valid; titles are added only
+    to the stored candidate and stripped again at publish time.
+    """
+    segments = []
+    for index, segment in enumerate(document.get('segments') or []):
+        text = str(segment.get('text') or '')
+        first_line = next(
+            (line.strip() for line in text.splitlines() if line.strip()),
+            text,
+        )
+        from services.video_workspace_service import _brief_scene_title
+        enriched = dict(segment)
+        enriched['title'] = _brief_scene_title(first_line, index + 1)
+        segments.append(enriched)
+    return {**document, 'segments': segments}
+
+
+def downgrade_podcast_document_v2_to_v1(document: dict) -> dict:
+    """Publish-time adapter: strip candidate-only fields (segment title)."""
+    segments = []
+    for segment in document.get('segments') or []:
+        cleaned = {
+            'segment_id': segment.get('segment_id'),
+            'speaker_id': segment.get('speaker_id'),
+            'text': segment.get('text', ''),
+            'locked': bool(segment.get('locked', False)),
+            'audio_cues': segment.get('audio_cues') or [],
+        }
+        if segment.get('source_ref'):
+            cleaned['source_ref'] = segment['source_ref']
+        if segment.get('source_kind'):
+            cleaned['source_kind'] = segment['source_kind']
+        segments.append(cleaned)
+    return {
+        'schema_version': 1,
+        'title': document.get('title', ''),
+        'format': document.get('format', 'single'),
+        'language': document.get('language', 'zh-CN'),
+        'speakers': document.get('speakers') or [],
+        'segments': segments,
+        'mixing': document.get('mixing') or {},
+        'cover': document.get('cover') or {},
+    }
+
+
+def _default_role_voice(index: int) -> str:
+    """Deterministic per-role default voice (never ``default``/empty)."""
+    from services.voice_catalog_service import DEFAULT_VOICE_BY_LANGUAGE
+
+    zh_defaults = [
+        'edge:zh-CN-XiaoxiaoNeural',
+        'edge:zh-CN-YunxiNeural',
+        'edge:zh-CN-XiaoyiNeural',
+        'edge:zh-CN-YunjianNeural',
+    ]
+    return zh_defaults[index % len(zh_defaults)] if index < len(zh_defaults) else DEFAULT_VOICE_BY_LANGUAGE['zh']

@@ -11,6 +11,7 @@ from .settings_controller import settings_bp
 from .content_workspace_controller import content_workspace_bp
 from .podcast_controller import podcast_bp
 from .workspace_generation_controller import workspace_generation_bp
+from .voice_catalog_controller import voice_catalog_bp
 
-__all__ = ['project_bp', 'server_task_bp', 'style_bp', 'page_bp', 'template_bp', 'user_template_bp', 'user_style_template_bp', 'export_bp', 'file_bp', 'material_bp', 'native_deck_bp', 'narration_bp', 'settings_bp', 'content_workspace_bp', 'podcast_bp', 'workspace_generation_bp']
+__all__ = ['project_bp', 'server_task_bp', 'style_bp', 'page_bp', 'template_bp', 'user_template_bp', 'user_style_template_bp', 'export_bp', 'file_bp', 'material_bp', 'native_deck_bp', 'narration_bp', 'settings_bp', 'content_workspace_bp', 'podcast_bp', 'workspace_generation_bp', 'voice_catalog_bp']
 

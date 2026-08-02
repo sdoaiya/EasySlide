@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Film } from 'lucide-react';
-import { Button } from '@/components/shared';
+import { Button, VoicePicker } from '@/components/shared';
 import { getProject } from '@/api/endpoints';
 import { useWorkspaceGenerationStore } from '@/store/useWorkspaceGenerationStore';
 import { useContentProjectStore, selectContentWorkspace } from '@/store/useContentProjectStore';
@@ -35,8 +35,9 @@ function PptToVideoWizardInner({ projectId, isOpen, onClose, onCreated }: {
   const [scriptSource, setScriptSource] = useState<'confirmed_narration' | 'page'>('confirmed_narration');
   const [visualStrategy, setVisualStrategy] = useState<'reuse_ppt' | 'generate'>('reuse_ppt');
   const [aspectRatio, setAspectRatio] = useState<'16:9' | '9:16' | '1:1'>('16:9');
-  const [voiceProfileId, setVoiceProfileId] = useState('edge:zh-CN-XiaoxiaoNeural');
-  const [expressivenessId, setExpressivenessId] = useState('expression.standard.v1');
+  // 声音走统一 VoicePicker；空值 = 跟随全局默认（后端解析为实际 canonical ID）
+  const [voiceProfileId, setVoiceProfileId] = useState('');
+  const [expressivenessId, setExpressivenessId] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [pages, setPages] = useState<Page[]>([]);
@@ -57,8 +58,8 @@ function PptToVideoWizardInner({ projectId, isOpen, onClose, onCreated }: {
     setScriptSource('confirmed_narration');
     setVisualStrategy('reuse_ppt');
     setAspectRatio('16:9');
-    setVoiceProfileId('edge:zh-CN-XiaoxiaoNeural');
-    setExpressivenessId('expression.standard.v1');
+    setVoiceProfileId('');
+    setExpressivenessId('');
     setBusy(false);
     setMessage('');
     return () => { active = false; };
@@ -161,16 +162,17 @@ function PptToVideoWizardInner({ projectId, isOpen, onClose, onCreated }: {
             <label className="grid gap-1.5 text-xs font-medium text-[var(--app-text-secondary)]">
               <span>表现力</span>
               <select value={expressivenessId} onChange={(event) => setExpressivenessId(event.target.value)} className="h-9 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-sm">
-                <option value="expression.standard.v1">标准</option>
+                <option value="">跟随默认</option>
                 <option value="expression.warm.v1">温暖</option>
                 <option value="expression.energetic.v1">活力</option>
+                <option value="expression.soft.v1">轻柔</option>
               </select>
             </label>
           </div>
 
           <label className="grid gap-1.5 text-xs font-medium text-[var(--app-text-secondary)]">
-            <span>默认声音</span>
-            <input value={voiceProfileId} onChange={(event) => setVoiceProfileId(event.target.value)} className="h-9 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-sm" placeholder="edge:voice 或 fish:voice-id" />
+            <span>声音</span>
+            <VoicePicker value={voiceProfileId} onChange={setVoiceProfileId} language="zh" />
           </label>
         </div>
 

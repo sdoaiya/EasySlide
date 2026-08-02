@@ -252,6 +252,14 @@ def publish_run(run: WorkspaceGenerationRun, project) -> WorkspaceGenerationRun:
         raise GenerationRunError('目标工作区不存在')
 
     document = json.loads(run.candidate_document_json)
+    # 候选文档是 V2 超集（script/voice/transition dict/独立标题），正式工作区
+    # 按 V1 契约存储：发布时降级为 V1 形状，编辑器读取时再升级（§4.1/阶段2）
+    if workspace.kind == 'video':
+        from services.video_workspace_service import downgrade_video_document_v2_to_v1
+        document = downgrade_video_document_v2_to_v1(document)
+    elif workspace.kind == 'podcast':
+        from services.podcast_service import downgrade_podcast_document_v2_to_v1
+        document = downgrade_podcast_document_v2_to_v1(document)
     validate_workspace_document(workspace.kind, document)
     options = json.loads(run.options_json or '{}')
     settings = options.get('workspace_settings') or {}
@@ -315,6 +323,14 @@ def build_candidate_document(run: WorkspaceGenerationRun) -> tuple[dict, list[st
         document = build_video_document_from_brief(snapshot, options)
     else:
         document = build_podcast_document_from_brief(snapshot, options)
+    # 候选文档是 V2 超集：V1 形状的 builder 输出在此增强 voice/script/
+    # transition/独立标题等阶段 2 契约字段（正式工作区发布时再降级 V1）
+    if run.target_workspace_kind == 'video':
+        from services.video_workspace_service import enrich_video_candidate_document
+        document = enrich_video_candidate_document(document, options)
+    elif 'segments' in document:
+        from services.podcast_service import enrich_podcast_candidate_document
+        document = enrich_podcast_candidate_document(document)
     item_ids = [
         str(item.get('scene_id') or item.get('segment_id'))
         for item in (document.get('scenes') or document.get('segments') or [])

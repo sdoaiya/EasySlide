@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * 阶段 0 冻结契约：所有声音入口不得再出现手填 ID 文本框或硬编码默认
- * （统一 VoicePicker + canonical ID，计划 §7.4.5）。当前实现仍保留
- * 手填输入与硬编码默认，本套测试必须失败。
+ * （统一 VoicePicker + canonical ID，计划 §7.4.5）。阶段 2 已用 VoicePicker
+ * 替换手填输入并移除硬编码默认，本套测试必须保持通过。
  */
 
 const mocks = vi.hoisted(() => ({
@@ -23,8 +23,18 @@ const mocks = vi.hoisted(() => ({
   error: null,
 }));
 
+import { PptToVideoWizard } from '@/components/content-project/PptToVideoWizard';
+const wizardModule = { PptToVideoWizard };
+
 vi.mock('@/api/endpoints', () => ({
   getProject: mocks.getProject,
+}));
+
+// VoicePicker 的目录请求：契约测试只关心“无手填框”，目录数据 stub 为空即可
+vi.mock('@/api/client', () => ({
+  apiClient: { get: vi.fn().mockResolvedValue({ data: { data: { voices: [] } } }) },
+  getStaticAssetUrl: (path: string) => path,
+  getImageUrl: (path: string) => path,
 }));
 
 vi.mock('@/store/useContentProjectStore', () => ({
@@ -58,8 +68,9 @@ describe('声音入口契约（阶段0）', () => {
     mocks.getProject.mockResolvedValue({ data: { pages: [] } });
   });
 
-  it('PPT 转视频向导不再提供声音 ID 手填文本框', async () => {
-    const { PptToVideoWizard } = await import('@/components/content-project/PptToVideoWizard');
+  it('PPT 转视频向导不再提供声音 ID 手填文本框', () => {
+    // 静态导入避免与 hoisted mock 文件同进程时的动态 import 死锁
+    const { PptToVideoWizard } = wizardModule;
     render(<PptToVideoWizard projectId="project-1" isOpen onClose={vi.fn()} />);
 
     // 契约：使用 VoicePicker，不存在手填文本框（当前存在「默认声音」输入，测试失败）
