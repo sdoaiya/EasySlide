@@ -2671,7 +2671,7 @@ export const Settings: React.FC<SettingsProps> = ({ embedded = false }) => {
 };
 
 export const SettingsPage: React.FC<{ showNavigation?: boolean }> = ({ showNavigation = true }) => (
-  <div className="flex min-h-screen flex-col bg-[var(--app-bg)] text-[var(--app-text)] lg:pl-[var(--project-nav-offset,216px)]">
+  <div className="flex min-h-screen flex-col bg-[var(--app-bg)] text-[var(--app-text)] ">
     {showNavigation && <AppTopNav />}
     <main className="mx-auto w-full max-w-[1280px] flex-1 bg-[var(--app-surface)] shadow-[var(--app-shadow-card)]">
       <Settings />

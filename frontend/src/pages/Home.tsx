@@ -894,7 +894,7 @@ export const Home: React.FC<{ showNavigation?: boolean }> = ({ showNavigation = 
   };
 
   return (
-    <div className="create-reference-canvas min-h-screen bg-[var(--app-background)] text-[var(--app-text)] lg:pl-[var(--project-nav-offset,216px)]">
+    <div className="create-reference-canvas min-h-screen bg-[var(--app-background)] text-[var(--app-text)] ">
       {showNavigation && <AppTopNav />}
 
       <main className="mx-auto w-full max-w-[1152px] px-5 pb-12 pt-6 md:px-10">

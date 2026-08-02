@@ -416,7 +416,7 @@ export function NarrationWorkbench({
   );
 
   return (
-    <div className="fixed inset-y-0 left-0 right-0 z-[130] bg-[var(--app-bg)] text-[var(--app-text)] lg:left-[var(--project-nav-offset,216px)]" role="dialog" aria-modal="true" aria-label="视频文案工作台">
+    <div className="fixed inset-y-0 left-0 right-0 z-[130] bg-[var(--app-bg)] text-[var(--app-text)] " role="dialog" aria-modal="true" aria-label="视频文案工作台">
       <div className="grid h-[100dvh] min-h-0 grid-rows-[auto_minmax(0,1fr)_auto]">
         <header className="flex min-h-14 items-center justify-between gap-4 border-b border-[var(--app-border)] bg-[var(--app-surface)] px-4">
           <div className="min-w-0">

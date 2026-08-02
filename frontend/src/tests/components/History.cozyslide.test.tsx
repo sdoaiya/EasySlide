@@ -68,12 +68,11 @@ describe('History EasySlide clone', () => {
     expect(screen.getByRole('heading', { name: '灵感墙' })).toBeInTheDocument();
     expect(screen.getByAltText('EasySlide Logo')).toBeInTheDocument();
 
+    // 阶段4：应用导航为顶部横条，导航项横向排列，无左侧栏偏移
     const homeButton = screen.getByRole('button', { name: '首页' });
-    expect(homeButton.parentElement).toHaveClass('lg:mt-8');
-    const footerTools = screen.getByRole('button', { name: '设置' }).parentElement;
-    expect(footerTools).toHaveClass('lg:grid', 'lg:grid-cols-3');
-    expect(Array.from(footerTools?.children || [])).toHaveLength(3);
-    expect(Array.from(footerTools?.children || []).every((item) => item.classList.contains('lg:w-full'))).toBe(true);
+    expect(homeButton.parentElement).not.toHaveClass('lg:mt-8');
+    const navBar = screen.getByRole('navigation', { name: '工作台导航' });
+    expect(navBar).toHaveClass('sticky', 'top-0');
   });
 
   it('uses server-wide project stats instead of the current page only', async () => {

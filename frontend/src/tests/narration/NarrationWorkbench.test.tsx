@@ -107,7 +107,7 @@ describe('NarrationWorkbench', () => {
     fireEvent.click(screen.getByRole('button', { name: '返回当前工作区' }));
 
     expect(onClose).toHaveBeenCalledOnce();
-    expect(screen.getByRole('dialog')).toHaveClass('lg:left-[var(--project-nav-offset,216px)]');
+    expect(screen.getByRole('dialog')).toHaveClass('z-[130]');
   });
 
   it('generates candidates for missing pages and refreshes without applying them', async () => {

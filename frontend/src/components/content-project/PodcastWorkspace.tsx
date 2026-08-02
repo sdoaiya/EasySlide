@@ -24,6 +24,7 @@ import { WorkspaceStatusBar } from '@/components/workspace/WorkspaceStatusBar';
 import type { ProjectWorkspace } from '@/types';
 import { WorkspaceVersionHistory } from './WorkspaceVersionHistory';
 import { useExportTasksStore } from '@/store/useExportTasksStore';
+import { useProjectEditorSession } from './ContentProjectLayout';
 
 type AudioCue = {
   cue_id: string;
@@ -224,6 +225,7 @@ export function PodcastWorkspace({ projectId, workspace, onChanged }: { projectI
       setDirty(false); setMessage('已保存新版本'); onChanged();
     } catch (cause: any) { setMessage(cause?.response?.data?.error?.message || cause.message); } finally { setBusy(null); }
   };
+  useProjectEditorSession({ key: 'podcast-session', dirty, onSave: save });
   const exportAudio = async (format: 'mp3' | 'wav') => {
     setBusy('export'); setMessage('');
     try {

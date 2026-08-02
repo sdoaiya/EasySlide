@@ -552,7 +552,7 @@ export const History: React.FC<{ showNavigation?: boolean }> = ({ showNavigation
   }, [handleSaveEdit, handleCancelEdit]);
 
   return (
-    <div className="min-h-screen bg-[var(--app-background)] text-[var(--app-text)] lg:pl-[var(--project-nav-offset,216px)]">
+    <div className="min-h-screen bg-[var(--app-background)] text-[var(--app-text)] ">
       {showNavigation && <AppTopNav />}
 
       <main>

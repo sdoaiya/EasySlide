@@ -79,7 +79,8 @@ for (const viewport of [{ width: 1280, height: 720 }, { width: 1440, height: 900
 
     const projectRail = page.getByRole('complementary', { name: '项目工作区导航' });
     await expect(projectRail).toBeVisible();
-    await expect(page.locator('[data-content-project-nav]')).toHaveCount(1);
+    // 阶段4：项目路由不再渲染应用级左栏
+    await expect(page.locator('[data-content-project-nav]')).toHaveCount(0);
     await expect(projectRail.getByText('片段 · 24')).toBeVisible();
     await expect(page.getByRole('button', { name: '导出 MP3' })).toBeVisible();
     await expect(page.getByRole('button', { name: '导出 WAV' })).toBeVisible();

@@ -22,6 +22,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/store/useContentProjectStore', () => ({
   useContentProjectStore: () => ({ project: mocks.project, loading: false, error: null, load: mocks.load, clear: mocks.clear }),
+  selectContentWorkspace: (project: any, kind: string) => project?.workspaces?.find((item: any) => item.kind === kind),
+  selectSpineSummary: () => ({ topic: '', sources: [] }),
 }));
 
 vi.mock('@/api/endpoints', async () => {

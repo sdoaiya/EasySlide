@@ -66,7 +66,8 @@ for (const viewport of [{ width: 1280, height: 720 }, { width: 1440, height: 900
     await page.goto('/project/video-workspace/video');
 
     await expect(page.getByRole('complementary', { name: '项目工作区导航' })).toBeVisible();
-    await expect(page.locator('[data-content-project-nav]')).toHaveCount(1);
+    // 阶段4：项目路由不再渲染应用级左栏
+    await expect(page.locator('[data-content-project-nav]')).toHaveCount(0);
     await expect(page.getByRole('complementary', { name: '页面栏' })).toContainText('场景 20');
     await expect(page.getByRole('main')).toContainText('场景 1：核心观点');
     await expect(page.getByRole('complementary', { name: '属性栏' })).toBeVisible();

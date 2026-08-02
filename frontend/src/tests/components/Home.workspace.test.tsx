@@ -79,7 +79,8 @@ describe('Home workspace clone', () => {
     );
 
     const nav = screen.getByRole('navigation', { name: '工作台导航' });
-    expect(nav).toHaveClass('lg:fixed', 'lg:w-[216px]', 'lg:border-r');
+    // 阶段4：应用导航为顶部横条
+    expect(nav).toHaveClass('sticky', 'top-0', 'h-16');
     expect(nav).not.toHaveClass('lg:overflow-hidden');
     expect(within(nav).getByRole('button', { name: '首页' })).toBeInTheDocument();
     expect(within(nav).getByRole('button', { name: '创建项目' })).toBeInTheDocument();

@@ -110,19 +110,20 @@ function AppRoutes() {
         <Route path="/history" element={<History showNavigation={false} />} />
         <Route path="/settings" element={<SettingsPage showNavigation={false} />} />
         <Route path="/tasks" element={<TaskCenter />} />
-        <Route element={<ContentProjectLayout />}>
-          <Route path="/project/:projectId/spine" element={<SpineLegacyRedirect />} />
-          <Route path="/project/:projectId/ppt" element={<PptWorkspaceRoute />}>
-            <Route index element={<Navigate to="outline" replace />} />
-            <Route path="outline" element={<OutlineEditor />} />
-            <Route path="detail" element={<DetailEditor />} />
-            <Route path="editor" element={<SlidePreview />} />
-          </Route>
-          <Route path="/project/:projectId/video" element={<WorkspaceEntryPage kind="video" />} />
-          <Route path="/project/:projectId/video/review/:runId" element={<WorkspaceGenerationReviewRoute />} />
-          <Route path="/project/:projectId/podcast" element={<WorkspaceEntryPage kind="podcast" />} />
-          <Route path="/project/:projectId/podcast/review/:runId" element={<WorkspaceGenerationReviewRoute />} />
+      </Route>
+      {/* 项目路由：统一项目编辑器壳层，不再渲染应用级导航（阶段4） */}
+      <Route element={<ProtectedRoute><ContentProjectLayout /></ProtectedRoute>}>
+        <Route path="/project/:projectId/spine" element={<SpineLegacyRedirect />} />
+        <Route path="/project/:projectId/ppt" element={<PptWorkspaceRoute />}>
+          <Route index element={<Navigate to="outline" replace />} />
+          <Route path="outline" element={<OutlineEditor />} />
+          <Route path="detail" element={<DetailEditor />} />
+          <Route path="editor" element={<SlidePreview />} />
         </Route>
+        <Route path="/project/:projectId/video" element={<WorkspaceEntryPage kind="video" />} />
+        <Route path="/project/:projectId/video/review/:runId" element={<WorkspaceGenerationReviewRoute />} />
+        <Route path="/project/:projectId/podcast" element={<WorkspaceEntryPage kind="podcast" />} />
+        <Route path="/project/:projectId/podcast/review/:runId" element={<WorkspaceGenerationReviewRoute />} />
       </Route>
       <Route path="/project/:projectId/outline" element={<LegacyProjectRedirect stage="outline" />} />
       <Route path="/project/:projectId/detail" element={<LegacyProjectRedirect stage="detail" />} />

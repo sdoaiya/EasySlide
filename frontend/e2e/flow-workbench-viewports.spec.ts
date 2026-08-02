@@ -30,8 +30,8 @@ test.describe('全流程：文案工作台 + 1280 视口', () => {
     const railText = await wbRail.innerText();
     console.log('WORKBENCH RAIL:', railText.slice(0, 150).replace(/\n/g, '|'));
     expect(railText).toContain('第 1 页');
-    const slotText = await page.locator('[data-content-project-rail-slot]').innerText();
-    expect(slotText).not.toContain('第 1 页');
+    // 阶段4：无应用级 rail 槽位；页面索引由工作区 sidebar 承载
+    await expect(page.locator('[data-content-project-rail-slot]')).toHaveCount(0);
     // 检查器候选标签
     const inspector = wb.locator('aside, [class*="border-l"]').first();
     const inspectorText = await wb.innerText();

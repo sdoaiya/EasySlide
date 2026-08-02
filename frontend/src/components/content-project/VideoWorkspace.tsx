@@ -9,6 +9,7 @@ import { getImageUrl } from '@/api/client';
 import { useExportTasksStore } from '@/store/useExportTasksStore';
 import type { ProjectWorkspace } from '@/types';
 import { WorkspaceVersionHistory } from './WorkspaceVersionHistory';
+import { useProjectEditorSession } from './ContentProjectLayout';
 
 type VideoScene = {
   scene_id: string;
@@ -178,6 +179,7 @@ export function VideoWorkspace({
       setBusy(null);
     }
   };
+  useProjectEditorSession({ key: 'video-session', dirty, onSave: save });
 
   const exportVideo = async (renderProfile: 'proof' | 'final') => {
     setBusy('export');
