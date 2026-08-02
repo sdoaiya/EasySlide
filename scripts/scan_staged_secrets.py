@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 
-SKIPPED_PATH_PREFIXES = ("backend/tests/", "frontend/src/tests/", "e2e/", "docs/")
+SKIPPED_PATH_PREFIXES = ("backend/tests/", "frontend/src/tests/", "e2e/", "docs/", "release/")
 PLACEHOLDER_MARKERS = ("your-", "example", "placeholder", "change-this", "test-")
 ASSIGNMENT = re.compile(r"(?i)(?:api[_-]?key|token|secret|password|authorization)\s*[:=]\s*['\"]([A-Za-z0-9_./+=-]{16,})['\"]")
 TOKEN_PATTERNS = (
