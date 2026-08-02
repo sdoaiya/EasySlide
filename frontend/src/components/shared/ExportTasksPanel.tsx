@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Download, X, Trash2, FileText, Clock, CheckCircle, XCircle, Loader2, AlertTriangle, HelpCircle, Settings, RefreshCw, Pause, Play } from 'lucide-react';
+import { Download, X, Trash2, FileText, Clock, CheckCircle, XCircle, Loader2, AlertTriangle, HelpCircle, Settings, RefreshCw, Pause, Play, Square, ExternalLink } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useExportTasksStore, type ExportTask, type ExportTaskType } from '@/store/useExportTasksStore';
 import { useT } from '@/hooks/useT';
 import type { Page } from '@/types';
@@ -13,13 +14,14 @@ const exportI18n = {
     export: {
       tasks: "导出任务", inProgress: "{{count}} 进行中", clearHistory: "清除",
       exportPptx: "PPTX", exportPdf: "PDF", exportEditablePptx: "可编辑 PPTX", exportNativePptx: "原生可编辑 PPTX", exportNativePdf: "原生 PDF", exportNativeHtml: "离线 HTML", exportImages: "图片", exportVideo: "讲解视频", exportPodcast: "播客音频",
+      generateVideo: "生成视频候选", generatePodcast: "生成节目候选", initializeWorkspace: "初始化工作区",
       allPages: "全部", pageRange: "第{{start}}-{{end}}页", singlePage: "第{{num}}页", pagesCount: "{{count}}页",
       warnings: "{{count}} 条警告", clickToView: "点击查看", warningsTitle: "导出警告",
       warningsCount: "导出警告 ({{count}} 条)", detailInfo: "详细信息",
       styleExtractionFailed: "样式提取失败 ({{count}} 个)", textRenderFailed: "文本渲染失败 ({{count}} 个)",
       moreItems: "... 还有 {{count}} 条", exportFailed: "导出失败", preparing: "准备中...",
       retry: "重试",
-      pause: "暂停任务", resume: "继续任务", paused: "已暂停",
+      pause: "暂停任务", resume: "继续任务", paused: "已暂停", cancel: "取消任务", openResult: "查看结果",
       qualityReport: "查看质量报告",
       settingsTip: "可在「项目设置 → 导出设置」中调整配置或开启「返回半成品」选项",
       codexReconnectTip: "如果是 Codex 授权过期或连接中断，也可以前往设置重新连接 OpenAI 授权后再试",
@@ -30,13 +32,14 @@ const exportI18n = {
     export: {
       tasks: "Export Tasks", inProgress: "{{count}} in progress", clearHistory: "Clear",
       exportPptx: "PPTX", exportPdf: "PDF", exportEditablePptx: "Editable PPTX", exportNativePptx: "Native editable PPTX", exportNativePdf: "Native PDF", exportNativeHtml: "Offline HTML", exportImages: "Images", exportVideo: "Narration Video", exportPodcast: "Podcast audio",
+      generateVideo: "Generate video candidate", generatePodcast: "Generate podcast candidate", initializeWorkspace: "Initialize workspace",
       allPages: "All", pageRange: "Pages {{start}}-{{end}}", singlePage: "Page {{num}}", pagesCount: "{{count}} pages",
       warnings: "{{count}} warnings", clickToView: "Click to view", warningsTitle: "Export Warnings",
       warningsCount: "Export Warnings ({{count}})", detailInfo: "Details",
       styleExtractionFailed: "Style extraction failed ({{count}})", textRenderFailed: "Text render failed ({{count}})",
       moreItems: "... {{count}} more", exportFailed: "Export Failed", preparing: "Preparing...",
       retry: "Retry",
-      pause: "Pause task", resume: "Resume task", paused: "Paused",
+      pause: "Pause task", resume: "Resume task", paused: "Paused", cancel: "Cancel task", openResult: "Open result",
       qualityReport: "View quality report",
       settingsTip: "Adjust settings in \"Project Settings → Export Settings\" or enable \"Allow Partial Results\"",
       codexReconnectTip: "If Codex authorization expired or the connection was interrupted, reconnect OpenAI authorization in Settings and try again.",
@@ -89,6 +92,8 @@ const TaskStatusIcon: React.FC<{ status: ExportTask['status'] }> = ({ status }) 
       return <CheckCircle size={16} className="text-[var(--app-success)]" />;
     case 'FAILED':
       return <XCircle size={16} className="text-[var(--app-error)]" />;
+    case 'CANCELLED':
+      return <Square size={16} className="text-[var(--app-text-tertiary)]" />;
     default:
       return null;
   }
@@ -220,14 +225,33 @@ const WarningsModal: React.FC<{
   );
 };
 
+const OpenResultButton: React.FC<{ task: ExportTask; onOpen?: (task: ExportTask) => void }> = ({ task, onOpen }) => {
+  const t = useT(exportI18n);
+  const navigate = useNavigate();
+  return (
+    <Button
+      variant="secondary"
+      size="sm"
+      icon={<ExternalLink size={14} />}
+      onClick={() => { if (onOpen) onOpen(task); else if (task.resultRoute) navigate(task.resultRoute); }}
+      className="text-xs px-2 py-1"
+    >
+      {t('export.openResult')}
+    </Button>
+  );
+};
+
 const TaskItem: React.FC<{
   task: ExportTask;
   pages: Page[];
   onRemove: () => void;
   onPause: () => void;
   onResume: () => void;
+  onCancel?: () => void;
   onRetry?: (task: ExportTask) => void;
-}> = ({ task, pages, onRemove, onPause, onResume, onRetry }) => {
+  onOpenResult?: (task: ExportTask) => void;
+  showProjectTitle?: boolean;
+}> = ({ task, pages, onRemove, onPause, onResume, onCancel, onRetry, onOpenResult, showProjectTitle }) => {
   const t = useT(exportI18n);
   const [showWarningsModal, setShowWarningsModal] = useState(false);
   const [showQualityReport, setShowQualityReport] = useState(false);
@@ -242,6 +266,9 @@ const TaskItem: React.FC<{
     'images': t('export.exportImages'),
     'video': t('export.exportVideo'),
     'podcast': t('export.exportPodcast'),
+    'generate-video': t('export.generateVideo'),
+    'generate-podcast': t('export.generatePodcast'),
+    'initialize-workspace': t('export.initializeWorkspace'),
     'workspace': '准备工作区',
   };
   
@@ -277,7 +304,6 @@ const TaskItem: React.FC<{
 
   const progressPercent = getProgressPercent();
   const isProcessing = task.status === 'PROCESSING' || task.status === 'RUNNING' || task.status === 'PENDING';
-  const isPausable = task.type === 'editable-pptx' || task.type.startsWith('native-') || task.type === 'video' || task.type === 'podcast' || task.type === 'workspace';
   const showsProgress = isProcessing || task.status === 'PAUSED';
   
   const hasWarnings = task.status === 'COMPLETED' && task.progress?.warnings && task.progress.warnings.length > 0;
@@ -293,6 +319,11 @@ const TaskItem: React.FC<{
           <span className="truncate text-sm font-medium text-[var(--app-text-secondary)]">
             {taskTypeLabels[task.type]}
           </span>
+          {showProjectTitle && task.projectTitle && (
+            <span className="max-w-[120px] truncate text-xs text-[var(--app-text-tertiary)]">
+              {task.projectTitle}
+            </span>
+          )}
           <span className="text-xs text-[var(--app-text-tertiary)]">
             {pageRangeText}
           </span>
@@ -411,7 +442,7 @@ const TaskItem: React.FC<{
       </div>
       
       <div className="flex items-center gap-1 flex-shrink-0">
-        {isProcessing && isPausable && (
+        {isProcessing && onPause && task.capabilities?.pause !== false && (
           <button
             onClick={onPause}
             className="p-1 text-[var(--app-text-tertiary)] transition-colors hover:text-[var(--app-accent)]"
@@ -419,6 +450,17 @@ const TaskItem: React.FC<{
             aria-label={t('export.pause')}
           >
             <Pause size={16} />
+          </button>
+        )}
+
+        {isProcessing && onCancel && task.capabilities?.cancel !== false && (
+          <button
+            onClick={onCancel}
+            className="p-1 text-[var(--app-text-tertiary)] transition-colors hover:text-[var(--app-error)]"
+            title={t('export.cancel')}
+            aria-label={t('export.cancel')}
+          >
+            <Square size={16} />
           </button>
         )}
 
@@ -433,7 +475,7 @@ const TaskItem: React.FC<{
           </button>
         )}
 
-        {task.status === 'FAILED' && onRetry && (
+        {task.status === 'FAILED' && onRetry && task.capabilities?.retry !== false && (
           <Button
             variant="secondary"
             size="sm"
@@ -443,6 +485,10 @@ const TaskItem: React.FC<{
           >
             {t('export.retry')}
           </Button>
+        )}
+
+        {task.resultRoute && (
+          <OpenResultButton task={task} onOpen={onOpenResult} />
         )}
 
         {task.status === 'COMPLETED' && task.downloadUrl && (
@@ -501,12 +547,14 @@ interface ExportTasksPanelProps {
   pages?: Page[];
   className?: string;
   onRetry?: (task: ExportTask) => void;
+  onOpenResult?: (task: ExportTask) => void;
+  showProjectTitle?: boolean;
 }
 
-export const ExportTasksPanel: React.FC<ExportTasksPanelProps> = ({ projectId, pages = [], className, onRetry }) => {
+export const ExportTasksPanel: React.FC<ExportTasksPanelProps> = ({ projectId, pages = [], className, onRetry, onOpenResult, showProjectTitle }) => {
   const t = useT(exportI18n);
   const [isExpanded, setIsExpanded] = useState(true);
-  const { tasks, removeTask, clearCompleted, restoreActiveTasks, pauseTask, resumeTask } = useExportTasksStore();
+  const { tasks, removeTask, clearCompleted, restoreActiveTasks, loadTasks, pauseTask, resumeTask, cancelTask, retryTask } = useExportTasksStore();
 
   const filteredTasks = projectId
     ? tasks.filter(task => task.projectId === projectId)
@@ -516,18 +564,27 @@ export const ExportTasksPanel: React.FC<ExportTasksPanelProps> = ({ projectId, p
     task => task.status === 'PENDING' || task.status === 'PROCESSING' || task.status === 'RUNNING' || task.status === 'PAUSED'
   );
   const completedTasks = filteredTasks.filter(
-    task => task.status === 'COMPLETED' || task.status === 'FAILED'
+    task => task.status === 'COMPLETED' || task.status === 'FAILED' || task.status === 'CANCELLED'
   );
 
   useEffect(() => {
-    restoreActiveTasks();
-  }, []);
+    // 后端回填后恢复进行中任务的轮询（localStorage 不再是事实源）
+    void Promise.resolve(loadTasks(projectId ? { projectId } : {})).then(() => restoreActiveTasks());
+  }, [projectId]);
 
   useEffect(() => {
-    if (activeTasks.length > 0 && !isExpanded) {
-      setIsExpanded(true);
-    }
-  }, [activeTasks.length, isExpanded]);
+    // 窗口重新获得焦点时刷新一次
+    const onFocus = () => {
+      void Promise.resolve(loadTasks(projectId ? { projectId } : {})).then(() => restoreActiveTasks());
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [projectId]);
+
+  const handleRetry = (task: ExportTask) => {
+    if (onRetry) { onRetry(task); return; }
+    void retryTask(task.id).catch(console.error);
+  };
 
   if (filteredTasks.length === 0) {
     return null;
@@ -567,7 +624,10 @@ export const ExportTasksPanel: React.FC<ExportTasksPanelProps> = ({ projectId, p
                   onRemove={() => removeTask(task.id)}
                   onPause={() => void pauseTask(task.id).catch(console.error)}
                   onResume={() => void resumeTask(task.id).catch(console.error)}
-                  onRetry={onRetry}
+                  onCancel={() => void cancelTask(task.id).catch(console.error)}
+                  onRetry={handleRetry}
+                  onOpenResult={onOpenResult}
+                  showProjectTitle={showProjectTitle}
                 />
               ))}
             </div>
@@ -593,7 +653,10 @@ export const ExportTasksPanel: React.FC<ExportTasksPanelProps> = ({ projectId, p
                   onRemove={() => removeTask(task.id)}
                   onPause={() => void pauseTask(task.id).catch(console.error)}
                   onResume={() => void resumeTask(task.id).catch(console.error)}
-                  onRetry={onRetry}
+                  onCancel={() => void cancelTask(task.id).catch(console.error)}
+                  onRetry={handleRetry}
+                  onOpenResult={onOpenResult}
+                  showProjectTitle={showProjectTitle}
                 />
               ))}
             </div>

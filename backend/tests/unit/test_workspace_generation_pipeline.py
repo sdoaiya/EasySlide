@@ -230,9 +230,14 @@ class TestPipelineTask:
             assert '稍后重试' in run.error_message
             assert task.status == 'FAILED'
 
-        retried = client.post(
-            f'/api/projects/{project_id}/workspace-generation-runs/{run_id}/retry',
-        )
+        # retry 会重新提交后台任务；抑制提交，让下方手动调用保持唯一执行路径
+        controller.task_manager.submit_task = lambda *a, **k: None
+        try:
+            retried = client.post(
+                f'/api/projects/{project_id}/workspace-generation-runs/{run_id}/retry',
+            )
+        finally:
+            del controller.task_manager.submit_task
         assert retried.status_code == 200
         assert retried.get_json()['data']['status'] == 'PENDING'
 

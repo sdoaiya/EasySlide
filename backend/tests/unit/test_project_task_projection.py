@@ -65,6 +65,18 @@ class TestServerTaskList:
         finally:
             del controller.task_manager.submit_task
 
+        # 驱动到 REVIEW_READY：完成任务时 result.route 必须指向候选审查页
+        from services.task_manager import generate_workspace_candidate_task
+        from models import WorkspaceGenerationRun, db
+
+        with app.app_context():
+            run = db.session.get(WorkspaceGenerationRun, task_id and None or None)
+        # task_id 是任务 ID，run 通过 task_id 反查
+        with app.app_context():
+            run = WorkspaceGenerationRun.query.filter_by(task_id=task_id).first()
+            run_task_id = run.task_id
+        generate_workspace_candidate_task(run_task_id, run_id=run.id, app=app)
+
         response = client.get('/api/tasks')
         assert response.status_code == 200
         items = {item['task_id']: item for item in response.get_json()['data']['tasks']}
@@ -72,7 +84,9 @@ class TestServerTaskList:
         assert item['workspace_kind'] == 'video'
         assert item['category'] in {'generate', 'optimize', 'preview', 'export', 'initialize'}
         assert item['operation'] == 'generate'
-        assert item['capabilities'] == {'pause': True, 'resume': True, 'cancel': True, 'retry': True}
+        # 契约：控制能力由服务端按状态计算（REVIEW_READY 任务已 COMPLETED：
+        # 不可暂停/恢复/取消，可重试）
+        assert item['capabilities'] == {'pause': False, 'resume': False, 'cancel': False, 'retry': True}
         # 生成运行完成等待审查时，结果路由必须指向候选审查页
         assert item['result']['run_id'] == response.get_json()['data']['tasks'][0]['result'].get('run_id')
         assert 'route' in item['result']

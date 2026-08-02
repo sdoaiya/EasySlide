@@ -49,6 +49,10 @@ def _submit_candidate_task(run: WorkspaceGenerationRun) -> WorkspaceGenerationRu
         'failed': 0,
         'stage': 'queued',
         'item_ids': [],
+        'category': 'generate',
+        'workspace_kind': run.target_workspace_kind,
+        'operation': run.operation,
+        'run_id': run.id,
         '_resume': {
             'kind': 'workspace-candidate',
             'kwargs': {'run_id': run.id},
@@ -194,11 +198,34 @@ def get_run(project_id, run_id):
 
 
 def _control_run(project_id, run_id, next_status: str, error_code: str):
+    """Run 控制委托共享任务控制服务（阶段1 §5.4）——Task 与 Run 原子同步。"""
     try:
         run = _run_or_404(run_id)
         if run.project_id != project_id:
             return not_found('Generation run')
-        transition_run(run, next_status)
+        from models import Task
+        from services.task_control_service import (
+            cancel_task,
+            pause_task,
+            retry_task,
+        )
+
+        if next_status == 'CANCELLED' and run.status == 'PUBLISHED':
+            return error_response(error_code, '已发布运行不能再取消', 409)
+        task = db.session.get(Task, run.task_id) if run.task_id else None
+        if task:
+            if next_status == 'PAUSED':
+                pause_task(task)
+            elif next_status == 'CANCELLED':
+                cancel_task(task)
+            elif next_status == 'PENDING':
+                retry_task(task)
+            elif next_status == 'RUNNING':
+                from services.task_control_service import resume_task
+                resume_task(task)
+        else:
+            # 兼容：无关联任务的运行只改自身状态
+            transition_run(run, next_status)
         db.session.commit()
         return success_response(run.to_dict())
     except GenerationRunStateError as exc:

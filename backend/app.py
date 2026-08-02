@@ -38,7 +38,7 @@ from controllers.material_controller import material_bp, material_global_bp
 from controllers.reference_file_controller import reference_file_bp
 from controllers.settings_controller import settings_bp
 from controllers.openai_oauth_controller import openai_oauth_bp
-from controllers import project_bp, page_bp, template_bp, user_template_bp, user_style_template_bp, export_bp, file_bp, style_bp, native_deck_bp, narration_bp, content_workspace_bp, podcast_bp, workspace_generation_bp
+from controllers import server_task_bp, project_bp, page_bp, template_bp, user_template_bp, user_style_template_bp, export_bp, file_bp, style_bp, native_deck_bp, narration_bp, content_workspace_bp, podcast_bp, workspace_generation_bp
 
 
 # Enable SQLite WAL mode for all connections
@@ -145,6 +145,7 @@ def create_app():
     
     # Register blueprints
     app.register_blueprint(project_bp)
+    app.register_blueprint(server_task_bp)
     app.register_blueprint(page_bp)
     app.register_blueprint(template_bp)
     app.register_blueprint(user_template_bp)

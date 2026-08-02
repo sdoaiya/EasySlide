@@ -1911,6 +1911,7 @@ export const SlidePreview: React.FC = () => {
 
   const handleRetryExport = (task: ExportTask) => {
     if (task.type === 'native-pptx' || task.type === 'native-pdf' || task.type === 'native-html' || task.type === 'podcast' || task.type === 'workspace') return;
+    if (task.type === 'generate-video' || task.type === 'generate-podcast' || task.type === 'initialize-workspace') return;
     handleExport(task.type, { pageIds: task.pageIds });
   };
 

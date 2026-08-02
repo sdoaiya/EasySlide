@@ -49,6 +49,14 @@ const exportTaskMocks = vi.hoisted(() => ({
   addTask: vi.fn(),
   updateTask: vi.fn(),
   pollTask: vi.fn(),
+  loadTasks: vi.fn(),
+  removeTask: vi.fn(),
+  clearCompleted: vi.fn(),
+  pauseTask: vi.fn(),
+  resumeTask: vi.fn(),
+  cancelTask: vi.fn(),
+  retryTask: vi.fn(),
+  loadMoreTasks: vi.fn(),
 }))
 
 const frameMocks = vi.hoisted(() => ({ capture: vi.fn(), captureManifests: vi.fn() }))

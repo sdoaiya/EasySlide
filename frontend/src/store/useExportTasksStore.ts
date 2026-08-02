@@ -1,5 +1,4 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
 import * as api from '@/api/endpoints';
 import { devLog } from '@/utils/logger';
 import { getT } from '@/utils/i18nHelper';
@@ -13,8 +12,8 @@ const exportI18n = {
 const t = getT(exportI18n);
 
 // Note: Backend uses 'RUNNING' but we also accept 'PROCESSING' for compatibility
-export type ExportTaskStatus = 'PENDING' | 'PROCESSING' | 'RUNNING' | 'PAUSED' | 'COMPLETED' | 'FAILED';
-export type ExportTaskType = 'pptx' | 'pdf' | 'editable-pptx' | 'native-pptx' | 'native-pdf' | 'native-html' | 'images' | 'video' | 'podcast' | 'workspace';
+export type ExportTaskStatus = 'PENDING' | 'PROCESSING' | 'RUNNING' | 'PAUSED' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+export type ExportTaskType = 'pptx' | 'pdf' | 'editable-pptx' | 'native-pptx' | 'native-pdf' | 'native-html' | 'images' | 'video' | 'podcast' | 'workspace' | 'generate-video' | 'generate-podcast' | 'initialize-workspace';
 
 export interface ExportTask {
   id: string;
@@ -50,13 +49,26 @@ export interface ExportTask {
   downloadUrl?: string;
   filename?: string;
   errorMessage?: string;
+  errorCode?: string;
+  /** 任务结果路由（审查页 / 工作区 / 下载链接），来自服务端投影 */
+  resultRoute?: string;
+  /** 服务端计算的控制能力，前端不再硬编码 */
+  capabilities?: { pause: boolean; resume: boolean; cancel: boolean; retry: boolean };
+  category?: string;
+  workspaceKind?: string;
+  operation?: string;
+  projectTitle?: string;
   createdAt: string;
   completedAt?: string;
 }
 
 interface ExportTasksState {
   tasks: ExportTask[];
-  
+  /** 服务端任务总数（分页保留历史，不再截断为本地 20 条） */
+  total: number;
+  hasMore: boolean;
+  loading: boolean;
+
   // Actions
   addTask: (task: Omit<ExportTask, 'createdAt'>) => void;
   updateTask: (id: string, updates: Partial<ExportTask>) => void;
@@ -65,212 +77,259 @@ interface ExportTasksState {
   pollTask: (id: string, projectId: string, taskId: string) => Promise<void>;
   pauseTask: (id: string) => Promise<void>;
   resumeTask: (id: string) => Promise<void>;
-  restoreActiveTasks: () => void; // 恢复正在进行的任务并重新开始轮询
+  cancelTask: (id: string) => Promise<void>;
+  retryTask: (id: string) => Promise<void>;
+  /** 从后端回填任务列表（唯一事实源），返回后端总数 */
+  loadTasks: (filters?: api.ServerTaskListParams) => Promise<number>;
+  /** 分页加载更多历史任务 */
+  loadMoreTasks: () => Promise<void>;
+  /** 恢复进行中的任务并重新开始轮询 */
+  restoreActiveTasks: () => void;
 }
 
 const pollTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-export const useExportTasksStore = create<ExportTasksState>()(
-  persist(
-    (set, get) => ({
-      tasks: [],
+// 后端 task_type / workspace_kind → 前端展示类型
+export function mapTaskType(taskType?: string, workspaceKind?: string): ExportTaskType {
+  if (!taskType) return 'workspace';
+  if (taskType === 'GENERATE_WORKSPACE_CANDIDATE') {
+    return workspaceKind === 'podcast' ? 'generate-podcast' : workspaceKind === 'video' ? 'generate-video' : 'workspace';
+  }
+  if (taskType === 'EXPORT_VIDEO_WORKSPACE') return 'video';
+  if (taskType === 'EXPORT_PODCAST_WORKSPACE') return 'podcast';
+  if (taskType === 'INITIALIZE_CONTENT_WORKSPACE') return 'initialize-workspace';
+  if (taskType === 'GENERATE_DESCRIPTIONS' || taskType === 'GENERATE_IMAGES' || taskType === 'NARRATION_AI_BATCH') return 'workspace';
+  return 'workspace';
+}
 
-      addTask: (task) => {
-        set((state) => {
-          // Check if task with this id already exists
-          const existingIndex = state.tasks.findIndex(t => t.id === task.id);
-          
-          if (existingIndex >= 0) {
-            // Update existing task
-            const updatedTasks = [...state.tasks];
-            updatedTasks[existingIndex] = {
-              ...updatedTasks[existingIndex],
-              ...task,
-              // Update completedAt if status changed to completed/failed
-              completedAt: (task.status === 'COMPLETED' || task.status === 'FAILED')
-                ? new Date().toISOString()
-                : updatedTasks[existingIndex].completedAt,
-            };
-            return { tasks: updatedTasks };
-          } else {
-            // Add new task
-            const newTask: ExportTask = {
-              ...task,
-              createdAt: new Date().toISOString(),
-            };
-            return {
-              tasks: [newTask, ...state.tasks].slice(0, 20), // Keep max 20 tasks
-            };
-          }
-        });
-      },
+/** 后端投影 → 前端任务视图模型 */
+function projectionToTask(item: any, existing?: ExportTask): ExportTask {
+  const progress = existing?.progress;
+  const type = item.task_type ? mapTaskType(item.task_type, item.workspace_kind) : (existing?.type ?? 'workspace');
+  const base: ExportTask = {
+    id: item.task_id ?? existing?.id ?? '',
+    taskId: item.task_id ?? existing?.taskId ?? '',
+    projectId: item.project_id ?? existing?.projectId ?? '',
+    type,
+    status: item.status as ExportTaskStatus,
+    progress: {
+      ...progress,
+      total: item.progress?.total ?? progress?.total ?? 0,
+      completed: item.progress?.completed ?? progress?.completed ?? 0,
+      percent: item.progress?.percent ?? progress?.percent,
+      current_step: item.progress?.current_step ?? progress?.current_step,
+      workspace_kind: item.workspace_kind,
+    },
+    downloadUrl: item.result?.download_url
+      ?? item.progress?.download_url
+      ?? item.progress?.download_url_absolute
+      ?? existing?.downloadUrl,
+    filename: item.result?.filename ?? item.progress?.filename ?? existing?.filename,
+    errorMessage: item.error_message ?? existing?.errorMessage,
+    errorCode: item.error_code ?? existing?.errorCode,
+    resultRoute: item.result?.route,
+    capabilities: item.capabilities,
+    category: item.category,
+    workspaceKind: item.workspace_kind,
+    operation: item.operation,
+    projectTitle: item.project_title,
+    createdAt: item.created_at ?? existing?.createdAt ?? new Date().toISOString(),
+    completedAt: item.completed_at ?? existing?.completedAt,
+  };
+  if (item.status === 'COMPLETED' && !base.completedAt) base.completedAt = new Date().toISOString();
+  if (item.status === 'FAILED' && item.error_message) {
+    base.errorMessage = normalizeErrorMessage(item.error_message);
+  }
+  return base;
+}
 
-      updateTask: (id, updates) => {
-        set((state) => ({
-          tasks: state.tasks.map((task) =>
-            task.id === id ? { ...task, ...updates } : task
-          ),
-        }));
-      },
+export const useExportTasksStore = create<ExportTasksState>()((set, get) => ({
+  tasks: [],
+  total: 0,
+  hasMore: false,
+  loading: false,
 
-      removeTask: (id) => {
-        set((state) => ({
-          tasks: state.tasks.filter((task) => task.id !== id),
-        }));
-      },
-
-      clearCompleted: (projectId) => {
-        set((state) => ({
-          tasks: state.tasks.filter(
-            (task) => {
-              const isCompleted = task.status === 'COMPLETED' || task.status === 'FAILED';
-              if (!isCompleted) return true;
-              return projectId != null ? task.projectId !== projectId : false;
-            }
-          ),
-        }));
-      },
-
-      pollTask: async (id, projectId, taskId) => {
-        const existingTimer = pollTimers.get(id);
-        if (existingTimer) clearTimeout(existingTimer);
-
-        const poll = async () => {
-          pollTimers.delete(id);
-          if (get().tasks.find(task => task.id === id)?.status === 'PAUSED') return;
-
-          try {
-            const response = await api.getTaskStatus(projectId, taskId);
-            const task = response.data;
-
-            if (!task) {
-              console.warn('[ExportTasksStore] No task data in response');
-              return;
-            }
-
-            const existingProgress = get().tasks.find(task => task.id === id)?.progress;
-            const updates: Partial<ExportTask> = {
-              status: task.status as ExportTaskStatus,
-            };
-
-            if (task.progress) {
-              // Parse progress if it's a string (from database JSON field)
-              let progressData = task.progress;
-              if (typeof progressData === 'string') {
-                try {
-                  progressData = JSON.parse(progressData);
-                } catch (e) {
-                  console.warn('[ExportTasksStore] Failed to parse progress:', e);
-                }
-              }
-              const parsedProgress = progressData as Record<string, any>;
-              const resumeKwargs = parsedProgress._resume?.kwargs as Record<string, any> | undefined;
-              
-              updates.progress = {
-                ...existingProgress,
-                ...parsedProgress,
-                total: parsedProgress.total ?? existingProgress?.total ?? 0,
-                completed: parsedProgress.completed ?? existingProgress?.completed ?? 0,
-                render_profile: parsedProgress.render_profile
-                  || resumeKwargs?.render_profile
-                  || existingProgress?.render_profile,
-                source_proof_task_id: parsedProgress.source_proof_task_id
-                  || resumeKwargs?.source_proof_task_id
-                  || existingProgress?.source_proof_task_id,
-                workspace_version_id: parsedProgress.workspace_version_id
-                  || resumeKwargs?.workspace_version_id
-                  || existingProgress?.workspace_version_id,
-              };
-              
-              // Extract download URL if available
-              const downloadUrl = progressData.download_url || progressData.download_url_absolute;
-              if (downloadUrl) {
-                updates.downloadUrl = downloadUrl;
-              }
-              if (progressData.filename) {
-                updates.filename = progressData.filename;
-              }
-            }
-
-            if (task.status === 'COMPLETED') {
-              updates.completedAt = new Date().toISOString();
-              get().updateTask(id, updates);
-            } else if (task.status === 'FAILED') {
-              const taskErrorMessage = task.error_message
-                || task.error
-                || t('exportStore.exportFailed');
-              updates.errorMessage = normalizeErrorMessage(taskErrorMessage);
-              updates.completedAt = new Date().toISOString();
-              get().updateTask(id, updates);
-            } else if (task.status === 'PENDING' || task.status === 'RUNNING' || task.status === 'PROCESSING') {
-              get().updateTask(id, updates);
-              // Continue polling
-              pollTimers.set(id, setTimeout(poll, 2000));
-            } else if (task.status === 'PAUSED') {
-              get().updateTask(id, updates);
-            }
-          } catch (error: any) {
-            console.error('[ExportTasksStore] Poll error:', error);
-            if (error?.code === 'ECONNABORTED') {
-              pollTimers.set(id, setTimeout(poll, 2000));
-              return;
-            }
-            get().updateTask(id, {
-              status: 'FAILED',
-              errorMessage: normalizeErrorMessage(error.message || t('exportStore.pollFailed')),
-              completedAt: new Date().toISOString(),
-            });
-          }
+  addTask: (task) => {
+    set((state) => {
+      const existingIndex = state.tasks.findIndex((item) => item.id === task.id);
+      if (existingIndex >= 0) {
+        const updatedTasks = [...state.tasks];
+        updatedTasks[existingIndex] = {
+          ...updatedTasks[existingIndex],
+          ...task,
+          completedAt: (task.status === 'COMPLETED' || task.status === 'FAILED')
+            ? new Date().toISOString()
+            : updatedTasks[existingIndex].completedAt,
         };
+        return { tasks: updatedTasks };
+      }
+      const newTask: ExportTask = { ...task, createdAt: new Date().toISOString() };
+      return { tasks: [newTask, ...state.tasks] };
+    });
+  },
 
-        await poll();
-      },
+  updateTask: (id, updates) => {
+    set((state) => ({
+      tasks: state.tasks.map((task) =>
+        task.id === id ? { ...task, ...updates } : task
+      ),
+    }));
+  },
 
-      pauseTask: async (id) => {
-        const task = get().tasks.find(item => item.id === id);
-        if (!task) return;
-        await api.pauseTask(task.projectId, task.taskId);
-        const timer = pollTimers.get(id);
-        if (timer) clearTimeout(timer);
-        pollTimers.delete(id);
-        get().updateTask(id, { status: 'PAUSED' });
-      },
+  removeTask: (id) => {
+    set((state) => ({
+      tasks: state.tasks.filter((task) => task.id !== id),
+    }));
+  },
 
-      resumeTask: async (id) => {
-        const task = get().tasks.find(item => item.id === id);
-        if (!task) return;
-        const response = await api.resumeTask(task.projectId, task.taskId);
-        const status = (response.data?.status || 'RUNNING') as ExportTaskStatus;
-        get().updateTask(id, { status });
-        if (task.type.startsWith('native-') && status === 'PENDING') return;
-        await get().pollTask(id, task.projectId, task.taskId);
-      },
-
-      restoreActiveTasks: () => {
-        // 恢复所有正在进行的任务并重新开始轮询
-        const state = get();
-        const activeTasks = state.tasks.filter(
-          task => !task.type.startsWith('native-')
-            && (task.status === 'PENDING' || task.status === 'PROCESSING' || task.status === 'RUNNING')
-        );
-        
-        if (activeTasks.length > 0) {
-          devLog(`[ExportTasksStore] 恢复 ${activeTasks.length} 个正在进行的任务`);
-          activeTasks.forEach(task => {
-            // 重新开始轮询
-            state.pollTask(task.id, task.projectId, task.taskId).catch(err => {
-              console.error(`[ExportTasksStore] 恢复任务 ${task.id} 失败:`, err);
-            });
-          });
-        }
-      },
-    }),
-    {
-      name: 'export-tasks-storage',
-      partialize: (state) => ({
-        // Persist all tasks (including active ones) so they can be restored after page refresh
-        tasks: state.tasks.slice(0, 20), // Keep max 20 tasks
+  clearCompleted: (projectId) => {
+    set((state) => ({
+      tasks: state.tasks.filter((task) => {
+        const isCompleted = task.status === 'COMPLETED' || task.status === 'FAILED' || task.status === 'CANCELLED';
+        if (!isCompleted) return true;
+        return projectId != null ? task.projectId !== projectId : false;
       }),
+    }));
+  },
+
+  pollTask: async (id, projectId, taskId) => {
+    const existingTimer = pollTimers.get(id);
+    if (existingTimer) clearTimeout(existingTimer);
+
+    const poll = async () => {
+      pollTimers.delete(id);
+      const current = get().tasks.find((task) => task.id === id);
+      if (!current) return;
+      if (current.status === 'PAUSED' || current.status === 'COMPLETED' || current.status === 'FAILED' || current.status === 'CANCELLED') return;
+      if (!taskId) return; // 本地任务无后端 task，不轮询
+
+      try {
+        const response = await api.getTaskStatus(projectId, taskId);
+        const item = response.data as any;
+        if (!item) {
+          console.warn('[ExportTasksStore] No task data in response');
+          return;
+        }
+        const updates = projectionToTask(item, get().tasks.find((task) => task.id === id));
+        updates.id = id;
+        get().updateTask(id, updates);
+
+        if (item.status === 'COMPLETED' || item.status === 'FAILED' || item.status === 'CANCELLED') {
+          return;
+        }
+        if (item.status === 'PAUSED') return;
+        pollTimers.set(id, setTimeout(poll, 2000));
+      } catch (error: any) {
+        console.error('[ExportTasksStore] Poll error:', error);
+        if (error?.code === 'ECONNABORTED') {
+          pollTimers.set(id, setTimeout(poll, 2000));
+          return;
+        }
+        get().updateTask(id, {
+          status: 'FAILED',
+          errorMessage: normalizeErrorMessage(error.message || t('exportStore.pollFailed')),
+          completedAt: new Date().toISOString(),
+        });
+      }
+    };
+
+    await poll();
+  },
+
+  pauseTask: async (id) => {
+    const task = get().tasks.find((item) => item.id === id);
+    if (!task || !task.taskId) return;
+    const response = await api.pauseTask(task.projectId, task.taskId);
+    const timer = pollTimers.get(id);
+    if (timer) clearTimeout(timer);
+    pollTimers.delete(id);
+    get().updateTask(id, projectionToTask(response.data as any, task));
+  },
+
+  resumeTask: async (id) => {
+    const task = get().tasks.find((item) => item.id === id);
+    if (!task || !task.taskId) return;
+    const response = await api.resumeTask(task.projectId, task.taskId);
+    const resumed = projectionToTask(response.data as any, task);
+    get().updateTask(id, resumed);
+    // 原生导出由原生工作区负责恢复，避免在浏览器端重复轮询
+    if (task.type.startsWith('native-') && resumed.status === 'PENDING') return;
+    await get().pollTask(id, task.projectId, task.taskId);
+  },
+
+  cancelTask: async (id) => {
+    const task = get().tasks.find((item) => item.id === id);
+    if (!task || !task.taskId) return;
+    const response = await api.cancelTask(task.projectId, task.taskId);
+    const timer = pollTimers.get(id);
+    if (timer) clearTimeout(timer);
+    pollTimers.delete(id);
+    get().updateTask(id, projectionToTask(response.data as any, task));
+  },
+
+  retryTask: async (id) => {
+    const task = get().tasks.find((item) => item.id === id);
+    if (!task || !task.taskId) return;
+    const response = await api.retryTask(task.projectId, task.taskId);
+    get().updateTask(id, projectionToTask(response.data as any, task));
+    await get().pollTask(id, task.projectId, task.taskId);
+  },
+
+  loadTasks: async (filters = {}) => {
+    set({ loading: true });
+    try {
+      const response = await api.listServerTasks({ limit: 100, ...filters });
+      const { tasks: serverTasks = [], total = 0 } = response.data ?? {};
+      const serverIds = new Set(serverTasks.map((item: any) => item.task_id));
+      // 合并：后端投影为准，保留本地乐观任务（无后端 task 的帧截取/创建中任务）
+      const merged = [
+        ...serverTasks.map((item: any) => projectionToTask(item)),
+        ...get().tasks.filter((task) => !serverIds.has(task.taskId)),
+      ];
+      set({ tasks: merged, total, hasMore: merged.length < total, loading: false });
+      return total;
+    } catch (error) {
+      console.error('[ExportTasksStore] loadTasks error:', error);
+      set({ loading: false });
+      return get().total;
     }
-  )
-);
+  },
+
+  loadMoreTasks: async () => {
+    const state = get();
+    if (state.loading || !state.hasMore) return;
+    set({ loading: true });
+    try {
+      const response = await api.listServerTasks({ limit: 100, cursor: state.tasks.length });
+      const { tasks: serverTasks = [], total = 0 } = response.data ?? {};
+      const known = new Set(state.tasks.map((task) => task.taskId));
+      const appended = serverTasks
+        .filter((item: any) => !known.has(item.task_id))
+        .map((item: any) => projectionToTask(item));
+      const merged = [...state.tasks, ...appended];
+      set({ tasks: merged, total, hasMore: merged.length < total, loading: false });
+    } catch (error) {
+      console.error('[ExportTasksStore] loadMoreTasks error:', error);
+      set({ loading: false });
+    }
+  },
+
+  restoreActiveTasks: () => {
+    // 从后端发现进行中的任务并恢复轮询（不再依赖 localStorage）；
+    // 原生导出由原生工作区恢复，浏览器端不重复轮询
+    const state = get();
+    const activeTasks = state.tasks.filter(
+      (task) => task.taskId
+        && !task.type.startsWith('native-')
+        && (task.status === 'PENDING' || task.status === 'PROCESSING' || task.status === 'RUNNING')
+    );
+    if (activeTasks.length > 0) {
+      devLog(`[ExportTasksStore] 恢复 ${activeTasks.length} 个进行中的任务`);
+      activeTasks.forEach((task) => {
+        state.pollTask(task.id, task.projectId, task.taskId).catch((err) => {
+          console.error(`[ExportTasksStore] 恢复任务 ${task.id} 失败:`, err);
+        });
+      });
+    }
+  },
+}));

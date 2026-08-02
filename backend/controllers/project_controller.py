@@ -37,6 +37,12 @@ from services.ppt_workspace_service import (
     set_ppt_status,
     update_ppt_settings,
 )
+from services.task_control_service import (
+    cancel_task,
+    pause_task,
+    retry_task,
+    task_projection,
+)
 from services.task_manager import (
     task_manager,
     generate_descriptions_task,
@@ -53,7 +59,10 @@ from utils import (
 
 logger = logging.getLogger(__name__)
 
+server_task_bp = Blueprint('server_tasks', __name__, url_prefix='/api')
+
 project_bp = Blueprint('projects', __name__, url_prefix='/api/projects')
+
 ASYNC_EXPORT_TASK_TYPES = {
     'EXPORT_EDITABLE_PPTX', 'EXPORT_NATIVE_PPTX', 'EXPORT_NATIVE_PDF',
     'EXPORT_NATIVE_HTML', 'EXPORT_VIDEO', 'EXPORT_VIDEO_WORKSPACE',
@@ -1888,6 +1897,56 @@ def recover_project_image_scenes(project_id):
     }, status_code=202)
 
 
+@server_task_bp.route('/tasks', methods=['GET'])
+def list_server_tasks():
+    """GET /api/tasks - server-side task list (single source of truth, plan §5.3).
+
+    Filters: project_id / workspace_kind / status / limit / cursor(offset).
+    Never depends on browser-local storage; the task center and the project
+    task panel share this endpoint.
+    """
+    try:
+        project_id = request.args.get('project_id', type=str) or None
+        workspace_kind = request.args.get('workspace_kind', type=str) or None
+        status = request.args.get('status', type=str) or None
+        limit = min(max(1, request.args.get('limit', 50, type=int)), 100)
+        cursor = max(0, request.args.get('cursor', 0, type=int))
+
+        query = Task.query
+        if project_id:
+            query = query.filter(Task.project_id == project_id)
+        if status:
+            query = query.filter(Task.status == status)
+        total = query.count()
+        tasks = (
+            query
+            .order_by(Task.created_at.desc(), Task.id.desc())
+            .offset(cursor)
+            .limit(limit)
+            .all()
+        )
+        project_titles = {
+            project.id: project.project_title or '未命名项目'
+            for project in Project.query.filter(
+                Project.id.in_({task.project_id for task in tasks}),
+            ).all()
+        } if tasks else {}
+        items = []
+        for task in tasks:
+            item = task_projection(task)
+            item['project_title'] = project_titles.get(task.project_id, '')
+            items.append(item)
+        return success_response({
+            'tasks': items,
+            'total': total,
+            'limit': limit,
+            'cursor': cursor + len(items),
+        })
+    except Exception as e:
+        logger.error(f"list_server_tasks failed: {str(e)}", exc_info=True)
+        return error_response('SERVER_ERROR', str(e), 500)
+
+
 @project_bp.route('/<project_id>/tasks/<task_id>', methods=['GET'])
 def get_task_status(project_id, task_id):
     """
@@ -1895,12 +1954,14 @@ def get_task_status(project_id, task_id):
     """
     try:
         task = Task.query.get(task_id)
-        
+
         if not task or task.project_id != project_id:
             return not_found('Task')
-        
-        return success_response(task.to_dict())
-    
+
+        item = task_projection(task)
+        item['project_title'] = task.project.project_title or '未命名项目' if task.project else ''
+        return success_response(item)
+
     except Exception as e:
         logger.error(f"get_task_status failed: {str(e)}", exc_info=True)
         return error_response('SERVER_ERROR', str(e), 500)
@@ -1913,10 +1974,29 @@ def pause_export_task(project_id, task_id):
         return not_found('Task')
     if task.task_type not in PAUSABLE_TASK_TYPES:
         return bad_request('This asynchronous task cannot be paused')
-    if task.status in {'PENDING', 'PROCESSING', 'RUNNING'}:
-        task.status = 'PAUSED'
-        db.session.commit()
-    return success_response(task.to_dict())
+    pause_task(task)
+    db.session.commit()
+    return success_response(task_projection(task))
+
+
+@project_bp.route('/<project_id>/tasks/<task_id>/cancel', methods=['POST'])
+def cancel_server_task(project_id, task_id):
+    task = Task.query.get(task_id)
+    if not task or task.project_id != project_id:
+        return not_found('Task')
+    cancel_task(task)
+    db.session.commit()
+    return success_response(task_projection(task))
+
+
+@project_bp.route('/<project_id>/tasks/<task_id>/retry', methods=['POST'])
+def retry_server_task(project_id, task_id):
+    task = Task.query.get(task_id)
+    if not task or task.project_id != project_id:
+        return not_found('Task')
+    retry_task(task)
+    db.session.commit()
+    return success_response(task_projection(task))
 
 
 @project_bp.route('/<project_id>/tasks/<task_id>/resume', methods=['POST'])
@@ -1984,7 +2064,14 @@ def resume_export_task(project_id, task_id):
             task.error_message = str(exc)
             db.session.commit()
             return error_response('SERVER_ERROR', str(exc), 500)
-        return success_response(task.to_dict())
+        # 同步关联 Run 到 RUNNING（Task/Run 原子控制契约）
+        from models import WorkspaceGenerationRun
+
+        run = WorkspaceGenerationRun.query.filter_by(task_id=task.id).first()
+        if run and run.status in {'PAUSED', 'FAILED', 'PENDING'}:
+            run.status = 'RUNNING'
+            db.session.commit()
+        return success_response(task_projection(task))
     if task.status != 'PAUSED':
         return success_response(task.to_dict())
 

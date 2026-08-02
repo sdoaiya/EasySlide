@@ -1056,6 +1056,45 @@ export const resumeTask = async (projectId: string, taskId: string): Promise<Api
   return response.data;
 };
 
+export const cancelTask = async (projectId: string, taskId: string): Promise<ApiResponse<Task>> => {
+  const response = await apiClient.post<ApiResponse<Task>>(`/api/projects/${projectId}/tasks/${taskId}/cancel`);
+  return response.data;
+};
+
+export const retryTask = async (projectId: string, taskId: string): Promise<ApiResponse<Task>> => {
+  const response = await apiClient.post<ApiResponse<Task>>(`/api/projects/${projectId}/tasks/${taskId}/retry`);
+  return response.data;
+};
+
+export interface ServerTaskListParams {
+  projectId?: string;
+  workspaceKind?: string;
+  status?: string;
+  limit?: number;
+  cursor?: number;
+}
+
+export interface ServerTaskListResponse {
+  tasks: Task[];
+  total: number;
+  limit: number;
+  cursor: number;
+}
+
+/**
+ * 服务器任务列表（任务中心与项目任务面板共享的唯一事实源，计划 §5.3）
+ */
+export const listServerTasks = async (params: ServerTaskListParams = {}): Promise<ApiResponse<ServerTaskListResponse>> => {
+  const query = new URLSearchParams();
+  if (params.projectId) query.set('project_id', params.projectId);
+  if (params.workspaceKind) query.set('workspace_kind', params.workspaceKind);
+  if (params.status) query.set('status', params.status);
+  if (params.limit) query.set('limit', String(params.limit));
+  if (params.cursor) query.set('cursor', String(params.cursor));
+  const response = await apiClient.get<ApiResponse<ServerTaskListResponse>>(`/api/tasks${query.toString() ? `?${query.toString()}` : ''}`);
+  return response.data;
+};
+
 // ===== 旁白 (Narration) =====
 
 /**
