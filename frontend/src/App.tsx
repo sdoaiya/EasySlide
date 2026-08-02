@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, type CSSProperties, type ReactNode } from 'react';
 import { BrowserRouter, HashRouter, Routes, Route, Navigate, Outlet, useLocation, useParams } from 'react-router-dom';
 import { animate } from 'animejs';
 import { Home } from './pages/Home';
@@ -47,6 +47,17 @@ function WorkspaceLayout() {
       <AppTopNav />
       <div ref={contentRef} tabIndex={0} aria-label="工作区内容" data-workspace-content className="focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)]">
         <Outlet />
+      </div>
+    </>
+  );
+}
+
+function ProjectWorkbenchLayout() {
+  return (
+    <>
+      <AppTopNav />
+      <div className="h-[calc(100dvh-var(--app-titlebar-offset,0px))] min-h-0 lg:pl-[var(--app-nav-offset,216px)]">
+        <ContentProjectLayout />
       </div>
     </>
   );
@@ -111,8 +122,8 @@ function AppRoutes() {
         <Route path="/settings" element={<SettingsPage showNavigation={false} />} />
         <Route path="/tasks" element={<TaskCenter />} />
       </Route>
-      {/* 项目路由：统一项目编辑器壳层，不再渲染应用级导航（阶段4） */}
-      <Route element={<ProtectedRoute><ContentProjectLayout /></ProtectedRoute>}>
+      {/* 项目路由嵌入桌面工作台；项目内部继续使用统一模式与三栏编辑器。 */}
+      <Route element={<ProtectedRoute><ProjectWorkbenchLayout /></ProtectedRoute>}>
         <Route path="/project/:projectId/spine" element={<SpineLegacyRedirect />} />
         <Route path="/project/:projectId/ppt" element={<PptWorkspaceRoute />}>
           <Route index element={<Navigate to="outline" replace />} />
@@ -160,7 +171,7 @@ function App() {
   return (
     <>
       <DesktopTitleBar />
-      <div style={isDesktop ? { paddingTop: '2.5rem' } : undefined}>
+      <div style={isDesktop ? { paddingTop: '2.5rem', '--app-titlebar-offset': '2.5rem' } as CSSProperties : undefined}>
         {router}
       </div>
       <ToastContainer />
@@ -169,4 +180,3 @@ function App() {
 }
 
 export default App;
-
