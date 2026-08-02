@@ -303,7 +303,6 @@ import {
 import { Button, Loading, Modal, Textarea, useToast, useConfirm, MaterialSelector, ProjectSettingsModal, ExportTasksPanel, TextStyleSelector } from '@/components/shared';
 import { SegmentedControl } from '@/components/shared/SegmentedControl';
 import { WorkspaceShell } from '@/components/workspace/WorkspaceShell';
-import { ProjectRailPortal, useProjectRail } from '@/components/project-rail/ProjectRail';
 import { PptToVideoWizard } from '@/components/content-project/PptToVideoWizard';
 import { useContentProjectStore } from '@/store/useContentProjectStore';
 import { WorkspaceStatusBar } from '@/components/workspace/WorkspaceStatusBar';
@@ -564,7 +563,6 @@ const PPTX_TRANSITION_OPTIONS: { value: PptxTransitionEffect; labelKey: string }
 ];
 
 export const SlidePreview: React.FC = () => {
-  const { target: railTarget, active: railActive } = useProjectRail();
   const navigate = useNavigate();
   const location = useLocation();
   const { i18n } = useTranslation();
@@ -618,8 +616,6 @@ export const SlidePreview: React.FC = () => {
   const [showVideoAdvancedSettings, setShowVideoAdvancedSettings] = useState(false);
   const [showNarrationWorkbench, setShowNarrationWorkbench] = useState(false);
   const [showPptToVideoWizard, setShowPptToVideoWizard] = useState(false);
-  // 文案工作台打开时让出导航槽，避免双 rail 堆叠
-  const railVisible = railActive && !showNarrationWorkbench;
   const [videoNarrationSummary, setVideoNarrationSummary] = useState<ProjectNarrationSummary | null>(null);
   const [showEditablePptxDialog, setShowEditablePptxDialog] = useState(false);
   const [showImageQualityReport, setShowImageQualityReport] = useState(false);
@@ -3646,9 +3642,8 @@ export const SlidePreview: React.FC = () => {
             </div>
           </WorkspaceStatusBar>
         )}
-      sidebar={railVisible ? null : imageRail}
+      sidebar={imageRail}
       >
-      {railVisible && railTarget && <ProjectRailPortal target={railTarget}>{imageRail}</ProjectRailPortal>}
 
         {/* 右侧：大图预览 */}
         <div className="flex h-full min-w-0 flex-col overflow-hidden bg-[var(--app-canvas)]">

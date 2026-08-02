@@ -24,10 +24,14 @@ test.describe('全流程：文案工作台 + 1280 视口', () => {
     expect(wbText).toContain('视频文案工作台');
     expect(wbText).toContain('AI 批量处理');
     expect(wbText).toContain('已确认');
-    // 页面栏应位于导航槽（槽内有「第 X 页」）
+    // 页面栏位于工作台自己的左侧（独立编辑区，不嵌入导航槽）
+    const wbRail = wb.locator('nav[aria-label="旁白页面"]');
+    expect(await wbRail.count()).toBe(1);
+    const railText = await wbRail.innerText();
+    console.log('WORKBENCH RAIL:', railText.slice(0, 150).replace(/\n/g, '|'));
+    expect(railText).toContain('第 1 页');
     const slotText = await page.locator('[data-content-project-rail-slot]').innerText();
-    console.log('RAIL SLOT:', slotText.slice(0, 150).replace(/\n/g, '|'));
-    expect(slotText).toContain('第 1 页');
+    expect(slotText).not.toContain('第 1 页');
     // 检查器候选标签
     const inspector = wb.locator('aside, [class*="border-l"]').first();
     const inspectorText = await wb.innerText();

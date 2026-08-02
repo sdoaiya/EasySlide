@@ -31,7 +31,6 @@ import type {
 } from '@/types';
 import { NarrationEditor, type NarrationEditorSegment } from './NarrationEditor';
 import { NarrationInspector } from './NarrationInspector';
-import { ProjectRailPortal, useProjectRail } from '@/components/project-rail/ProjectRail';
 
 
 interface NarrationWorkbenchProps {
@@ -80,7 +79,6 @@ export function NarrationWorkbench({
   onClose,
   onSummaryChange,
 }: NarrationWorkbenchProps) {
-  const { target: railTarget, active: railActive } = useProjectRail();
   const [summary, setSummary] = useState<ProjectNarrationSummary | null>(null);
   const [selectedPageId, setSelectedPageId] = useState(initialPageId || '');
   const [details, setDetails] = useState<NarrationVersionsResponse | null>(null);
@@ -548,9 +546,8 @@ export function NarrationWorkbench({
           </div>
         </header>
 
-        <div className={`relative grid min-h-0 min-w-0 overflow-hidden ${railActive ? 'grid-cols-[minmax(0,1fr)_320px]' : 'grid-cols-[216px_minmax(0,1fr)_320px] max-[1279px]:grid-cols-[196px_minmax(0,1fr)]'}`}>
-          {railActive && railTarget && <ProjectRailPortal target={railTarget}>{pageRail}</ProjectRailPortal>}
-          {!railActive && pageRail}
+        <div className="relative grid min-h-0 min-w-0 grid-cols-[216px_minmax(0,1fr)_320px] overflow-hidden max-[1279px]:grid-cols-[196px_minmax(0,1fr)]">
+          {pageRail}
 
           <main className="min-h-0 min-w-0 overflow-y-auto bg-[var(--app-surface)] p-5">
             <div className="mx-auto max-w-3xl space-y-5">

@@ -6,7 +6,6 @@ import { useNativeDeckStore } from '@/store/useNativeDeckStore'
 import { useProjectStore } from '@/store/useProjectStore'
 import { WorkspaceShell } from '@/components/workspace/WorkspaceShell'
 import { WorkspaceStatusBar } from '@/components/workspace/WorkspaceStatusBar'
-import { ProjectRailPortal, useProjectRail } from '@/components/project-rail/ProjectRail'
 import { PptToVideoWizard } from '@/components/content-project/PptToVideoWizard'
 import { NativeDeckCanvas } from './NativeDeckCanvas'
 import { NativeDeckPageRail } from './NativeDeckPageRail'
@@ -697,9 +696,6 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
     }
   }, [])
 
-  const { target: railTarget, active: railActive } = useProjectRail();
-  // 文案工作台打开时让出导航槽，避免双 rail 堆叠
-  const railVisible = railActive && !showNarrationWorkbench
 
   const pageRail = (
     <NativeDeckPageRail slides={slides} selectedPageId={selectedPageId} onSelect={selectPage} onAdd={() => void createSlide()} onDuplicate={(pageId) => void createSlide(slides.find((slide) => slide.pageId === pageId))} onDelete={(pageId) => void removeSlide(pageId)} onMove={(pageId, direction) => void moveSlide(pageId, direction)} pageAction={pageGenerationAction} pageGenerationAction={singlePageGenerationAction || (media.pages.length > 0 ? { label: '生成本页', disabled: media.running, onClick: media.runPage } : undefined)} />
@@ -760,10 +756,9 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
           <span className="ml-auto whitespace-nowrap">{Math.round(zoom * 100)}% · 原生可编辑模式</span>
         </WorkspaceStatusBar>
       )}
-      sidebar={railVisible ? null : pageRail}
+      sidebar={pageRail}
       inspector={<NativeDeckPropertyPanel slide={selectedSlide} contract={contract} contracts={layoutContracts} errors={errors} onChange={updateProps} onLayoutChange={changeLayout} onRegenerate={selectedSlide && singlePageGenerationAction ? () => singlePageGenerationAction.onClick(selectedSlide.pageId) : undefined} versions={pageVersions} onRestoreVersion={(versionId) => void restorePageVersion(versionId)} onApplyAnimation={applyAnimationToAll} mediaActions={media.mediaActions} />}
     >
-      {railVisible && railTarget && <ProjectRailPortal target={railTarget}>{pageRail}</ProjectRailPortal>}
       <div className="relative flex h-full min-w-0 flex-col">
         <div className="min-h-0 flex-1">
           <NativeDeckCanvas

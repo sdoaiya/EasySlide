@@ -98,8 +98,9 @@ function WorkspaceGenerationReviewRoute() {
 function AppRoutes() {
   return (
     <Routes>
-      <Route path="/" element={<LandingPage />} />
-      <Route path="/landing" element={<LandingPage />} />
+      {/* 桌面端首次打开直接进入应用；公网部署保留官网落地页 */}
+      <Route path="/" element={isDesktop ? <Navigate to="/home" replace /> : <LandingPage />} />
+      <Route path="/landing" element={isDesktop ? <Navigate to="/home" replace /> : <LandingPage />} />
       {['/privacy', '/terms', '/cookies', '/app'].map((path) => (
         <Route key={path} path={path} element={<Navigate to="/home" replace />} />
       ))}
