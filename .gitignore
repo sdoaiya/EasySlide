@@ -84,3 +84,8 @@ docs/superpowers/*.txt
 docs/superpowers/*.json
 docs/superpowers/*.log
 docs/superpowers/screenshots/
+
+# 打包产物:安装包超过 GitHub 100MB 限制,不入库(本地 release/ 目录交付)
+release/
+# 本地实验/调试临时文件
+.codex-tmp/
