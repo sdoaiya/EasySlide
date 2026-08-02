@@ -48,23 +48,47 @@ export function WorkspaceEntryPage({ kind }: { kind: ContentWorkspaceKind }) {
 
   if (!project) return <Loading fullscreen message="正在读取工作区" />;
 
-  if (
-    !uninitialized
-    && kind === 'video'
-    && workspace
-    && Array.isArray(workspace.document?.scenes)
-  ) {
+  const editor = (() => {
+    if (!uninitialized && kind === 'video' && workspace && Array.isArray(workspace.document?.scenes)) {
+      return (
+        <VideoWorkspace
+          projectId={project.project_id}
+          spineRevision={project.spine.revision}
+          workspace={workspace}
+          onChanged={() => void useContentProjectStore.getState().load(project.project_id)}
+        />
+      );
+    }
+    if (!uninitialized && kind === 'podcast' && workspace && Array.isArray(workspace.document?.segments)) {
+      return (
+        <PodcastWorkspace
+          projectId={project.project_id}
+          spineRevision={project.spine.revision}
+          workspace={workspace}
+          onChanged={() => void useContentProjectStore.getState().load(project.project_id)}
+        />
+      );
+    }
+    return null;
+  })();
+  if (editor) {
+    // 正式版本与新候选并存：默认保留正式编辑器，顶部提供候选入口（阶段5）
     return (
-      <VideoWorkspace
-        projectId={project.project_id}
-        spineRevision={project.spine.revision}
-        workspace={workspace}
-        onChanged={() => void useContentProjectStore.getState().load(project.project_id)}
-      />
+      <div className="flex h-full min-h-0 flex-col">
+        {reviewRun && (
+          <div className="flex shrink-0 items-center gap-2 border-b border-[var(--app-accent-soft)] bg-[var(--app-accent-soft)] px-4 py-2">
+            <Sparkles size={14} className="shrink-0 text-[var(--app-accent)]" aria-hidden="true" />
+            <p className="min-w-0 flex-1 truncate text-xs text-[var(--app-accent)]">
+              {reviewRun.stale ? '候选可能已过期' : '有 1 个待审查候选'}
+            </p>
+            <Button size="sm" variant="secondary" onClick={() => navigate(`/project/${project.project_id}/${kind}/review/${reviewRun.run_id}`)}>
+              审查候选
+            </Button>
+          </div>
+        )}
+        <div className="min-h-0 flex-1">{editor}</div>
+      </div>
     );
-  }
-  if (!uninitialized && kind === 'podcast' && workspace && Array.isArray(workspace.document?.segments)) {
-    return <PodcastWorkspace projectId={project.project_id} spineRevision={project.spine.revision} workspace={workspace} onChanged={() => void useContentProjectStore.getState().load(project.project_id)} />;
   }
 
   const startDirectGeneration = async () => {
