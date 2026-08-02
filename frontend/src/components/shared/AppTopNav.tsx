@@ -25,7 +25,7 @@ const topNavI18n = {
 /**
  * 应用级左侧工具架（本地工作台形态）。
  * 桌面端固定 216px 左栏（可收起为 44px），移动端为顶部横条；
- * 只服务应用页面（首页/创建/历史/任务中心/设置），项目路由不渲染。
+ * 服务所有应用页面；项目页在工具架右侧嵌入统一编辑器。
  */
 export function AppTopNav() {
   const navigate = useNavigate();
@@ -36,7 +36,9 @@ export function AppTopNav() {
   const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
   const [isMaterialCenterOpen, setIsMaterialCenterOpen] = useState(false);
   const [isMaterialGeneratorOpen, setIsMaterialGeneratorOpen] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => (
+    location.pathname.startsWith('/project/') && window.innerWidth < 1440
+  ));
 
   useEffect(() => {
     document.documentElement.style.setProperty('--app-nav-offset', collapsed ? '44px' : '216px');
@@ -59,7 +61,7 @@ export function AppTopNav() {
       <nav
         role="navigation"
         aria-label="工作台导航"
-        className={`sticky top-0 z-40 h-16 border-b border-[var(--app-border)] bg-[var(--app-surface)] lg:fixed lg:inset-y-0 lg:left-0 lg:h-screen lg:border-b-0 lg:border-r lg:bg-[var(--app-surface-muted)] ${collapsed ? 'lg:w-[44px]' : 'lg:w-[216px]'}`}
+        className={`sticky top-0 z-40 h-16 border-b border-[var(--app-border)] bg-[var(--app-surface)] lg:fixed lg:left-0 lg:top-[var(--app-titlebar-offset,0px)] lg:h-[calc(100dvh-var(--app-titlebar-offset,0px))] lg:border-b-0 lg:border-r lg:bg-[var(--app-surface-muted)] ${collapsed ? 'lg:w-[44px]' : 'lg:w-[216px]'}`}
       >
         <div className="mx-auto flex h-full max-w-7xl items-center justify-between px-5 lg:mx-0 lg:max-w-none lg:flex-col lg:items-stretch lg:px-0">
           <button autoFocus type="button" onClick={() => navigate('/home')} className={`flex h-10 items-center overflow-hidden lg:h-14 lg:w-full ${collapsed ? 'lg:justify-center lg:px-0' : 'lg:justify-start lg:px-3'}`} aria-label="EasySlide">

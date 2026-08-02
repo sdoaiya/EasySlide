@@ -241,7 +241,7 @@ export const TemplateSelector: React.FC<TemplateSelectorProps> = ({
         {(mode === 'all' || mode === 'mine') && userTemplates.length > 0 && (
           <div>
             <h4 className="mb-2 text-sm font-medium text-[var(--app-text-secondary)]">{t('template.myTemplates')}</h4>
-            <div className="grid grid-cols-4 gap-4 mb-4">
+            <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-4">
               {userTemplates.map((template) => (
                 <div
                   key={template.template_id}
@@ -255,14 +255,21 @@ export const TemplateSelector: React.FC<TemplateSelectorProps> = ({
                   <img
                     src={getImageUrl(template.thumb_url || template.template_image_url)}
                     alt={template.name || 'Template'}
-                    className="absolute inset-0 w-full h-full object-cover"
+                    loading="lazy"
+                    onError={(event) => {
+                      const image = event.currentTarget;
+                      if (image.dataset.fallbackUsed || !template.thumb_url) return;
+                      image.dataset.fallbackUsed = 'true';
+                      image.src = getImageUrl(template.template_image_url);
+                    }}
+                    className="absolute inset-0 h-full w-full object-cover"
                   />
                   {selectedTemplateId !== template.template_id && (
                     <button
                       type="button"
                       onClick={(e) => handleDeleteUserTemplate(template, e)}
                       disabled={deletingTemplateId === template.template_id}
-                      className={`absolute -top-2 -right-2 w-10 h-10 bg-[var(--app-error)] text-[var(--app-surface)] rounded-full flex items-center justify-center shadow-[var(--app-shadow-control)] z-20 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)] transition-opacity ${
+                      className={`absolute right-2 top-2 z-20 flex h-8 w-8 items-center justify-center rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] text-[var(--app-text-secondary)] opacity-0 shadow-[var(--app-shadow-control)] transition-[opacity,color,background-color] hover:bg-[var(--app-error-soft)] hover:text-[var(--app-error)] group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)] ${
                         deletingTemplateId === template.template_id ? 'opacity-60 cursor-not-allowed' : ''
                       }`}
                       aria-label={t('template.deleteTemplate')}
