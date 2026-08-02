@@ -143,10 +143,12 @@ const getMediaWorkspaceStatusKey = (project: Project): StatusKey | null => {
 };
 
 const getStatusKey = (project: Project): StatusKey => {
+  if (project.dashboard_status === 'completed') return 'completed';
+  if (project.dashboard_status === 'generating' || project.dashboard_status === 'in_progress') return 'inProgress';
   const mediaStatus = getMediaWorkspaceStatusKey(project);
   if (mediaStatus) return mediaStatus;
   if (!project.pages || project.pages.length === 0) return 'notStarted';
-  if (project.pages.some(p => p.generated_image_path || p.generated_image_url || p.status === 'COMPLETED' || p.status === 'NATIVE_GENERATED')) return 'completed';
+  if (project.pages.some(p => p.generated_image_path || p.generated_image_url || p.native_layout || p.status === 'NATIVE_GENERATED')) return 'completed';
   if (project.pages.some(p => p.description_content)) return 'pendingImages';
   return 'pendingDesc';
 };
@@ -185,12 +187,14 @@ const getPptWorkspace = (project: Project) =>
 export const getProjectRoute = (project: Project): string => {
   const projectId = project.id || project.project_id;
   if (!projectId) return '/';
-  if (project.last_workspace === 'spine') return `/project/${projectId}/spine`;
+  if (project.last_workspace === 'spine' && project.dashboard_status !== 'completed') {
+    return `/project/${projectId}/spine`;
+  }
   if (project.workspaces?.length) {
     const initialized = new Set(project.workspaces
       .filter((workspace) => workspace.state !== 'uninitialized')
       .map((workspace) => workspace.kind));
-    const workspace = project.last_workspace && initialized.has(project.last_workspace)
+    const workspace = project.last_workspace && project.last_workspace !== 'spine' && initialized.has(project.last_workspace)
       ? project.last_workspace
       : initialized.has('ppt') ? 'ppt'
         : initialized.has('video') ? 'video'
@@ -203,6 +207,10 @@ export const getProjectRoute = (project: Project): string => {
   const pptSettings = pptWorkspace?.settings;
   const renderMode = pptSettings?.render_mode || project.render_mode;
   const pptStage = pptWorkspace?.stage || project.status;
+
+  if (project.dashboard_status === 'completed') {
+    return `/project/${projectId}/ppt/editor`;
+  }
 
   if (renderMode === 'native') {
     const hasNativeLayout = project.pages?.some(page => page.native_layout);
@@ -234,7 +242,7 @@ export const getProjectRoute = (project: Project): string => {
   }
   
   if (project.pages && project.pages.length > 0) {
-    const hasImages = project.pages.some(p => p.generated_image_path || p.generated_image_url || p.status === 'COMPLETED' || p.status === 'NATIVE_GENERATED');
+    const hasImages = project.pages.some(p => p.generated_image_path || p.generated_image_url || p.native_layout || p.status === 'NATIVE_GENERATED');
     if (hasImages) {
       return `/project/${projectId}/ppt/editor`;
     }

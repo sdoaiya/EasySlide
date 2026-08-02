@@ -50,6 +50,14 @@ describe('getProjectRoute', () => {
     expect(getProjectRoute(nativeProject())).toBe('/project/native-1/ppt/editor');
   });
 
+  test('opens a catalog-completed PPT in the editor even when legacy page status is stale', () => {
+    expect(getProjectRoute(nativeProject({
+      render_mode: 'image',
+      dashboard_status: 'completed',
+      last_workspace: 'spine',
+    }))).toBe('/project/native-1/ppt/editor');
+  });
+
   test('restores renovation source pages to detail until image generation starts', () => {
     const project = {
       project_id: 'renovation-1',
@@ -129,6 +137,16 @@ describe('media workspace status', () => {
   test('treats URL-only and native-completed PPT pages as completed', () => {
     expect(getStatusText({ project_id: 'ppt-url', pages: [{ generated_image_url: '/files/page.png' }] } as any)).toBe('已完成');
     expect(getProjectRoute({ project_id: 'ppt-native', pages: [{ status: 'NATIVE_GENERATED' }] } as any)).toBe('/project/ppt-native/ppt/editor');
+  });
+
+  test('does not treat a stale COMPLETED flag without generated content as completed', () => {
+    const project = {
+      project_id: 'ppt-stale',
+      pages: [{ status: 'COMPLETED', description_content: { text: 'desc' } }],
+    } as any;
+
+    expect(getStatusText(project)).toBe('待生成图片');
+    expect(getProjectRoute(project)).toBe('/project/ppt-stale/ppt/detail');
   });
 });
 

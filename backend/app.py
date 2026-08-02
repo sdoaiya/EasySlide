@@ -360,6 +360,9 @@ def _ensure_desktop_sqlite_schema(app):
             'native_props': 'TEXT',
             'native_versions': 'TEXT',
         },
+        'tasks': {
+            'dismissed_at': 'DATETIME',
+        },
         'settings': {
             'text_model': 'VARCHAR(100)',
             'image_model': 'VARCHAR(100)',

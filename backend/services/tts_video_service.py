@@ -1761,8 +1761,23 @@ def composite_video(
         idle_timeout: 连续无输出多久视为卡死
     """
     if len(clip_paths) == 1:
-        # 单片段直接复制
-        shutil.copy2(clip_paths[0], output_path)
+        # 单片段也统一重编码（不直接 copy）：hyperframes GPU 编码片段默认
+        # H.264 High Level 5.0，Windows 自带播放器（电影和电视/WMP）解码失败，
+        # PotPlayer 正常。统一为 libx264 High L4.0 兼容参数，保证最终产物
+        # 跨播放器可用。
+        cmd = [
+            ffmpeg_path, '-y',
+            '-i', clip_paths[0],
+            '-c:v', 'libx264',
+            '-c:a', 'aac',
+            '-r', str(fps),
+            '-pix_fmt', 'yuv420p',
+            '-preset', 'medium',
+            '-crf', '23',
+            '-movflags', '+faststart',
+            output_path,
+        ]
+        _run_ffmpeg_command(cmd, "FFmpeg single clip re-encode failed", idle_timeout=idle_timeout)
         return
 
     # 创建 concat 列表文件 — 使用绝对路径并验证文件确实存在于临时目录
@@ -2064,6 +2079,40 @@ def _build_timeline_subtitle_entries(
     return entries
 
 
+def _asr_cache_path(cache_dir: str, audio_path: str) -> str:
+    """ASR 结果缓存路径：与音频缓存 key 强一致（同名 .asr.json）。"""
+    base = os.path.basename(audio_path)
+    if base.endswith('.mp3'):
+        base = base[:-4] + '.asr.json'
+    else:
+        base = f'{hashlib.sha256(audio_path.encode("utf-8")).hexdigest()}.asr.json'
+    return os.path.join(cache_dir, base)
+
+
+def _load_or_run_asr(cache_dir: str, audio_path: str, run_transcribe):
+    """按音频缓存 key 读取/生成 ASR 结果，返回 ``(asr_result, from_cache)``。
+
+    proof/final 或任务重试共用同一音频缓存文件时，跳过重复的外部转写
+    调用（转写既慢又计费）。缓存文件损坏（半截写入）时删除并重新转写。
+    """
+    asr_cache_path = _asr_cache_path(cache_dir, audio_path)
+    if os.path.isfile(asr_cache_path):
+        try:
+            with open(asr_cache_path, 'r', encoding='utf-8') as handle:
+                return json.load(handle), True
+        except (OSError, ValueError):
+            # 上次写入被进程崩溃打断，留下半截 JSON——删除缓存重新转写
+            os.remove(asr_cache_path)
+    asr_result = run_transcribe()
+    if isinstance(asr_result, dict) and asr_result.get('segments') is not None:
+        os.makedirs(cache_dir, exist_ok=True)
+        tmp_path = f'{asr_cache_path}.tmp'
+        with open(tmp_path, 'w', encoding='utf-8') as handle:
+            json.dump(asr_result, handle, ensure_ascii=False)
+        os.replace(tmp_path, asr_cache_path)
+    return asr_result, False
+
+
 def generate_narration_video(
     pages_data: List[dict],
     output_path: str,
@@ -2322,11 +2371,15 @@ def generate_narration_video(
                 try:
                     from services.fish_audio_service import transcribe
 
-                    asr_result = transcribe(
-                        api_key=fish_api_key,
-                        audio_path=audio_path,
-                        language=language,
-                        include_timestamps=True,
+                    asr_result, _asr_from_cache = _load_or_run_asr(
+                        cache_dir,
+                        audio_path,
+                        lambda: transcribe(
+                            api_key=fish_api_key,
+                            audio_path=audio_path,
+                            language=language,
+                            include_timestamps=True,
+                        ),
                     )
                     comparison = compare_asr_transcript(segments_to_text(segments), asr_result.get('text'))
                     issues = []

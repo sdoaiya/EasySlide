@@ -22,6 +22,35 @@ def enabled(monkeypatch):
 
 
 class TestServerTaskList:
+    def test_delete_task_persists_dismissal_and_cancels_generation_run(self, client, app, enabled):
+        from controllers import workspace_generation_controller as controller
+
+        controller.task_manager.submit_task = lambda *a, **k: None
+        try:
+            project_id = _project_id(client, topic='删除任务')
+            created = client.post(
+                f'/api/projects/{project_id}/workspace-generation-runs',
+                json={'target_workspace_kind': 'video', 'source_kind': 'brief', 'mode': 'direct'},
+            ).get_json()['data']
+        finally:
+            del controller.task_manager.submit_task
+
+        task_id = created['task_id']
+        response = client.delete(f'/api/projects/{project_id}/tasks/{task_id}')
+        assert response.status_code == 200
+        assert response.get_json()['data'] == {'task_id': task_id, 'deleted': True}
+
+        listed = client.get('/api/tasks').get_json()['data']['tasks']
+        assert all(item['task_id'] != task_id for item in listed)
+
+        from models import Task, WorkspaceGenerationRun, db
+        with app.app_context():
+            task = db.session.get(Task, task_id)
+            run = WorkspaceGenerationRun.query.filter_by(task_id=task_id).first()
+            assert task.status == 'CANCELLED'
+            assert task.dismissed_at is not None
+            assert run.status == 'CANCELLED'
+
     def test_generation_run_task_discoverable_from_server_task_list(self, client, app, enabled):
         from controllers import workspace_generation_controller as controller
 

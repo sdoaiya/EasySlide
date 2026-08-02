@@ -7,22 +7,27 @@ import {
   Link2,
   Mic2,
   Play,
+  Plus,
   Save,
   Trash2,
   X,
 } from 'lucide-react';
-import { Button, Textarea } from '@/components/shared';
+import { Button, Textarea, VoicePicker } from '@/components/shared';
 import { MaterialSelector } from '@/components/shared/MaterialSelector';
+import { getImageUrl } from '@/api/client';
 import {
   exportPodcastWorkspace,
+  listBgmLibrary,
   previewPodcastWorkspace,
   updateContentWorkspace,
+  type BuiltinBgmTrack,
   type Material,
 } from '@/api/endpoints';
 import { WorkspaceShell } from '@/components/workspace/WorkspaceShell';
 import { WorkspaceStatusBar } from '@/components/workspace/WorkspaceStatusBar';
 import type { ProjectWorkspace } from '@/types';
 import { WorkspaceVersionHistory } from './WorkspaceVersionHistory';
+import { PodcastCoverGenerator } from './PodcastCoverGenerator';
 import { useExportTasksStore } from '@/store/useExportTasksStore';
 import { useProjectEditorSession } from './ContentProjectLayout';
 
@@ -149,7 +154,19 @@ export function PodcastWorkspace({ projectId, workspace, onChanged }: { projectI
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewError, setPreviewError] = useState('');
   const [preview, setPreview] = useState<PodcastPreview | null>(null);
+  const [bgmTracks, setBgmTracks] = useState<BuiltinBgmTrack[]>([]);
+  const [bgmLoading, setBgmLoading] = useState(false);
   const { addTask, pollTask } = useExportTasksStore();
+
+  useEffect(() => {
+    let active = true;
+    setBgmLoading(true);
+    listBgmLibrary()
+      .then((response) => { if (active) setBgmTracks(response.data?.tracks || []); })
+      .catch(() => { if (active) setBgmTracks([]); })
+      .finally(() => { if (active) setBgmLoading(false); });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     if (loadedRevision.current === workspace.revision) return;
@@ -192,6 +209,51 @@ export function PodcastWorkspace({ projectId, workspace, onChanged }: { projectI
   };
   const updateSelected = (patch: Partial<Segment>) => {
     setDocument((current) => ({ ...current, segments: current.segments.map((segment) => segment.segment_id === selectedId ? { ...segment, ...patch } : segment) }));
+    markDirty();
+  };
+  const setFormat = (format: 'single' | 'dialogue') => {
+    if (format === document.format) return;
+    if (format === 'single') {
+      // 单人播讲：只保留主持人，片段统一归到主持人
+      const hostId = document.speakers[0]?.speaker_id || 'speaker.main';
+      updateDocument({
+        format,
+        speakers: document.speakers.slice(0, 1),
+        segments: document.segments.map((segment) => ({ ...segment, speaker_id: hostId })),
+      });
+    } else {
+      // 多人对话：至少两位角色，不足自动补嘉宾
+      const speakers = [...document.speakers];
+      if (speakers.length < 2) speakers.push({ speaker_id: 'speaker.guest', name: '嘉宾', voice_ref: DEFAULT_VOICE });
+      updateDocument({ format, speakers: speakers.slice(0, 4) });
+    }
+  };
+  const updateSpeaker = (speakerId: string, patch: Partial<PodcastSpeaker>) => {
+    setDocument((current) => ({ ...current, speakers: current.speakers.map((speaker) => speaker.speaker_id === speakerId ? { ...speaker, ...patch } : speaker) }));
+    markDirty();
+  };
+  const addSpeaker = () => {
+    if (document.speakers.length >= 4) return;
+    // 扫描现有 speaker_id 集合，生成第一个不冲突的 speaker.N（删除中间角色后再次添加不撞 id）
+    const used = new Set(document.speakers.map((speaker) => speaker.speaker_id));
+    let n = 1;
+    while (used.has(`speaker.${n}`)) n += 1;
+    updateDocument({
+      speakers: [...document.speakers, {
+        speaker_id: `speaker.${n}`,
+        name: `角色 ${n}`,
+        voice_ref: DEFAULT_VOICE,
+      }],
+    });
+  };
+  const removeSpeaker = (speakerId: string) => {
+    if (document.format !== 'dialogue' || document.speakers.length <= 2) return;
+    const hostId = document.speakers[0]?.speaker_id || 'speaker.main';
+    setDocument((current) => ({
+      ...current,
+      speakers: current.speakers.filter((speaker) => speaker.speaker_id !== speakerId),
+      segments: current.segments.map((segment) => segment.speaker_id === speakerId ? { ...segment, speaker_id: hostId } : segment),
+    }));
     markDirty();
   };
   const handleMaterialSelect = (materials: Material[]) => {
@@ -267,17 +329,70 @@ export function PodcastWorkspace({ projectId, workspace, onChanged }: { projectI
             {document.cover.asset_ref ? <img src={document.cover.asset_ref} alt="播客封面" className="h-full w-full object-cover" /> : <ImageIcon size={22} className="text-[var(--app-text-tertiary)]" aria-hidden="true" />}
           </div>
           <div className="min-w-0 space-y-2">
-            <div className="flex items-center justify-between gap-2"><span className="truncate text-xs text-[var(--app-text-secondary)]">{document.cover.asset_ref || '未选择封面'}</span><Button size="sm" variant="secondary" aria-label="选择封面" icon={<ImageIcon size={14} />} onClick={() => setMaterialTarget('cover')}>选择</Button></div>
+            <div className="flex items-center justify-between gap-2"><span className="truncate text-xs text-[var(--app-text-secondary)]">{document.cover.asset_ref || '未选择封面'}</span><div className="flex gap-1"><PodcastCoverGenerator projectId={projectId} title={document.cover.title || document.title} onSelect={(imageUrl) => updateDocument({ cover: { ...document.cover, asset_ref: imageUrl } })} /><Button size="sm" variant="secondary" aria-label="选择封面" icon={<ImageIcon size={14} />} onClick={() => setMaterialTarget('cover')}>选择</Button></div></div>
             <input aria-label="封面标题" value={document.cover.title} onChange={(event) => updateDocument({ cover: { ...document.cover, title: event.target.value } })} className="h-8 w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-xs" placeholder="封面标题" />
             <input aria-label="封面副标题" value={document.cover.subtitle} onChange={(event) => updateDocument({ cover: { ...document.cover, subtitle: event.target.value } })} className="h-8 w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-xs" placeholder="封面副标题" />
           </div>
         </div>
         <div className="rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-3">
-          <div className="flex items-center justify-between gap-2"><span className="flex min-w-0 items-center gap-1.5 truncate text-xs text-[var(--app-text-secondary)]"><AudioLines size={14} aria-hidden="true" />{document.mixing.bgm_asset_ref || '未选择背景音乐'}</span><div className="flex gap-1"><Button size="sm" variant="secondary" aria-label="选择背景音乐" onClick={() => setMaterialTarget('bgm')}>选择</Button>{document.mixing.bgm_asset_ref && <Button size="sm" variant="ghost" aria-label="移除背景音乐" icon={<Trash2 size={14} />} onClick={() => updateDocument({ mixing: { ...document.mixing, bgm_asset_ref: null } })}><span className="sr-only">移除</span></Button>}</div></div>
+          <div className="flex items-center justify-between gap-2"><span className="flex min-w-0 items-center gap-1.5 truncate text-xs text-[var(--app-text-secondary)]"><AudioLines size={14} aria-hidden="true" />{document.mixing.bgm_asset_ref || '未选择背景音乐'}</span><div className="flex gap-1"><Button size="sm" variant="secondary" aria-label="选择背景音乐" onClick={() => setMaterialTarget('bgm')}>上传/素材库</Button>{document.mixing.bgm_asset_ref && <Button size="sm" variant="ghost" aria-label="移除背景音乐" icon={<Trash2 size={14} />} onClick={() => updateDocument({ mixing: { ...document.mixing, bgm_asset_ref: null } })}><span className="sr-only">移除</span></Button>}</div></div>
+          {(() => {
+            const selectedTrack = bgmTracks.find((track) => track.material_id === document.mixing.bgm_asset_ref);
+            // 非内置引用（上传/素材库设置的自定义 BGM）：下拉显示占位项，不覆盖该值
+            const isCustomBgm = Boolean(document.mixing.bgm_asset_ref) && !selectedTrack;
+            return (
+              <>
+                <label className="mt-2 grid gap-1 text-[11px] text-[var(--app-text-secondary)]">
+                  <span>内置背景音乐（免版权，一键选用）</span>
+                  <select value={document.mixing.bgm_asset_ref || ''} onChange={(event) => updateDocument({ mixing: { ...document.mixing, bgm_asset_ref: event.target.value || null } })} className="h-8 w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-xs" aria-label="内置背景音乐">
+                    <option value="">不添加背景音乐</option>
+                    {bgmTracks.map((track) => <option key={track.id} value={track.material_id}>{track.name}</option>)}
+                    {isCustomBgm && <option value={document.mixing.bgm_asset_ref || ''} disabled>自定义音乐</option>}
+                  </select>
+                </label>
+                {bgmLoading && <p className="mt-1.5 text-[10px] text-[var(--app-text-tertiary)]">正在准备内置音乐…</p>}
+                {selectedTrack && (
+                  <div className="mt-2 space-y-1">
+                    <p className="text-[10px] text-[var(--app-text-tertiary)]">{selectedTrack.note}</p>
+                    <audio aria-label="背景音乐试听" className="w-full" controls src={getImageUrl(selectedTrack.url)} />
+                  </div>
+                )}
+              </>
+            );
+          })()}
           <label className="mt-3 flex items-center gap-2 text-xs"><input type="checkbox" checked={document.mixing.ducking} onChange={(event) => updateDocument({ mixing: { ...document.mixing, ducking: event.target.checked } })} />旁白时自动压低背景音乐</label>
           <div className="mt-3 grid grid-cols-2 gap-2"><label className="text-[11px] text-[var(--app-text-secondary)]">淡入(ms)<input type="number" min={0} step={100} value={document.mixing.fade_in_ms} onChange={(event) => updateDocument({ mixing: { ...document.mixing, fade_in_ms: Math.max(0, Number(event.target.value)) } })} className="mt-1 h-8 w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-xs" /></label><label className="text-[11px] text-[var(--app-text-secondary)]">淡出(ms)<input type="number" min={0} step={100} value={document.mixing.fade_out_ms} onChange={(event) => updateDocument({ mixing: { ...document.mixing, fade_out_ms: Math.max(0, Number(event.target.value)) } })} className="mt-1 h-8 w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-xs" /></label></div>
         </div>
-        <div className="space-y-2"><p className="text-[11px] font-medium text-[var(--app-text-secondary)]">声音设置</p>{document.speakers.map((speaker) => <label key={speaker.speaker_id} className="grid gap-1 text-[11px] text-[var(--app-text-secondary)]"><span>{speaker.name}</span><input aria-label={`${speaker.name}声音`} value={speaker.voice_ref} onChange={(event) => updateDocument({ speakers: document.speakers.map((item) => item.speaker_id === speaker.speaker_id ? { ...item, voice_ref: event.target.value } : item) })} className="h-8 w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-xs" placeholder="edge:voice 或 fish:voice-id" /></label>)}</div>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-[11px] font-medium text-[var(--app-text-secondary)]">配音配置</p>
+            {document.format === 'dialogue' && document.speakers.length < 4 && (
+              <Button size="sm" variant="secondary" icon={<Plus size={13} />} onClick={addSpeaker}>添加角色</Button>
+            )}
+          </div>
+          <label className="grid gap-1 text-[11px] text-[var(--app-text-secondary)]">
+            <span>节目形式</span>
+            <select value={document.format} onChange={(event) => setFormat(event.target.value as 'single' | 'dialogue')} className="h-8 w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-xs">
+              <option value="single">单人播讲</option>
+              <option value="dialogue">多人对话（2-4 人）</option>
+            </select>
+          </label>
+          {document.speakers.map((speaker, index) => (
+            <div key={speaker.speaker_id} className="space-y-1.5 rounded-[var(--app-radius-control)] border border-[var(--app-border)] p-2">
+              <div className="flex items-center gap-1.5">
+                <input aria-label={`角色${index + 1}名称`} value={speaker.name} onChange={(event) => updateSpeaker(speaker.speaker_id, { name: event.target.value })} className="h-7 min-w-0 flex-1 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-xs" placeholder={`角色 ${index + 1}`} />
+                {document.format === 'dialogue' && document.speakers.length > 2 && (
+                  <Button size="sm" variant="ghost" aria-label={`移除角色 ${speaker.name}`} icon={<Trash2 size={13} />} onClick={() => removeSpeaker(speaker.speaker_id)}><span className="sr-only">移除</span></Button>
+                )}
+              </div>
+              <VoicePicker
+                value={speaker.voice_ref}
+                onChange={(voice) => updateSpeaker(speaker.speaker_id, { voice_ref: voice })}
+                language={String(document.language || 'zh').split('-')[0]}
+              />
+            </div>
+          ))}
+        </div>
       </section>
 
       {selected && <section aria-label="片段设置" className="space-y-3 border-b border-[var(--app-border)] pb-4">

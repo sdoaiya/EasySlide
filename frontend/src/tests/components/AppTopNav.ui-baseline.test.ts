@@ -20,11 +20,15 @@ describe('editorial workbench navigation baseline', () => {
   it('keeps the project mode navigation in the unified project shell', () => {
     const nav = source('src/components/shared/AppTopNav.tsx');
     const shell = source('src/components/content-project/ContentProjectLayout.tsx');
+    const app = source('src/App.tsx');
 
     // 项目模式切换移入统一项目编辑器壳层（阶段4）
     expect(shell).toContain("'ppt'");
     expect(shell).toContain("'video'");
     expect(shell).toContain("'podcast'");
+    expect(app).toContain('<AppTopNav />');
+    expect(app).toContain('<ContentProjectLayout />');
+    expect(app).toContain('lg:pl-[var(--app-nav-offset,216px)]');
     // 应用导航不再承载项目模式入口
     expect(nav).not.toContain("key: 'ppt'");
     expect(nav).not.toContain('contentProject');
@@ -42,5 +46,12 @@ describe('editorial workbench navigation baseline', () => {
     expect(nativeCss).toContain('.native-enter-slide-down');
     expect(nativeCss).toContain('.native-page-outgoing');
     expect(nativeCss).toContain('@media (prefers-reduced-motion: reduce)');
+  });
+
+  it('uses a dedicated collapsed mark and keeps expanded footer tools on one row', () => {
+    const nav = source('src/components/shared/AppTopNav.tsx');
+
+    expect(nav).toContain("collapsed ? '/logo-mark.png' : '/logo-nav-transparent.png'");
+    expect(nav).toContain("collapsed ? 'lg:grid-cols-1' : 'lg:grid-cols-4'");
   });
 });

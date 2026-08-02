@@ -157,6 +157,36 @@ def upgrade_podcast_document_v1_to_v2(document: dict) -> dict:
     }
 
 
+def _build_podcast_speakers(fmt: str, options: dict) -> list[dict]:
+    """按节目形式构建角色列表（canonical voice_ref，绝不 default/空）。"""
+    from services.voice_catalog_service import resolve_voice_id
+
+    voice_refs = [
+        resolve_voice_id(item)
+        for item in (options.get('voice_profile_ids') or [])
+    ]
+    voice_refs = [item for item in voice_refs if item]
+    if fmt == 'single':
+        return [{
+            'speaker_id': 'speaker.main',
+            'name': str(options.get('speaker_name') or '主持人'),
+            'voice_ref': voice_refs[0] if voice_refs else _default_role_voice(0),
+        }]
+    names = list(options.get('speaker_names') or ['主持人', '嘉宾'])
+    count = min(4, max(2, len(voice_refs) or 2))
+    return [
+        {
+            'speaker_id': f'speaker.{index + 1}',
+            'name': str(names[index] if index < len(names) else f'角色 {index + 1}'),
+            'voice_ref': (
+                voice_refs[index] if index < len(voice_refs)
+                else _default_role_voice(index)
+            ),
+        }
+        for index in range(count)
+    ]
+
+
 def build_podcast_document_from_brief(brief: dict, options=None) -> dict:
     """Direct brief → podcast candidate with program structure and roles (§7.3/阶段2).
 
@@ -165,38 +195,13 @@ def build_podcast_document_from_brief(brief: dict, options=None) -> dict:
     Only the frozen snapshot and options are read.
     """
     from services.video_workspace_service import _brief_scene_title, _split_source_blocks
-    from services.voice_catalog_service import resolve_voice_id
 
     options = options or {}
     title = str(brief.get('title') or brief.get('topic') or '未命名播客')[:255]
     fmt = str(options.get('format') or 'single').strip()
     if fmt not in {'single', 'dialogue'}:
         fmt = 'single'
-    voice_refs = [
-        resolve_voice_id(item)
-        for item in (options.get('voice_profile_ids') or [])
-    ]
-    voice_refs = [item for item in voice_refs if item]
-    if fmt == 'single':
-        speakers = [{
-            'speaker_id': 'speaker.main',
-            'name': str(options.get('speaker_name') or '主持人'),
-            'voice_ref': voice_refs[0] if voice_refs else _default_role_voice(0),
-        }]
-    else:
-        names = list(options.get('speaker_names') or ['主持人', '嘉宾'])
-        count = min(4, max(2, len(voice_refs) or 2))
-        speakers = [
-            {
-                'speaker_id': f'speaker.{index + 1}',
-                'name': str(names[index] if index < len(names) else f'角色 {index + 1}'),
-                'voice_ref': (
-                    voice_refs[index] if index < len(voice_refs)
-                    else _default_role_voice(index)
-                ),
-            }
-            for index in range(count)
-        ]
+    speakers = _build_podcast_speakers(fmt, options)
     blocks = _split_source_blocks(str(brief.get('source_text') or ''))
     if not blocks:
         blocks = [str(brief.get('topic') or title)]
@@ -211,6 +216,48 @@ def build_podcast_document_from_brief(brief: dict, options=None) -> dict:
             'audio_cues': [],
             'source_kind': None,
             'source_ref': brief.get('content_hash'),
+        })
+    return {
+        'schema_version': 1,
+        'title': title,
+        'format': fmt,
+        'language': str(options.get('language') or 'zh-CN'),
+        'speakers': speakers,
+        'segments': segments,
+        'mixing': {'bgm_asset_ref': None, 'ducking': True, 'fade_in_ms': 300, 'fade_out_ms': 500},
+        'cover': {'asset_ref': None, 'title': title, 'subtitle': ''},
+    }
+
+
+def build_podcast_document_from_ppt_snapshot(snapshot: dict, options=None) -> dict:
+    """Frozen PPT pages → podcast candidate（每页一个片段，角色轮转）。
+
+    Segment 文本取已确认旁白（narration），缺省用页面描述；source 记录
+    ppt 页面引用，供编辑器溯源。
+    """
+    options = options or {}
+    title = str(snapshot.get('project_title') or '未命名播客')[:255]
+    fmt = str(options.get('format') or 'dialogue').strip()
+    if fmt not in {'single', 'dialogue'}:
+        fmt = 'dialogue'
+    speakers = _build_podcast_speakers(fmt, options)
+    pages = list(snapshot.get('pages') or [])
+    pages.sort(key=lambda item: int(item.get('order_index') or 0))
+    segments = []
+    for index, page in enumerate(pages):
+        narration = str(page.get('narration') or '')
+        text = narration.strip() or str(
+            (page.get('description') or {}).get('text') or ''
+        ).strip() or f'第 {index + 1} 页内容'
+        speaker = speakers[index % len(speakers)]
+        segments.append({
+            'segment_id': f'segment.{index + 1}',
+            'speaker_id': speaker['speaker_id'],
+            'text': text,
+            'locked': False,
+            'audio_cues': [],
+            'source_kind': 'ppt_page',
+            'source_ref': str(page.get('page_id') or ''),
         })
     return {
         'schema_version': 1,
@@ -242,6 +289,98 @@ def enrich_podcast_candidate_document(document: dict) -> dict:
         enriched['title'] = _brief_scene_title(first_line, index + 1)
         segments.append(enriched)
     return {**document, 'segments': segments}
+
+
+def chunk_podcast_segments(segments, speaker_ids, max_chars=18000, mode='single'):
+    """按字符预算把播客片段分块（Fish 单请求上限）。
+
+    - 预算留余量（默认 18000 < 20000 上限），按段累计切块；
+    - dialogue 模式：切块必须已覆盖全部配置角色（Fish 原生多说话人
+      要求每位已配置角色在每请求中都实际发言），未覆盖则继续累积。
+    返回分块列表（每块是 segment dict 列表）。
+    """
+    import re as _re
+
+    required_speakers = {str(item) for item in (speaker_ids or [])}
+    chunks = []
+    current = []
+    current_chars = 0
+    for segment in segments:
+        text = str(segment.get('text') or '')
+        length = len(_re.sub(r'\s+', '', text))
+        if current and current_chars + length > max_chars:
+            covered = {str(item.get('speaker_id') or '') for item in current}
+            if mode != 'dialogue' or required_speakers <= covered:
+                chunks.append(current)
+                current = []
+                current_chars = 0
+        current.append(segment)
+        current_chars += length
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _extract_json_payload(response: str) -> dict | None:
+    """从 AI 回复中提取 JSON 对象（容忍 ```json fence 与前后缀文本）。"""
+    import json as _json
+
+    text = str(response or '').strip()
+    start = text.find('{')
+    end = text.rfind('}')
+    if start < 0 or end <= start:
+        return None
+    try:
+        payload = _json.loads(text[start:end + 1])
+        return payload if isinstance(payload, dict) else None
+    except _json.JSONDecodeError:
+        return None
+
+
+def ai_polish_podcast_document(document: dict, brief: dict, options=None) -> dict | None:
+    """AI 打磨播客逐字稿：口语化改写并保持段落结构；失败返回 None。
+
+    调用方（候选生成）在返回 None 时降级为机械版，不阻塞生成链路。
+    """
+    from services.ai_service_manager import get_ai_service
+    from services.prompts import get_podcast_script_prompt
+
+    options = options or {}
+    source_text = str(brief.get('source_text') or '').strip()
+    segments = document.get('segments') or []
+    if not source_text or not segments:
+        return None
+    try:
+        prompt = get_podcast_script_prompt(
+            title=str(document.get('title') or '未命名播客'),
+            source_text=source_text[:6000],
+            segment_count=len(segments),
+            fmt=str(document.get('format') or 'single'),
+            speaker_names=[
+                str(item.get('name') or '') for item in (document.get('speakers') or [])
+            ],
+            language=str(options.get('language') or document.get('language') or 'zh-CN'),
+        )
+        response = get_ai_service().text_provider.generate_text(prompt, thinking_budget=0)
+        payload = _extract_json_payload(response)
+        if not payload:
+            return None
+        polished_texts = [
+            str(item.get('text') or '').strip()
+            for item in payload.get('segments') or []
+            if isinstance(item, dict)
+        ]
+        if len(polished_texts) != len(segments) or any(not item for item in polished_texts):
+            return None
+        return {
+            **document,
+            'segments': [
+                {**segment, 'text': polished_texts[index]}
+                for index, segment in enumerate(segments)
+            ],
+        }
+    except Exception:
+        return None
 
 
 def downgrade_podcast_document_v2_to_v1(document: dict) -> dict:

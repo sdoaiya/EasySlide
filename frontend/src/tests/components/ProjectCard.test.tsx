@@ -38,17 +38,29 @@ const props = (onExport: ReturnType<typeof vi.fn>) => ({
   layout: 'grid' as const,
 });
 
-describe('ProjectCard export action', () => {
-  it('exposes export on desktop grid cards and touch overflow menu', () => {
+describe('ProjectCard actions and summary', () => {
+  it('keeps export out of the home grid and available in the project list', () => {
     const onExport = vi.fn();
     render(<ProjectCard {...props(onExport)} />);
+    expect(screen.queryByRole('button', { name: /^导出$/ })).not.toBeInTheDocument();
 
+    render(<ProjectCard {...props(onExport)} layout="list" />);
     fireEvent.click(screen.getByRole('button', { name: /^导出$/ }));
     expect(onExport).toHaveBeenCalledTimes(1);
+  });
 
-    fireEvent.click(screen.getByRole('button', { name: '更多操作' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: '导出' }));
-    expect(onExport).toHaveBeenCalledTimes(2);
+  it('renders status, page count and cover from the lightweight catalog summary', async () => {
+    render(<ProjectCard {...props(vi.fn())} project={{
+      ...project,
+      pages: undefined,
+      cover_url: '/files/project-1/cover.webp',
+      dashboard_status: 'completed',
+      page_count: 15,
+    }} />);
+
+    expect(screen.getByText('已完成')).toBeInTheDocument();
+    expect(screen.getByText('15 页')).toBeInTheDocument();
+    expect(await screen.findByRole('img')).toHaveAttribute('src', expect.stringContaining('/files/project-1/cover.webp'));
   });
 
   it.each(['grid', 'list'] as const)('keeps the %s project open control separate from action controls', (layout) => {

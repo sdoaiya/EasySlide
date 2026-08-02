@@ -426,8 +426,9 @@ class TestCompositeVideoConcatFile:
     """测试 concat 列表生成"""
 
     @patch.object(_tts_mod, '_run_ffmpeg_command')
-    def test_single_clip_copies(self, mock_run_ffmpeg):
-        """单片段直接复制，不调用 ffmpeg"""
+    def test_single_clip_reencodes_for_windows_playback_compat(self, mock_run_ffmpeg):
+        """单片段也重编码：hyperframes GPU 片段为 H.264 Level 5.0，
+        Windows 自带播放器解码失败，统一为 libx264 兼容参数（L4.0）。"""
         with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as src:
             src.write(b'fake video data')
             src_path = src.name
@@ -435,8 +436,14 @@ class TestCompositeVideoConcatFile:
         try:
             out_path = src_path + '_out.mp4'
             composite_video([src_path], out_path)
-            assert os.path.exists(out_path)
-            mock_run_ffmpeg.assert_not_called()
+            mock_run_ffmpeg.assert_called_once()
+            cmd = mock_run_ffmpeg.call_args.args[0]
+            assert cmd[cmd.index('-c:v') + 1] == 'libx264'
+            assert cmd[cmd.index('-pix_fmt') + 1] == 'yuv420p'
+            assert cmd[cmd.index('-crf') + 1] == '23'
+            assert '-movflags' in cmd and '+faststart' in cmd
+            assert '-r' in cmd and cmd[cmd.index('-r') + 1] == '25'
+            assert '-i' in cmd and cmd[cmd.index('-i') + 1] == src_path
         finally:
             for f in [src_path, out_path]:
                 if os.path.exists(f):
@@ -706,6 +713,99 @@ class TestBurnSubtitles:
         assert ":fontsdir='/some/fonts\\:dir'" in vf_value
 
 
+class TestAsrCache:
+    """ASR 质检结果缓存：proof/final 或重试共享同一音频时跳过外部转写。"""
+
+    def test_first_run_transcribes_and_writes_cache(self, tmp_path):
+        cache_dir = tmp_path / 'audio_cache'
+        cache_dir.mkdir()
+        audio_path = cache_dir / 'fish_abc123.mp3'
+        audio_path.write_bytes(b'fake-mp3')
+        calls = []
+        result = {'text': '旁白', 'segments': [{'start': 0.0, 'end': 3.0, 'text': '旁白'}], 'duration': 3.0}
+
+        def run_transcribe():
+            calls.append('transcribe')
+            return result
+
+        loaded, from_cache = _tts_mod._load_or_run_asr(
+            str(cache_dir), str(audio_path), run_transcribe,
+        )
+        assert loaded == result
+        assert from_cache is False
+        assert calls == ['transcribe']
+        cache_file = cache_dir / 'fish_abc123.asr.json'
+        assert cache_file.is_file()
+
+    def test_second_run_reuses_cached_asr(self, tmp_path):
+        cache_dir = tmp_path / 'audio_cache'
+        cache_dir.mkdir()
+        audio_path = cache_dir / 'fish_abc123.mp3'
+        audio_path.write_bytes(b'fake-mp3')
+        (cache_dir / 'fish_abc123.asr.json').write_text(
+            json.dumps({'text': '旁白', 'segments': [{'start': 0.0, 'end': 3.0, 'text': '旁白'}]}),
+            encoding='utf-8',
+        )
+        calls = []
+
+        def run_transcribe():
+            calls.append('transcribe')
+            raise AssertionError('缓存命中时不得调用外部转写')
+
+        loaded, from_cache = _tts_mod._load_or_run_asr(
+            str(cache_dir), str(audio_path), run_transcribe,
+        )
+        assert loaded['text'] == '旁白'
+        assert from_cache is True
+        assert calls == []
+
+    def test_empty_transcript_is_not_cached(self, tmp_path):
+        cache_dir = tmp_path / 'audio_cache'
+        cache_dir.mkdir()
+        audio_path = cache_dir / 'fish_abc123.mp3'
+        audio_path.write_bytes(b'fake-mp3')
+        calls = []
+
+        def run_transcribe():
+            calls.append('transcribe')
+            return {'text': '', 'segments': None, 'duration': 0}
+
+        loaded, from_cache = _tts_mod._load_or_run_asr(
+            str(cache_dir), str(audio_path), run_transcribe,
+        )
+        assert loaded['text'] == ''
+        assert from_cache is False
+        assert calls == ['transcribe']
+        assert not (cache_dir / 'fish_abc123.asr.json').is_file()
+
+    def test_corrupted_cache_is_removed_and_retranscribed(self, tmp_path):
+        """修复：半截写入的缓存文件会被删除并重新转写，而不是永久降级。"""
+        cache_dir = tmp_path / 'audio_cache'
+        cache_dir.mkdir()
+        audio_path = cache_dir / 'fish_abc123.mp3'
+        audio_path.write_bytes(b'fake-mp3')
+        (cache_dir / 'fish_abc123.asr.json').write_text(
+            '{"segments": [', encoding='utf-8',
+        )
+        calls = []
+        result = {
+            'text': '重转写', 'duration': 1.0,
+            'segments': [{'start': 0.0, 'end': 1.0, 'text': '重转写'}],
+        }
+
+        def run_transcribe():
+            calls.append('transcribe')
+            return result
+
+        loaded, from_cache = _tts_mod._load_or_run_asr(
+            str(cache_dir), str(audio_path), run_transcribe,
+        )
+        assert loaded == result
+        assert from_cache is False
+        assert calls == ['transcribe']
+        assert (cache_dir / 'fish_abc123.asr.json').is_file()
+
+
 class TestGenerateNarrationVideoPrerequisites:
     """测试视频导出前置依赖检查"""
 
@@ -859,12 +959,15 @@ class TestPageNarrationModel:
 
     def test_narration_text_in_to_dict(self, app):
         with app.app_context():
-            from models import Page
+            from models import Page, db
             page = Page(
                 project_id='test-project',
                 order_index=0,
                 narration_text='这是旁白文本',
             )
+            # to_dict 会查询 image_versions（详情页图片版本），必须挂到 session
+            db.session.add(page)
+            db.session.flush()
             d = page.to_dict()
             assert d['narration_text'] == '这是旁白文本'
 
@@ -1019,6 +1122,54 @@ class TestExportVideoRoute:
         )
         assert response.status_code == 400
 
+    def test_export_video_accepts_canonical_edge_voice(self, client, app, monkeypatch):
+        monkeypatch.setattr('services.task_manager.task_manager.submit_task', lambda *args, **kwargs: None)
+        project_id = self._create_project_with_image_page(app, allow_partial=True)
+        response = client.post(
+            f'/api/projects/{project_id}/export/video',
+            json={'voice': 'edge:zh-CN-YunxiNeural'},
+        )
+        assert response.status_code == 200, response.get_json()
+        with app.app_context():
+            from models import Task
+            kwargs = Task.query.get(response.get_json()['data']['task_id']).get_progress()['_resume']['kwargs']
+        assert kwargs['voice'] == 'zh-CN-YunxiNeural'
+        assert kwargs['tts_provider'] == 'edge'
+
+    def test_export_video_canonical_fish_voice_derives_provider(self, client, app, monkeypatch):
+        from models import Settings, db
+
+        monkeypatch.setattr('services.task_manager.task_manager.submit_task', lambda *args, **kwargs: None)
+        with app.app_context():
+            Settings.get_settings().fish_audio_api_key = 'test-fish-key'
+            db.session.commit()
+        project_id = self._create_project_with_image_page(app, allow_partial=True)
+        response = client.post(
+            f'/api/projects/{project_id}/export/video',
+            json={'voice': 'fish:clone-reference-12345'},
+        )
+        assert response.status_code == 200, response.get_json()
+        with app.app_context():
+            from models import Task
+            kwargs = Task.query.get(response.get_json()['data']['task_id']).get_progress()['_resume']['kwargs']
+        assert kwargs['voice'] == 'clone-reference-12345'
+        assert kwargs['tts_provider'] == 'fish_audio'
+
+    def test_export_video_canonical_fish_voice_rejected_without_key(self, client, app, monkeypatch):
+        monkeypatch.setattr('services.task_manager.task_manager.submit_task', lambda *args, **kwargs: None)
+        # 不依赖全局 Settings 单例状态（跨测试文件会污染），直接模拟 key 未配置
+        monkeypatch.setattr(
+            'controllers.export_controller._fish_audio_key_configured',
+            lambda: False,
+        )
+        project_id = self._create_project_with_image_page(app, allow_partial=True)
+        response = client.post(
+            f'/api/projects/{project_id}/export/video',
+            json={'voice': 'fish:clone-reference-12345'},
+        )
+        assert response.status_code == 400
+        assert 'Fish Audio API Key' in response.get_json()['error']['message']
+
     @needs_app
     def test_export_video_without_partial_fails_when_narration_missing(self, client, app):
         if not check_ffmpeg_available():
@@ -1058,10 +1209,10 @@ class TestExportVideoRoute:
 
         task_payload = self._wait_for_task(client, project_id, task_id)
         assert task_payload['status'] == 'COMPLETED'
-        progress = task_payload['progress']
-        assert progress['download_url'].endswith('.mp4')
+        # 统一任务投影（§5.2）：download_url/filename 位于 result 子对象
+        assert task_payload['result']['download_url'].endswith('.mp4')
 
-        output_filename = progress['filename']
+        output_filename = task_payload['result']['filename']
         output_path = os.path.join(app.config['UPLOAD_FOLDER'], project_id, 'exports', output_filename)
         assert os.path.exists(output_path)
         assert os.path.getsize(output_path) > 0

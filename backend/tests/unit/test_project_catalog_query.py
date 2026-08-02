@@ -88,11 +88,11 @@ class TestCatalogReadOnly:
             assert field in item, f'ProjectSummary 缺少字段 {field}'
 
     def test_mixes_current_version_and_legacy_covers_without_losing_completion(self, client):
-        current_id, legacy_id, draft_id = _seed_projects(client, 3)
+        current_id, legacy_id, native_id, draft_id = _seed_projects(client, 4)
         with client.application.app_context():
             from models import Page, PageImageVersion, ProjectWorkspace, Task, db
 
-            project_ids = (current_id, legacy_id, draft_id)
+            project_ids = (current_id, legacy_id, native_id, draft_id)
             Task.query.filter(Task.project_id.in_(project_ids)).delete(synchronize_session=False)
             Page.query.filter(Page.project_id.in_(project_ids)).delete(synchronize_session=False)
             ProjectWorkspace.query.filter(ProjectWorkspace.project_id.in_(project_ids)).update(
@@ -107,13 +107,33 @@ class TestCatalogReadOnly:
                 status='COMPLETED',
                 generated_image_path='legacy/cover.png',
             )
-            db.session.add_all([current_page, legacy_page])
+            native_page = Page(
+                project_id=native_id,
+                order_index=0,
+                status='DESCRIPTION_GENERATED',
+                native_layout='PulseCover',
+            )
+            stale_completed_page = Page(
+                project_id=draft_id,
+                order_index=0,
+                status='COMPLETED',
+            )
+            db.session.add_all([current_page, legacy_page, native_page, stale_completed_page])
             db.session.flush()
             db.session.add(PageImageVersion(
                 page_id=current_page.id,
                 image_path='current/cover.webp',
                 version_number=1,
                 is_current=True,
+            ))
+            ProjectWorkspace.query.filter_by(project_id=draft_id, kind='ppt').update({
+                'stage': 'COMPLETED',
+                'state': 'ready',
+            })
+            db.session.add(Task(
+                project_id=draft_id,
+                task_type='EXPORT_EDITABLE_PPTX',
+                status='COMPLETED',
             ))
             db.session.commit()
 
@@ -124,11 +144,13 @@ class TestCatalogReadOnly:
         assert items[current_id]['dashboard_status'] == 'completed'
         assert items[legacy_id]['cover_url'].endswith('/cover.png')
         assert items[legacy_id]['dashboard_status'] == 'completed'
+        assert items[native_id]['dashboard_status'] == 'completed'
+        assert items[draft_id]['dashboard_status'] == 'in_progress'
 
         current_detail = client.get(f'/api/projects/{current_id}').get_json()['data']
         assert current_detail['pages'][0]['generated_image_url'].endswith('/cover.webp')
 
         completed = client.get('/api/projects?limit=10&status=completed').get_json()['data']['projects']
         in_progress = client.get('/api/projects?limit=10&status=in_progress').get_json()['data']['projects']
-        assert {item['project_id'] for item in completed} == {current_id, legacy_id}
+        assert {item['project_id'] for item in completed} == {current_id, legacy_id, native_id}
         assert {item['project_id'] for item in in_progress} == {draft_id}

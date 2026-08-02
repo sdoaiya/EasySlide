@@ -143,7 +143,7 @@ export function WorkspaceEntryPage({ kind }: { kind: ContentWorkspaceKind }) {
               <>
                 <p className="mt-5 text-xs text-[var(--app-text-tertiary)]">当前工作区尚未初始化，不会产生模型、图片或语音调用。</p>
                 <div className="mt-5 flex flex-wrap justify-center gap-2">
-                  {kind === 'video' && (
+                  {(kind === 'video' || kind === 'podcast') && (
                     <Button size="sm" variant="secondary" icon={<Wand2 size={15} />} onClick={() => setWizardOpen(true)}>从 PPT 转换</Button>
                   )}
                   <Button size="sm" loading={busy} icon={<Sparkles size={15} />} onClick={() => void startDirectGeneration()}>
@@ -176,7 +176,8 @@ export function WorkspaceEntryPage({ kind }: { kind: ContentWorkspaceKind }) {
 
       <PptToVideoWizard
         projectId={project.project_id}
-        isOpen={wizardOpen && kind === 'video'}
+        isOpen={wizardOpen && (kind === 'video' || kind === 'podcast')}
+        targetKind={kind === 'podcast' ? 'podcast' : 'video'}
         onClose={() => setWizardOpen(false)}
         onCreated={() => void load(project.project_id)}
       />

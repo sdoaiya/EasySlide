@@ -5,6 +5,24 @@ import { dashiThemes } from '@/native-deck/dashiThemes'
 import { selectThemeLayout } from '@/native-deck/nativeLayoutMigration'
 import { getImageUrl } from '@/api/client'
 import type { NativePageVersion } from '@/api/endpoints'
+import type { NarrationPreferences } from '@/types'
+
+/** 逐页语气覆盖：字段与可选值（跟随全局 = 空串） */
+const PAGE_TONE_FIELDS: Array<[keyof NarrationPreferences['emotion_director'], string, readonly string[]]> = [
+  ['intensity', '强度', ['gentle', 'standard', 'strong']],
+  ['pace', '语速', ['slow', 'normal', 'fast']],
+  ['pause', '停顿', ['short', 'normal', 'long']],
+  ['relationship', '角色关系', ['neutral', 'host_guest', 'mentor', 'debate']],
+]
+
+const PAGE_TONE_EMOTIONS: ReadonlyArray<[string, string]> = [
+  ['curious', '好奇'],
+  ['emphasis', '强调'],
+  ['confident', '自信'],
+  ['calm', '平静'],
+  ['warm', '温暖'],
+  ['excited', '兴奋'],
+]
 
 export type NativePropShape = 'string' | 'string[]' | 'number' | 'boolean' | 'media' | NativePropShape[] | { [key: string]: NativePropShape }
 
@@ -54,6 +72,9 @@ type NativeDeckPropertyPanelProps = {
   onRestoreVersion?: (versionId: string) => void
   onApplyAnimation?: (animation: Record<string, unknown>) => void
   mediaActions?: NativeMediaActions
+  /** 逐页语气覆盖（视频旁白）：当前页覆盖值与变更回调，缺省不渲染 */
+  pageNarrationOverrides?: Partial<NarrationPreferences['emotion_director']>
+  onPageNarrationOverridesChange?: (value: Partial<NarrationPreferences['emotion_director']>) => void
 }
 
 export type NativeMediaActions = {
@@ -85,7 +106,7 @@ type NativeDesignIntent = {
   }
 }
 
-export function NativeDeckPropertyPanel({ slide, contract, contracts, errors, onChange, onLayoutChange, onRegenerate, versions = [], onRestoreVersion, onApplyAnimation, mediaActions }: NativeDeckPropertyPanelProps) {
+export function NativeDeckPropertyPanel({ slide, contract, contracts, errors, onChange, onLayoutChange, onRegenerate, versions = [], onRestoreVersion, onApplyAnimation, mediaActions, pageNarrationOverrides = {}, onPageNarrationOverridesChange }: NativeDeckPropertyPanelProps) {
   const [layer, setLayer] = useState<NativePropertyLayer>('content')
   const layerRefs = useRef<Array<HTMLButtonElement | null>>([])
   if (!slide) return <p className="p-4 text-sm text-[var(--app-text-secondary)]">请选择页面</p>
@@ -103,6 +124,13 @@ export function NativeDeckPropertyPanel({ slide, contract, contracts, errors, on
     && (slide.props.__design_intent as Record<string, unknown>).generation_fallback,
   )
   const setValue = (key: string, value: unknown) => onChange({ ...slide.props, [key]: value })
+  const updateToneOverride = (field: keyof NarrationPreferences['emotion_director'], value: string) => {
+    if (!onPageNarrationOverridesChange) return
+    const next = { ...pageNarrationOverrides }
+    if (value) next[field] = value as never
+    else delete next[field]
+    onPageNarrationOverridesChange(next)
+  }
   const animation = slide.props.__animation && typeof slide.props.__animation === 'object' ? slide.props.__animation as Record<string, unknown> : {}
   const setAnimationValue = (key: string, value: unknown) => setValue('__animation', { ...animation, [key]: value })
   const controlGroups = groupControls((contract.controls || []).filter((control) => isControlVisible(control, values)), values)
@@ -254,6 +282,28 @@ export function NativeDeckPropertyPanel({ slide, contract, contracts, errors, on
                 onChange={(value) => setValue(key, value)}
               />
             ))}
+          </div>
+        </details>
+      )}
+
+      {layer === 'content' && onPageNarrationOverridesChange && (
+        <details className="border-b border-[var(--app-border)] py-3">
+          <summary className="cursor-pointer list-none text-sm font-semibold text-[var(--app-text)] marker:hidden">语气覆盖<span className="float-right text-base leading-none text-[var(--app-text-tertiary)]">−</span></summary>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            {PAGE_TONE_FIELDS.map(([field, label, options]) => (
+              <label key={field} className="text-xs text-[var(--app-text-secondary)]">{label}
+                <select aria-label={`语气覆盖${label}`} value={pageNarrationOverrides[field] || ''} onChange={(event) => updateToneOverride(field, event.target.value)} className="mt-1 h-9 w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-sm text-[var(--app-text)]">
+                  <option value="">跟随全局</option>
+                  {options.map((option) => <option key={option} value={option}>{option}</option>)}
+                </select>
+              </label>
+            ))}
+            <label className="text-xs text-[var(--app-text-secondary)]">情绪
+              <select aria-label="语气覆盖情绪" value={pageNarrationOverrides.emotion || ''} onChange={(event) => updateToneOverride('emotion', event.target.value)} className="mt-1 h-9 w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-sm text-[var(--app-text)]">
+                <option value="">跟随全局</option>
+                {PAGE_TONE_EMOTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+            </label>
           </div>
         </details>
       )}

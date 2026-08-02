@@ -1,10 +1,19 @@
 const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const { spawn } = require('child_process');
 const http = require('http');
 const { pathToFileURL } = require('url');
 const { downloadToFile } = require('./download');
+
+const ignoreClosedPipe = (error) => {
+  if (error?.code === 'EPIPE' || error?.code === 'EOF' || error?.message === 'write EOF') return;
+  throw error;
+};
+
+process.stdout?.on('error', ignoreClosedPipe);
+process.stderr?.on('error', ignoreClosedPipe);
 
 let mainWindow;
 let backendProcess;
@@ -14,6 +23,22 @@ let quitPreparationStarted = false;
 let quitPreparationComplete = false;
 
 const BACKEND_PORT = 5011;
+const FRONTEND_BASE_PORT = 3011;
+
+/**
+ * Compute a deterministic port from the worktree directory name.
+ * Must match the algorithm in frontend/vite.config.ts `computeWorktreePort`
+ * and backend/app.py `_compute_worktree_port` (basePort 3011 frontend / 5011 backend).
+ */
+function computeWorktreePort(basePort) {
+  const basename = path.basename(path.resolve(__dirname, '..'));
+  const hashHex = crypto.createHash('md5').update(basename).digest('hex').substring(0, 8);
+  const offset = parseInt(hashHex, 16) % 500;
+  return basePort + offset;
+}
+
+// Dev 模式前端端口:优先读 FRONTEND_PORT 环境变量,否则按 worktree 目录名复刻 vite 的算法
+const FRONTEND_PORT = Number(process.env.FRONTEND_PORT) || computeWorktreePort(FRONTEND_BASE_PORT);
 
 function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
@@ -138,7 +163,10 @@ function stopBackend() {
 
   const pid = backendProcess.pid;
   if (process.platform === 'win32') {
-    spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true });
+    spawn('taskkill', ['/PID', String(pid), '/T', '/F'], {
+      windowsHide: true,
+      stdio: 'ignore',
+    });
     return;
   }
 
@@ -211,7 +239,7 @@ function createWindow() {
 
   const frontendUrl = app.isPackaged
     ? pathToFileURL(path.join(process.resourcesPath, 'frontend', 'index.html')).toString()
-    : 'http://127.0.0.1:3011';
+    : `http://127.0.0.1:${FRONTEND_PORT}`;
 
   mainWindow.loadURL(frontendUrl);
 
@@ -283,7 +311,20 @@ app.on('before-quit', (event) => {
 });
 
 ipcMain.handle('get-backend-port', () => BACKEND_PORT);
-ipcMain.handle('open-external', (_event, url) => shell.openExternal(url));
+ipcMain.handle('open-external', (_event, url) => {
+  let parsed;
+  try {
+    parsed = new URL(String(url || ''));
+  } catch {
+    console.warn(`[open-external] rejected invalid URL: ${url}`);
+    return false;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    console.warn(`[open-external] rejected unsupported scheme "${parsed.protocol}" for: ${url}`);
+    return false;
+  }
+  return shell.openExternal(parsed.toString());
+});
 ipcMain.handle('open-data-dir', async () => {
   const dirs = getUserDataDirs();
   ensureDir(dirs.root);
@@ -346,7 +387,18 @@ ipcMain.handle('open-export-dir', async () => {
 });
 ipcMain.handle('save-download', async (_event, url, filename) => {
   const rawUrl = String(url || '');
-  const sourceUrl = rawUrl.startsWith('http') ? rawUrl : `http://127.0.0.1:${BACKEND_PORT}${rawUrl}`;
+  const localPrefix = `http://127.0.0.1:${BACKEND_PORT}/files/`;
+  let sourceUrl;
+  if (rawUrl.startsWith(localPrefix)) {
+    // 绝对地址:仅放行本机后端 /files/ 路径
+    sourceUrl = rawUrl;
+  } else if (rawUrl.startsWith('/files/')) {
+    // 相对地址:补全为本机后端地址
+    sourceUrl = `http://127.0.0.1:${BACKEND_PORT}${rawUrl}`;
+  } else {
+    console.warn(`[save-download] rejected non-local download source: ${rawUrl}`);
+    throw new Error('不支持的下载地址');
+  }
   const suggestedName = filename || decodeURIComponent(path.basename(new URL(sourceUrl).pathname)) || 'download';
   const exportDir = getConfiguredExportDir();
   ensureDir(exportDir);

@@ -621,7 +621,7 @@ export const ExportTasksPanel: React.FC<ExportTasksPanelProps> = ({ projectId, p
                   key={task.id} 
                   task={task}
                   pages={pages}
-                  onRemove={() => removeTask(task.id)}
+                  onRemove={() => void removeTask(task.id).catch(console.error)}
                   onPause={() => void pauseTask(task.id).catch(console.error)}
                   onResume={() => void resumeTask(task.id).catch(console.error)}
                   onCancel={() => void cancelTask(task.id).catch(console.error)}
@@ -650,7 +650,7 @@ export const ExportTasksPanel: React.FC<ExportTasksPanelProps> = ({ projectId, p
                   key={task.id}
                   task={task}
                   pages={pages}
-                  onRemove={() => removeTask(task.id)}
+                  onRemove={() => void removeTask(task.id).catch(console.error)}
                   onPause={() => void pauseTask(task.id).catch(console.error)}
                   onResume={() => void resumeTask(task.id).catch(console.error)}
                   onCancel={() => void cancelTask(task.id).catch(console.error)}

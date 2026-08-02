@@ -6,6 +6,9 @@
 """
 
 from models import WorkspaceGenerationRun, db
+import logging
+
+logger = logging.getLogger(__name__)
 
 PAUSABLE_TASK_TYPES = {
     'GENERATE_DESCRIPTIONS',
@@ -93,6 +96,8 @@ def resume_task(task) -> None:
     """Resume a task: active worker flips to PROCESSING, otherwise resubmit."""
     from services.task_manager import task_manager
 
+    if task.dismissed_at is not None:
+        return
     if task.status in {'PAUSED', 'FAILED'}:
         if task_manager.is_task_active(task.id):
             task.status = 'PROCESSING'
@@ -109,7 +114,17 @@ def retry_task(task) -> None:
     """Retry a failed task with the same frozen input; never duplicate output."""
     from services.task_manager import task_manager
 
+    # dismissed tasks are hidden from the user; retrying them would produce
+    # orphan outputs nobody can see
+    if task.dismissed_at is not None:
+        return
     if task.status not in {'FAILED', 'CANCELLED', 'COMPLETED'}:
+        return
+    # watchdog may have failed the task while its worker is still running
+    # (e.g. long podcast synthesis); resubmitting now would run two workers
+    # over the same working_dir concurrently
+    if task_manager.is_task_active(task.id):
+        logger.warning('任务 %s 仍在后台运行，重试被拒绝', task.id)
         return
     task.status = 'PENDING'
     task.error_message = None

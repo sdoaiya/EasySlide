@@ -1,9 +1,10 @@
 """
 File Controller - handles static file serving
 """
-from flask import Blueprint, send_from_directory, current_app
+from flask import Blueprint, send_from_directory, current_app, request
 from utils import error_response, not_found
 from utils.path_utils import find_file_with_prefix
+import mimetypes
 import os
 from pathlib import Path
 from werkzeug.utils import secure_filename
@@ -41,9 +42,11 @@ def serve_file(project_id, file_type, filename):
         if not os.path.exists(file_path):
             return not_found('File')
         
-        # Exports should be downloaded rather than opened in browser for better UX and
-        # to keep E2E download assertions stable.
-        as_attachment = file_type == 'exports'
+        media_type = mimetypes.guess_type(filename)[0] or ''
+        is_media = media_type.startswith(('video/', 'audio/'))
+        as_attachment = file_type == 'exports' and (
+            not is_media or request.args.get('download') == '1'
+        )
         return send_from_directory(file_dir, filename, as_attachment=as_attachment)
     
     except Exception as e:
@@ -111,6 +114,26 @@ def serve_global_material(filename):
         # Serve file
         return send_from_directory(file_dir, safe_filename)
     
+    except Exception as e:
+        return error_response('SERVER_ERROR', str(e), 500)
+
+
+@file_bp.route('/bgm_library/<filename>', methods=['GET'])
+def serve_bgm_track(filename):
+    """
+    GET /files/bgm_library/{filename} - Serve built-in BGM tracks.
+
+    Tracks are generated lazily under UPLOAD_FOLDER/bgm_library and are
+    registered as global Materials (see services/bgm_library_service).
+    """
+    try:
+        safe_filename = secure_filename(filename)
+        file_dir = os.path.join(current_app.config['UPLOAD_FOLDER'], 'bgm_library')
+        if not os.path.isdir(file_dir):
+            return not_found('File')
+        if not os.path.isfile(os.path.join(file_dir, safe_filename)):
+            return not_found('File')
+        return send_from_directory(file_dir, safe_filename)
     except Exception as e:
         return error_response('SERVER_ERROR', str(e), 500)
 

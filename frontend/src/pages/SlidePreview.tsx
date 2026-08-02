@@ -643,7 +643,6 @@ export const SlidePreview: React.FC = () => {
   const [videoAutoEmotion, setVideoAutoEmotion] = useState(true);
   const [videoPronunciationLexicon, setVideoPronunciationLexicon] = useState<PronunciationEntry[]>([]);
   const [videoNarrationPreferences, setVideoNarrationPreferences] = useState<NarrationPreferences>(DEFAULT_NARRATION_PREFERENCES);
-  const [videoUsageEstimate, setVideoUsageEstimate] = useState<{ characters: number; estimated_seconds: number; requests: number; roles: number; free_model_notice: string }>();
   const [videoShowAdvancedNarration, setVideoShowAdvancedNarration] = useState(false);
   const loadVideoFishVoices = useCallback(async () => {
     setVideoFishVoicesLoading(true);
@@ -725,18 +724,6 @@ export const SlidePreview: React.FC = () => {
   // 多选导出相关状态
   const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
   const [selectedPageIds, setSelectedPageIds] = useState<Set<string>>(new Set());
-  useEffect(() => {
-    if (!showVideoExportDialog || videoTtsProvider !== 'fish_audio' || !projectId) return;
-    void apiPreflightExportVideo(projectId, {
-      pageIds: isMultiSelectMode ? Array.from(selectedPageIds) : undefined,
-      includeNoImagePages: videoIncludeNoImage,
-      ttsProvider: videoTtsProvider,
-      voice: videoFishVoice,
-      speed: videoSpeed,
-      narrationMode: videoNarrationMode,
-      speakers: videoNarrationMode === 'dialogue' ? videoFishSpeakers : undefined,
-    }).then((response) => setVideoUsageEstimate(response.data?.estimate)).catch(() => setVideoUsageEstimate(undefined));
-  }, [isMultiSelectMode, projectId, selectedPageIds, showVideoExportDialog, videoFishSpeakers, videoFishVoice, videoIncludeNoImage, videoNarrationMode, videoSpeed, videoTtsProvider]);
   const [isOutlineExpanded, setIsOutlineExpanded] = useState(false);
   const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -2629,7 +2616,7 @@ export const SlidePreview: React.FC = () => {
   );
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-[var(--app-canvas)] text-[var(--app-text)]">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[var(--app-canvas)] text-[var(--app-text)]">
       {/* 顶栏 */}
       <WorkspaceToolbar className="justify-between px-3 md:px-4">
         <div className="flex items-center gap-2 md:gap-4 min-w-0 flex-1">
@@ -3186,18 +3173,9 @@ export const SlidePreview: React.FC = () => {
                       <span className="text-sm">自动匹配场景语气</span>
                     </label>
                     <FishNarrationAdvancedPanel
-                      projectId={projectId || ''}
-                      voices={videoFishVoices}
-                      voice={videoNarrationMode === 'single' ? videoFishVoice : videoFishSpeakers[0]?.voice || ''}
-                      speed={videoSpeed}
                       autoEmotion={videoAutoEmotion}
                       pronunciationLexicon={videoPronunciationLexicon}
                       narrationPreferences={videoNarrationPreferences}
-                      estimate={videoUsageEstimate}
-                      pageOptions={currentProject.pages.map((page, index) => ({
-                        id: page.page_id,
-                        label: `第 ${index + 1} 页 · ${page.outline_content?.title || '未命名页面'}`,
-                      }))}
                       onVoiceChange={(voice) => videoNarrationMode === 'single'
                         ? setVideoFishVoice(voice)
                         : setVideoFishSpeakers((current) => current.map((speaker, index) => index === 0 ? { ...speaker, voice } : speaker))}

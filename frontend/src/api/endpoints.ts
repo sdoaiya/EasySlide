@@ -788,6 +788,7 @@ export const exportVideoWorkspace = async (
     filename?: string;
     voice?: string;
     rate?: string;
+    speed?: number;
     enableKenBurns?: boolean;
     renderProfile?: 'proof' | 'final';
     sourceProofTaskId?: string;
@@ -799,6 +800,7 @@ export const exportVideoWorkspace = async (
       filename: options.filename,
       voice: options.voice,
       rate: options.rate,
+      speed: options.speed,
       enable_ken_burns: options.enableKenBurns,
       render_profile: options.renderProfile,
       source_proof_task_id: options.sourceProofTaskId,
@@ -814,6 +816,22 @@ export const proposePodcastToSpine = async (
   const response = await apiClient.post(
     `/api/content-projects/${projectId}/workspaces/podcast/propose-to-spine`,
     { target_base_revision: targetBaseRevision },
+  );
+  return response.data;
+};
+
+export type BuiltinBgmTrack = {
+  id: string;
+  name: string;
+  note: string;
+  url: string;
+  duration_ms: number;
+  material_id: string;
+};
+
+export const listBgmLibrary = async (): Promise<ApiResponse<{ tracks: BuiltinBgmTrack[] }>> => {
+  const response = await apiClient.get<ApiResponse<{ tracks: BuiltinBgmTrack[] }>>(
+    '/api/content-projects/bgm-library',
   );
   return response.data;
 };
@@ -1058,6 +1076,11 @@ export const resumeTask = async (projectId: string, taskId: string): Promise<Api
 
 export const cancelTask = async (projectId: string, taskId: string): Promise<ApiResponse<Task>> => {
   const response = await apiClient.post<ApiResponse<Task>>(`/api/projects/${projectId}/tasks/${taskId}/cancel`);
+  return response.data;
+};
+
+export const deleteTask = async (projectId: string, taskId: string): Promise<ApiResponse<{ task_id: string; deleted: boolean }>> => {
+  const response = await apiClient.delete<ApiResponse<{ task_id: string; deleted: boolean }>>(`/api/projects/${projectId}/tasks/${taskId}`);
   return response.data;
 };
 

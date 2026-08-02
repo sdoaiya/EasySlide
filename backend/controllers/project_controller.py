@@ -247,7 +247,6 @@ def _load_catalog_aggregates(project_ids):
     if not project_ids:
         return aggregates
     active_statuses = tuple(ACTIVE_PAGE_STATUSES)
-    completed_statuses = ('COMPLETED', 'NATIVE_GENERATED')
     current_image = and_(
         PageImageVersion.page_id == Page.id,
         PageImageVersion.is_current.is_(True),
@@ -259,8 +258,10 @@ def _load_catalog_aggregates(project_ids):
             func.count(Page.id),
             func.sum(case((Page.status.in_(active_statuses), 1), else_=0)),
             func.count(func.distinct(case((or_(
-                Page.status.in_(completed_statuses),
+                Page.generated_image_path.isnot(None),
                 PageImageVersion.id.isnot(None),
+                Page.native_layout.isnot(None),
+                Page.status == 'NATIVE_GENERATED',
             ), Page.id)))),
         )
         .outerjoin(PageImageVersion, current_image)
@@ -316,6 +317,7 @@ def _load_catalog_aggregates(project_ids):
         .filter(
             Task.project_id.in_(project_ids),
             Task.status.in_(active_task_statuses + ('COMPLETED',)),
+            Task.dismissed_at.is_(None),
         )
         .all()
     )
@@ -345,32 +347,28 @@ def _non_ppt_workspace_status_aggregate(workspace, agg):
 
 def _bucket_from_aggregate(agg) -> str:
     """Dashboard status bucket computed from lightweight aggregates only."""
-    ppt_stage = None
-    has_ppt = False
+    ppt_generating = False
     workspace_statuses = []
     for workspace in agg['workspaces']:
         if workspace.kind == 'ppt':
-            has_ppt = True
-            ppt_stage = str(workspace.stage or '').strip().upper()
+            ppt_generating = str(workspace.stage or '').strip().upper() in {
+                'GENERATING_DESCRIPTIONS', 'GENERATING_IMAGES',
+            }
         else:
             workspace_statuses.append(_non_ppt_workspace_status_aggregate(workspace, agg))
     if (
-        ppt_stage in {'GENERATING_DESCRIPTIONS', 'GENERATING_IMAGES'}
+        ppt_generating
         or agg['active_page_count'] > 0
         or 'generating' in workspace_statuses
         or agg['active_task_count'] > 0
     ):
         return 'generating'
     if (
-        ppt_stage in {'COMPLETED', 'NATIVE_DECK_GENERATED'}
-        or 'completed' in workspace_statuses
-        or agg['export_completed']
-    ):
-        return 'completed'
-    if (
         agg['page_count'] > 0
         and agg['completed_page_count'] == agg['page_count']
     ):
+        return 'completed'
+    if agg['page_count'] == 0 and 'completed' in workspace_statuses:
         return 'completed'
     return 'in_progress'
 
@@ -419,15 +417,16 @@ def _get_project_dashboard_stats():
     total = db.session.query(func.count(Project.id)).scalar() or 0
     if total == 0:
         return {'total': 0, 'completed': 0, 'generating': 0, 'in_progress': 0}
-    completed_statuses = ('COMPLETED', 'NATIVE_GENERATED')
     page_rows = (
         db.session.query(
             Page.project_id,
             func.count(Page.id),
             func.sum(case((Page.status.in_(tuple(ACTIVE_PAGE_STATUSES)), 1), else_=0)),
             func.count(func.distinct(case((or_(
-                Page.status.in_(completed_statuses),
+                Page.generated_image_path.isnot(None),
                 PageImageVersion.id.isnot(None),
+                Page.native_layout.isnot(None),
+                Page.status == 'NATIVE_GENERATED',
             ), Page.id)))),
         )
         .outerjoin(PageImageVersion, and_(
@@ -443,23 +442,30 @@ def _get_project_dashboard_stats():
         pid for pid, page_total, _active, completed_pages in page_rows
         if page_total and page_total == completed_pages
     }
+    page_projects = {pid for pid, _total, _active, _completed in page_rows}
     task_rows = (
         db.session.query(Task.project_id)
-        .filter(Task.status.in_(tuple(ACTIVE_TASK_STATUSES)))
+        .filter(
+            Task.status.in_(tuple(ACTIVE_TASK_STATUSES)),
+            Task.dismissed_at.is_(None),
+        )
         .distinct()
         .all()
     )
     active_task_projects = {pid for (pid,) in task_rows}
     export_rows = (
-        db.session.query(Task.project_id)
+        db.session.query(Task.project_id, Task.task_type)
         .filter(
-            Task.task_type.like('EXPORT_%'),
+            Task.task_type.in_(('EXPORT_VIDEO_WORKSPACE', 'EXPORT_PODCAST_WORKSPACE')),
             Task.status == 'COMPLETED',
+            Task.dismissed_at.is_(None),
         )
-        .distinct()
         .all()
     )
-    exported_projects = {pid for (pid,) in export_rows}
+    exported_workspaces = {
+        (pid, 'video' if task_type == 'EXPORT_VIDEO_WORKSPACE' else 'podcast')
+        for pid, task_type in export_rows
+    }
     workspace_rows = (
         db.session.query(ProjectWorkspace.project_id, ProjectWorkspace.kind, ProjectWorkspace.stage, ProjectWorkspace.state)
         .all()
@@ -481,21 +487,19 @@ def _get_project_dashboard_stats():
             }:
                 generating.add(pid)
                 break
-    completed_projects = set()
-    for pid in set(by_project) | completed_page_projects | exported_projects:
-        if pid in generating:
+    completed_projects = set(completed_page_projects) - generating
+    for pid in set(by_project) | completed_page_projects:
+        if pid in generating or pid in page_projects:
             continue
         rows = by_project.get(pid, [])
         for kind, stage, state in rows:
-            if kind == 'ppt' and stage in {'COMPLETED', 'NATIVE_DECK_GENERATED'}:
+            if kind != 'ppt' and (
+                state == 'ready'
+                or stage in WORKSPACE_READY_STAGES
+                or (pid, kind) in exported_workspaces
+            ):
                 completed_projects.add(pid)
                 break
-            if kind != 'ppt' and (state == 'ready' or stage in WORKSPACE_READY_STAGES):
-                completed_projects.add(pid)
-                break
-        else:
-            if pid in exported_projects or pid in completed_page_projects:
-                completed_projects.add(pid)
     completed = len(completed_projects)
     return {
         'total': total,
@@ -944,6 +948,7 @@ def list_projects():
             db.exists().where(db.and_(
                 Task.project_id == Project.id,
                 Task.status.in_(ACTIVE_TASK_STATUSES),
+                Task.dismissed_at.is_(None),
             )),
         )
         current_page_image = db.exists().where(db.and_(
@@ -955,33 +960,33 @@ def list_projects():
         has_incomplete_pages = db.exists().where(db.and_(
             Page.project_id == Project.id,
             ~db.or_(
-                Page.status.in_(('COMPLETED', 'NATIVE_GENERATED')),
+                Page.generated_image_path.isnot(None),
                 current_page_image,
+                Page.native_layout.isnot(None),
+                Page.status == 'NATIVE_GENERATED',
             ),
         ))
         completed_filter = db.or_(
             db.and_(has_pages, ~has_incomplete_pages),
-            db.exists().where(db.and_(
-                ProjectWorkspace.project_id == Project.id,
+            db.and_(
+                ~has_pages,
                 db.or_(
-                    db.and_(
-                        ProjectWorkspace.kind == 'ppt',
-                        ProjectWorkspace.stage.in_(('COMPLETED', 'NATIVE_DECK_GENERATED')),
-                    ),
-                    db.and_(
+                    db.exists().where(db.and_(
+                        ProjectWorkspace.project_id == Project.id,
                         ProjectWorkspace.kind.in_(('video', 'podcast')),
                         db.or_(
                             ProjectWorkspace.state == 'ready',
                             ProjectWorkspace.stage.in_(tuple(WORKSPACE_READY_STAGES)),
                         ),
-                    ),
+                    )),
+                    db.exists().where(db.and_(
+                        Task.project_id == Project.id,
+                        Task.task_type.in_(('EXPORT_VIDEO_WORKSPACE', 'EXPORT_PODCAST_WORKSPACE')),
+                        Task.status == 'COMPLETED',
+                        Task.dismissed_at.is_(None),
+                    )),
                 ),
-            )),
-            db.exists().where(db.and_(
-                Task.project_id == Project.id,
-                Task.task_type.like('EXPORT_%'),
-                Task.status == 'COMPLETED',
-            )),
+            ),
         )
 
         query = Project.query.order_by(desc(Project.updated_at))
@@ -2199,7 +2204,7 @@ def list_server_tasks():
         limit = min(max(1, request.args.get('limit', 50, type=int)), 100)
         cursor = max(0, request.args.get('cursor', 0, type=int))
 
-        query = Task.query
+        query = Task.query.filter(Task.dismissed_at.is_(None))
         if project_id:
             query = query.filter(Task.project_id == project_id)
         if status:
@@ -2242,7 +2247,7 @@ def get_task_status(project_id, task_id):
     try:
         task = Task.query.get(task_id)
 
-        if not task or task.project_id != project_id:
+        if not task or task.project_id != project_id or task.dismissed_at is not None:
             return not_found('Task')
 
         item = task_projection(task)
@@ -2252,6 +2257,18 @@ def get_task_status(project_id, task_id):
     except Exception as e:
         logger.error(f"get_task_status failed: {str(e)}", exc_info=True)
         return error_response('SERVER_ERROR', str(e), 500)
+
+
+@project_bp.route('/<project_id>/tasks/<task_id>', methods=['DELETE'])
+def dismiss_server_task(project_id, task_id):
+    task = Task.query.get(task_id)
+    if not task or task.project_id != project_id:
+        return not_found('Task')
+    if task.dismissed_at is None:
+        cancel_task(task)
+        task.dismissed_at = datetime.utcnow()
+        db.session.commit()
+    return success_response({'task_id': task.id, 'deleted': True})
 
 
 @project_bp.route('/<project_id>/tasks/<task_id>/pause', methods=['POST'])

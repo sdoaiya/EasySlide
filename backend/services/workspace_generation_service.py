@@ -263,6 +263,14 @@ def publish_run(run: WorkspaceGenerationRun, project) -> WorkspaceGenerationRun:
     validate_workspace_document(workspace.kind, document)
     options = json.loads(run.options_json or '{}')
     settings = options.get('workspace_settings') or {}
+    # 转换向导选择的声音固化为工作区级导出配置，供编辑器读取与导出使用
+    if workspace.kind == 'video':
+        voice_profile_id = str(options.get('voice_profile_id') or '').strip()
+        if voice_profile_id:
+            settings = dict(settings)
+            voice_config = dict(settings.get('voice_config') or {})
+            voice_config['voice'] = voice_profile_id
+            settings['voice_config'] = voice_config
 
     run.status = 'PUBLISHING'
     db.session.flush()
@@ -318,11 +326,34 @@ def build_candidate_document(run: WorkspaceGenerationRun) -> tuple[dict, list[st
     snapshot = json.loads(run.source_snapshot_json)
     options = json.loads(run.options_json or '{}')
     if run.source_kind == 'ppt':
-        document = build_video_document_from_ppt_snapshot(snapshot, options)
+        if run.target_workspace_kind == 'video':
+            document = build_video_document_from_ppt_snapshot(snapshot, options)
+        else:
+            from services.podcast_service import (
+                ai_polish_podcast_document,
+                build_podcast_document_from_ppt_snapshot,
+            )
+
+            document = build_podcast_document_from_ppt_snapshot(snapshot, options)
+            # AI 打磨逐字稿：拼接页面文本作为源材料，失败自动降级
+            source_text = '\n\n'.join(
+                str(item.get('narration') or '')
+                or str((item.get('description') or {}).get('text') or '')
+                for item in (snapshot.get('pages') or [])
+            ).strip()
+            if source_text:
+                polished = ai_polish_podcast_document(document, {'source_text': source_text}, options)
+                if polished:
+                    document = polished
     elif run.target_workspace_kind == 'video':
         document = build_video_document_from_brief(snapshot, options)
     else:
         document = build_podcast_document_from_brief(snapshot, options)
+        # AI 打磨逐字稿：口语化改写，失败自动降级为机械版（不阻塞候选生成）
+        from services.podcast_service import ai_polish_podcast_document
+        polished = ai_polish_podcast_document(document, snapshot, options)
+        if polished:
+            document = polished
     # 候选文档是 V2 超集：V1 形状的 builder 输出在此增强 voice/script/
     # transition/独立标题等阶段 2 契约字段（正式工作区发布时再降级 V1）
     if run.target_workspace_kind == 'video':

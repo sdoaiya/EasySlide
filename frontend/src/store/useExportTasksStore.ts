@@ -72,7 +72,7 @@ interface ExportTasksState {
   // Actions
   addTask: (task: Omit<ExportTask, 'createdAt'>) => void;
   updateTask: (id: string, updates: Partial<ExportTask>) => void;
-  removeTask: (id: string) => void;
+  removeTask: (id: string) => Promise<void>;
   clearCompleted: (projectId?: string | null) => void;
   pollTask: (id: string, projectId: string, taskId: string) => Promise<void>;
   pauseTask: (id: string) => Promise<void>;
@@ -176,20 +176,43 @@ export const useExportTasksStore = create<ExportTasksState>()((set, get) => ({
     }));
   },
 
-  removeTask: (id) => {
+  removeTask: async (id) => {
+    const task = get().tasks.find((item) => item.id === id);
+    if (!task) return;
+    if (task.taskId) {
+      try {
+        await api.deleteTask(task.projectId, task.taskId);
+      } catch (error) {
+        // 删除失败：任务保留、轮询继续，但把错误 surface 出来（抛错 + 任务上的错误标志）
+        console.error('[ExportTasksStore] 删除任务失败:', error);
+        get().updateTask(id, {
+          errorMessage: normalizeErrorMessage(error instanceof Error ? error.message : String(error)),
+        });
+        throw error;
+      }
+    }
+    const timer = pollTimers.get(id);
+    if (timer) clearTimeout(timer);
+    pollTimers.delete(id);
     set((state) => ({
       tasks: state.tasks.filter((task) => task.id !== id),
+      total: Math.max(0, state.total - (task.taskId ? 1 : 0)),
     }));
   },
 
   clearCompleted: (projectId) => {
-    set((state) => ({
-      tasks: state.tasks.filter((task) => {
+    set((state) => {
+      let removed = 0;
+      const tasks = state.tasks.filter((task) => {
         const isCompleted = task.status === 'COMPLETED' || task.status === 'FAILED' || task.status === 'CANCELLED';
         if (!isCompleted) return true;
-        return projectId != null ? task.projectId !== projectId : false;
-      }),
-    }));
+        if (projectId != null && task.projectId !== projectId) return true;
+        removed += 1;
+        return false;
+      });
+      // 按移除数量同步减少 total
+      return { tasks, total: Math.max(0, state.total - removed) };
+    });
   },
 
   pollTask: async (id, projectId, taskId) => {
@@ -210,6 +233,17 @@ export const useExportTasksStore = create<ExportTasksState>()((set, get) => ({
           console.warn('[ExportTasksStore] No task data in response');
           return;
         }
+        // 竞态守卫：在途响应晚到时，本地已暂停/取消的任务不能被中间状态覆写，也不重新挂定时器
+        const local = get().tasks.find((task) => task.id === id);
+        if (
+          local
+          && (local.status === 'PAUSED' || local.status === 'CANCELLED')
+          && item.status !== 'COMPLETED'
+          && item.status !== 'FAILED'
+          && item.status !== 'CANCELLED'
+        ) {
+          return;
+        }
         const updates = projectionToTask(item, get().tasks.find((task) => task.id === id));
         updates.id = id;
         get().updateTask(id, updates);
@@ -223,6 +257,17 @@ export const useExportTasksStore = create<ExportTasksState>()((set, get) => ({
         console.error('[ExportTasksStore] Poll error:', error);
         if (error?.code === 'ECONNABORTED') {
           pollTimers.set(id, setTimeout(poll, 2000));
+          return;
+        }
+        if (error?.response?.status === 404) {
+          // 任务已在别处被 dismiss：移除本地任务并停止轮询，而不是误标 FAILED
+          const timer = pollTimers.get(id);
+          if (timer) clearTimeout(timer);
+          pollTimers.delete(id);
+          set((state) => ({
+            tasks: state.tasks.filter((task) => task.id !== id),
+            total: Math.max(0, state.total - 1),
+          }));
           return;
         }
         get().updateTask(id, {

@@ -88,6 +88,17 @@ def _wait_if_export_task_paused(task_id: str):
     _wait_if_task_paused(task_id)
 
 
+class ExportTaskCancelled(Exception):
+    """Raised inside an export worker when the task was cancelled mid-run."""
+
+
+def _export_task_aborted(task_id: str) -> bool:
+    """True when an export worker must stop: user cancelled or watchdog failed it."""
+    db.session.expire_all()
+    task = Task.query.get(task_id)
+    return bool(task and task.status in {'CANCELLED', 'FAILED'})
+
+
 def _set_image_task_progress(task: Task, progress: dict, upload_folder=None):
     """Keep restart metadata while updating live image-generation progress."""
     current = task.get_progress()
@@ -2516,7 +2527,9 @@ def generate_material_image_task(task_id: str, project_id: str, prompt: str,
                 project_id=actual_project_id,
                 filename=filename,
                 relative_path=relative_path,
-                url=image_url
+                url=image_url,
+                license_status='ai_generated',
+                source_note='AI 生成素材（生成时即取得使用授权）',
             )
             db.session.add(material)
             
@@ -4006,6 +4019,8 @@ def export_video_workspace_task(
     snapshot_hash: str,
     voice: str = 'zh-CN-XiaoxiaoNeural',
     rate: str = '+0%',
+    speed: float = 1.0,
+    tts_provider: str = 'edge',
     enable_ken_burns: bool = False,
     render_profile: str = 'final',
     source_proof_task_id: str | None = None,
@@ -4029,6 +4044,8 @@ def export_video_workspace_task(
             if not task:
                 raise ValueError('视频工作区导出任务不存在')
             _wait_if_export_task_paused(task_id)
+            if _export_task_aborted(task_id):
+                return
             task = Task.query.get(task_id)
             task.status = 'PROCESSING'
             _set_export_task_progress(task, {'total': 100, 'completed': 0, 'failed': 0, 'percent': 0, 'current_step': '准备视频工作区导出'})
@@ -4036,6 +4053,22 @@ def export_video_workspace_task(
             ffmpeg_path = app.config.get('FFMPEG_PATH', 'ffmpeg')
             if not check_ffmpeg_available(ffmpeg_path):
                 raise RuntimeError('FFmpeg 未安装或不在 PATH 中。请安装 FFmpeg 以使用视频导出功能。')
+            tts_provider = str(tts_provider or 'edge').strip().lower()
+            if tts_provider not in {'edge', 'fish_audio'}:
+                raise ValueError('tts_provider 仅支持 edge 或 fish_audio')
+            fish_api_key = ''
+            if tts_provider == 'fish_audio':
+                from models import Settings
+                fish_api_key = str(
+                    Settings.get_settings().fish_audio_api_key
+                    or app.config.get('FISH_AUDIO_API_KEY') or ''
+                ).strip()
+                if not fish_api_key:
+                    raise RuntimeError('Fish Audio API Key 未配置，请先在设置中保存并验证。')
+            try:
+                speed = max(0.7, min(float(speed), 1.2))
+            except (TypeError, ValueError):
+                speed = 1.0
             render_profile = str(render_profile or 'final').strip().lower()
             if render_profile not in {'proof', 'final'}:
                 raise ValueError('render_profile must be proof or final')
@@ -4085,6 +4118,8 @@ def export_video_workspace_task(
                 current = Task.query.get(task_id)
                 if current:
                     _wait_if_export_task_paused(task_id)
+                    if _export_task_aborted(task_id):
+                        raise ExportTaskCancelled()
                     _set_export_task_progress(current, {'total': 100, 'completed': percent, 'failed': 0, 'percent': percent, 'current_step': message})
                     db.session.commit()
 
@@ -4093,6 +4128,7 @@ def export_video_workspace_task(
             output_path = os.path.join(exports_dir, filename if filename.endswith('.mp4') else f'{filename}.mp4')
             quality_report = generate_narration_video(
                 pages_data=items, output_path=output_path, voice=voice, rate=rate,
+                speed=speed, tts_provider=tts_provider, fish_api_key=fish_api_key,
                 width=width, height=height, fps=fps,
                 enable_ken_burns=enable_ken_burns or any(
                     (item.get('animation') or {}).get('intensity') not in {None, 'none'}
@@ -4112,6 +4148,9 @@ def export_video_workspace_task(
             )
             task = Task.query.get(task_id)
             _wait_if_export_task_paused(task_id)
+            if _export_task_aborted(task_id):
+                return
+            task = Task.query.get(task_id)
             task.status = 'COMPLETED'
             task.completed_at = datetime.utcnow()
             _set_export_task_progress(task, {
@@ -4124,10 +4163,12 @@ def export_video_workspace_task(
                 'source_proof_task_id': source_proof_task_id,
             })
             db.session.commit()
+    except ExportTaskCancelled:
+        logger.info('视频工作区导出任务 %s 已取消', task_id)
     except Exception as exc:
         db.session.rollback()
         task = Task.query.get(task_id)
-        if task and task.status != 'PAUSED':
+        if task and task.status not in {'PAUSED', 'CANCELLED'}:
             task.status = 'FAILED'
             task.error_message = str(exc)
             task.completed_at = datetime.utcnow()
@@ -4156,13 +4197,33 @@ def _fish_tts_timeout_config(app, name: str, default: float) -> float:
     return float(os.environ.get(name) or app.config.get(name, default) or default)
 
 
-def _start_podcast_tts_watchdog(app, task_id: str, timeout_seconds: float):
+def _concat_audio_segments(paths, output_path, ffmpeg_path='ffmpeg') -> float:
+    """把多个音频块 concat 为一个文件，返回总时长（秒）。"""
+    from services.tts_video_service import get_audio_duration
+
+    concat_file = f'{output_path}.concat.txt'
+    with open(concat_file, 'w', encoding='utf-8', errors='replace') as handle:
+        for path in paths:
+            safe_path = os.path.abspath(path).replace('\\', '/').replace("'", "'\\''")
+            handle.write(f"file '{safe_path}'\n")
+    try:
+        _run_ffmpeg_command([
+            ffmpeg_path, '-y', '-f', 'concat', '-safe', '0', '-i', concat_file,
+            '-c:a', 'libmp3lame', '-b:a', '128k', output_path,
+        ], 'FFmpeg audio chunk concat failed')
+    finally:
+        if os.path.exists(concat_file):
+            os.remove(concat_file)
+    return get_audio_duration(output_path, ffmpeg_path)
+
+
+def _start_podcast_tts_watchdog(app, task_id: str, timeout_seconds: float, message: str | None = None):
     def fail_task():
         with app.app_context():
             task = Task.query.get(task_id)
             if task and task.status in {'PENDING', 'PROCESSING', 'RUNNING'}:
                 task.status = 'FAILED'
-                task.error_message = f'Fish Audio 播客合成超过 {timeout_seconds:g} 秒未完成'
+                task.error_message = message or f'播客合成超过 {timeout_seconds:g} 秒未完成'
                 task.completed_at = datetime.utcnow()
                 db.session.commit()
 
@@ -4185,28 +4246,67 @@ def export_podcast_workspace_task(
                 load_podcast_export_snapshot,
                 preflight_podcast_materials,
             )
-            from services.tts_video_service import generate_fish_narration_audio_sync
+            from services.tts_video_service import (
+                generate_fish_narration_audio_sync,
+                generate_narration_segments_audio_sync,
+            )
+            from services.voice_catalog_service import (
+                normalize_export_voice,
+                resolve_historical_voice,
+            )
 
             task = Task.query.get(task_id)
             if not task:
                 raise ValueError('播客工作区导出任务不存在')
+            _wait_if_export_task_paused(task_id)
+            if _export_task_aborted(task_id):
+                return
+            task = Task.query.get(task_id)
+            if not task:
+                return
             task.status = 'PROCESSING'
             _set_export_task_progress(task, {'total': 100, 'completed': 0, 'failed': 0, 'percent': 0, 'current_step': '准备播客工作区导出'})
             db.session.commit()
-            _wait_if_export_task_paused(task_id)
             snapshot = load_podcast_export_snapshot(snapshot_path, snapshot_hash)
             preflight_podcast_materials(project_id, snapshot)
-            if snapshot.get('export_config', {}).get('tts_provider') != 'fish_audio':
-                raise ValueError('播客工作区当前仅支持 Fish Audio 导出')
-            api_key = str(app.config.get('FISH_AUDIO_API_KEY') or os.environ.get('FISH_AUDIO_API_KEY') or '').strip()
-            if not api_key:
-                settings = Settings.get_settings()
-                api_key = str(settings.fish_audio_api_key or '').strip()
-            if not api_key:
-                raise ValueError('Fish Audio API Key 未配置，请先在设置中保存并验证')
+            # 角色声音归一化（与视频导出同一规则）：canonical ID（edge:/fish:）
+            # 剥前缀并推导引擎；任一角色为 fish → 整集走 Fish（混音要求同引擎），
+            # 否则走本地 edge（无 API Key 依赖，默认播客立即可导出）。
+            normalized_speakers = []
+            voice_warnings = []
+            tts_provider = 'edge'
+            podcast_language = str(snapshot.get('language') or 'zh')
+            for item in snapshot['speakers']:
+                # default/空 先解析为语言默认音色，再归一化前缀并推导引擎
+                canonical_ref, needs_confirmation = resolve_historical_voice(
+                    item.get('voice_ref'), language=podcast_language,
+                )
+                if needs_confirmation:
+                    voice_warnings.append(
+                        f'角色「{item.get("name") or item["speaker_id"]}」音色 '
+                        f'{item.get("voice_ref")!r} 无法解析，已回退默认音色'
+                    )
+                voice, provider = normalize_export_voice(canonical_ref)
+                if provider == 'fish_audio':
+                    tts_provider = 'fish_audio'
+                normalized_speakers.append({
+                    'id': item['speaker_id'], 'name': item['name'], 'voice': voice or '',
+                })
+            for warning in voice_warnings:
+                logger.warning('播客导出任务 %s：%s', task_id, warning)
+            speaker_voice_map = {item['id']: item['voice'] for item in normalized_speakers}
+            api_key = ''
+            if tts_provider == 'fish_audio':
+                if any(not item['voice'] for item in normalized_speakers):
+                    raise ValueError('Fish Audio 播客的每位角色都必须选择克隆声音')
+                api_key = str(app.config.get('FISH_AUDIO_API_KEY') or os.environ.get('FISH_AUDIO_API_KEY') or '').strip()
+                if not api_key:
+                    settings = Settings.get_settings()
+                    api_key = str(settings.fish_audio_api_key or '').strip()
+                if not api_key:
+                    raise ValueError('Fish Audio API Key 未配置，请先在设置中保存并验证')
             exports_dir = os.path.join(app.config['UPLOAD_FOLDER'], project_id, 'exports')
             working_dir = os.path.join(exports_dir, f'_podcast_workspace_{task_id}')
-            speakers = [{'id': item['speaker_id'], 'name': item['name'], 'voice': item['voice_ref']} for item in snapshot['speakers']]
             total_timeout = _fish_tts_timeout_config(app, 'FISH_AUDIO_TTS_TOTAL_TIMEOUT', 360)
             request_timeout = (
                 min(_fish_tts_timeout_config(app, 'FISH_AUDIO_TTS_CONNECT_TIMEOUT', 15), total_timeout),
@@ -4214,28 +4314,97 @@ def export_podcast_workspace_task(
             )
             _set_export_task_progress(task, {
                 'percent': 5,
-                'current_step': f'正在 Fish Audio 合成播客（超时 {total_timeout:g}s）',
+                'current_step': (
+                    f'正在 Fish Audio 合成播客（超时 {total_timeout:g}s）'
+                    if tts_provider == 'fish_audio'
+                    else '正在用本地语音合成播客'
+                ),
+                'voice_warnings': voice_warnings,
             })
             db.session.commit()
-            watchdog = _start_podcast_tts_watchdog(app, task_id, total_timeout)
+            watchdog_message = (
+                f'Fish Audio 播客合成超过 {total_timeout:g} 秒未完成'
+                if tts_provider == 'fish_audio'
+                else f'本地语音合成超过 {total_timeout:g} 秒未完成'
+            )
+            watchdog = _start_podcast_tts_watchdog(
+                app, task_id, total_timeout, message=watchdog_message,
+            )
             try:
-                audio_path, duration, _durations = _run_podcast_tts_with_timeout(
-                    lambda: generate_fish_narration_audio_sync(
-                        segments=snapshot['segments'], speakers=speakers, narration_mode=snapshot['format'],
-                        cache_dir=os.path.join(app.config['UPLOAD_FOLDER'], 'audio_cache'), working_dir=working_dir,
-                        api_key=api_key, model=app.config.get('FISH_AUDIO_MODEL', 's2.1-pro-free'),
-                        api_base=str(os.environ.get('FISH_AUDIO_API_BASE') or app.config.get('FISH_AUDIO_API_BASE', 'https://api.fish.audio')),
+                if tts_provider == 'fish_audio':
+                    # 长播客分块合成：Fish 单请求有字符上限，按预算分块后 concat
+                    from services.podcast_service import chunk_podcast_segments
+                    from services.tts_video_service import get_audio_duration
+
+                    chunks = chunk_podcast_segments(
+                        snapshot['segments'],
+                        speaker_ids=[item['id'] for item in normalized_speakers],
+                        max_chars=18000,
+                        mode=snapshot['format'],
+                    )
+                    chunk_audio_paths = []
+                    for chunk_index, chunk in enumerate(chunks):
+                        if _export_task_aborted(task_id):
+                            return
+                        chunk_working = os.path.join(working_dir, f'chunk_{chunk_index:02d}')
+                        chunk_path, _chunk_duration, _durations = _run_podcast_tts_with_timeout(
+                            lambda: generate_fish_narration_audio_sync(
+                                segments=chunk, speakers=normalized_speakers, narration_mode=snapshot['format'],
+                                cache_dir=os.path.join(app.config['UPLOAD_FOLDER'], 'audio_cache'), working_dir=chunk_working,
+                                api_key=api_key, model=app.config.get('FISH_AUDIO_MODEL', 's2.1-pro-free'),
+                                api_base=str(os.environ.get('FISH_AUDIO_API_BASE') or app.config.get('FISH_AUDIO_API_BASE', 'https://api.fish.audio')),
+                                ffmpeg_path=app.config.get('FFMPEG_PATH', 'ffmpeg'),
+                                request_timeout=request_timeout,
+                                total_timeout=total_timeout,
+                            ),
+                            total_timeout,
+                        )
+                        chunk_audio_paths.append(chunk_path)
+                        if len(chunks) > 1:
+                            _set_export_task_progress(task, {
+                                'percent': 5 + int(15 * (chunk_index + 1) / len(chunks)),
+                                'current_step': f'正在 Fish Audio 合成播客（{chunk_index + 1}/{len(chunks)} 段）',
+                            })
+                            db.session.commit()
+                    if len(chunk_audio_paths) == 1:
+                        audio_path = chunk_audio_paths[0]
+                        duration = get_audio_duration(audio_path, app.config.get('FFMPEG_PATH', 'ffmpeg'))
+                    else:
+                        audio_path = os.path.join(working_dir, 'narration_full.mp3')
+                        duration = _concat_audio_segments(
+                            chunk_audio_paths, audio_path, app.config.get('FFMPEG_PATH', 'ffmpeg'),
+                        )
+                else:
+                    # edge 本地合成：按角色映射段级音色，实现多人配音
+                    segments = []
+                    for segment in snapshot['segments']:
+                        enriched = dict(segment)
+                        fallback_voice = (
+                            normalized_speakers[0]['voice'] if normalized_speakers else ''
+                        )
+                        enriched['voice'] = speaker_voice_map.get(
+                            str(segment.get('speaker_id') or ''), '',
+                        ) or fallback_voice
+                        if not speaker_voice_map.get(str(segment.get('speaker_id') or '')):
+                            logger.warning(
+                                '播客导出任务 %s：片段 %s 的角色 %s 未配置音色，'
+                                '已使用第一个角色的音色',
+                                task_id, segment.get('segment_id'), segment.get('speaker_id'),
+                            )
+                        segments.append(enriched)
+                    audio_path, duration, _durations = generate_narration_segments_audio_sync(
+                        segments=segments,
+                        cache_dir=os.path.join(app.config['UPLOAD_FOLDER'], 'audio_cache'),
+                        working_dir=working_dir,
+                        default_voice=normalized_speakers[0]['voice'] if normalized_speakers else '',
+                        rate='+0%',
                         ffmpeg_path=app.config.get('FFMPEG_PATH', 'ffmpeg'),
-                        request_timeout=request_timeout,
-                        total_timeout=total_timeout,
-                    ),
-                    total_timeout,
-                )
+                    )
             finally:
-                watchdog.cancel()
+                if watchdog:
+                    watchdog.cancel()
             _wait_if_export_task_paused(task_id)
-            task = Task.query.get(task_id)
-            if task and task.status == 'FAILED':
+            if _export_task_aborted(task_id):
                 return
             os.makedirs(exports_dir, exist_ok=True)
             output_path = os.path.join(exports_dir, filename)
@@ -4270,16 +4439,18 @@ def export_podcast_workspace_task(
             sidecars = write_podcast_export_sidecars(output_path=output_path, snapshot=snapshot, cover_path=cover_path)
             peak_db = check_podcast_audio_peak(output_path, app.config.get('FFMPEG_PATH', 'ffmpeg'))
             _wait_if_export_task_paused(task_id)
+            if _export_task_aborted(task_id):
+                return
             task = Task.query.get(task_id)
             task.status = 'COMPLETED'
             task.completed_at = datetime.utcnow()
-            _set_export_task_progress(task, {'total': 100, 'completed': 100, 'failed': 0, 'percent': 100, 'current_step': '✓ 播客工作区导出完成', 'download_url': f'/files/{project_id}/exports/{os.path.basename(output_path)}', 'workspace_version': snapshot['workspace_version'], 'audio_mix_manifest_hash': (snapshot.get('audio_mix') or {}).get('manifest_hash'), 'duration_seconds': duration, 'peak_db': peak_db, 'sidecars': {key: f'/files/{project_id}/exports/{os.path.basename(value)}' for key, value in sidecars.items()}})
+            _set_export_task_progress(task, {'total': 100, 'completed': 100, 'failed': 0, 'percent': 100, 'current_step': '✓ 播客工作区导出完成', 'download_url': f'/files/{project_id}/exports/{os.path.basename(output_path)}', 'workspace_version': snapshot['workspace_version'], 'audio_mix_manifest_hash': (snapshot.get('audio_mix') or {}).get('manifest_hash'), 'duration_seconds': duration, 'peak_db': peak_db, 'sidecars': {key: f'/files/{project_id}/exports/{os.path.basename(value)}' for key, value in sidecars.items()}, 'voice_warnings': voice_warnings})
             db.session.commit()
     except Exception as exc:
         with app.app_context():
             db.session.rollback()
             task = Task.query.get(task_id)
-            if task and task.status != 'PAUSED':
+            if task and task.status not in {'PAUSED', 'CANCELLED'}:
                 task.status = 'FAILED'
                 task.error_message = str(exc)
                 task.completed_at = datetime.utcnow()

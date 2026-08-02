@@ -13,7 +13,7 @@ import type { Project, ProjectDashboardStats } from '@/types';
  * - 失败保留快照，不切换空页面。
  */
 
-const CACHE_SCHEMA_VERSION = 2;  // 阶段7：summary 新增 cover_url/title 后旧快照失效
+const CACHE_SCHEMA_VERSION = 3;  // 完成状态改为必须存在图片或原生内容页
 const REFRESH_AFTER_MS = 30_000;
 
 export interface CatalogPageKey {
@@ -30,7 +30,7 @@ export interface ProjectCatalogSnapshot {
   fetchedAt: number;
 }
 
-const pageKeyOf = (key: CatalogPageKey): string =>
+export const catalogPageKeyOf = (key: CatalogPageKey): string =>
   JSON.stringify([key.limit, key.offset, key.status ?? '', key.workspace ?? '']);
 
 interface ProjectCatalogState {
@@ -78,13 +78,13 @@ export const useProjectCatalogStore = create<ProjectCatalogState>()(
       lastFetchedAt: {},
 
       getSnapshot: (key) => {
-        const snapshot = get().snapshots[pageKeyOf(key)];
+        const snapshot = get().snapshots[catalogPageKeyOf(key)];
         if (!snapshot) return null;
         return snapshot;
       },
 
       loadCatalog: async (key, opts) => {
-        const pageKey = pageKeyOf(key);
+        const pageKey = catalogPageKeyOf(key);
         const snapshot = get().snapshots[pageKey];
         const existing = get().inflight[pageKey];
         if (existing) {
@@ -96,16 +96,9 @@ export const useProjectCatalogStore = create<ProjectCatalogState>()(
         if (
           !opts?.force
           && snapshot
-          && now - (snapshot.fetchedAt ?? 0) < REFRESH_AFTER_MS
+          && lastFetched > 0
+          && now - lastFetched < REFRESH_AFTER_MS
         ) {
-          // 快照新鲜：只更新时间戳，不整墙重渲染
-          set({
-            snapshots: {
-              ...get().snapshots,
-              [pageKey]: { ...snapshot, fetchedAt: now },
-            },
-            lastFetchedAt: { ...get().lastFetchedAt, [pageKey]: now },
-          });
           return snapshot;
         }
         if (snapshot && now - lastFetched < 1_000) {
@@ -136,19 +129,20 @@ export const useProjectCatalogStore = create<ProjectCatalogState>()(
           set({ lastFetchedAt: {} });
           return;
         }
-        const key = pageKeyOf(pageKey);
+        const key = catalogPageKeyOf(pageKey);
         set({ lastFetchedAt: { ...get().lastFetchedAt, [key]: 0 } });
       },
 
       refreshOnFocus: (key) => {
-        const pageKey = pageKeyOf(key);
+        const pageKey = catalogPageKeyOf(key);
         const snapshot = get().snapshots[pageKey];
         const now = Date.now();
         if (!snapshot) {
           void get().loadCatalog(key);
           return;
         }
-        if (now - (snapshot.fetchedAt ?? 0) >= REFRESH_AFTER_MS) {
+        const lastFetched = get().lastFetchedAt[pageKey] ?? 0;
+        if (!lastFetched || now - lastFetched >= REFRESH_AFTER_MS) {
           void get().loadCatalog(key, { force: true });
         }
       },
@@ -156,8 +150,10 @@ export const useProjectCatalogStore = create<ProjectCatalogState>()(
     {
       name: `project-catalog-v${CACHE_SCHEMA_VERSION}`,
       partialize: (state) => ({
-        // 只持久化摘要快照，不存 base64/正文/密钥/日志
+        // 只持久化摘要快照与新鲜度时间戳（lastFetchedAt），不存 base64/正文/密钥/日志。
+        // 刷新页面后仍可命中 30s 新鲜窗口，避免持久化快照的首屏渲染退化。
         snapshots: state.snapshots,
+        lastFetchedAt: state.lastFetchedAt,
       }),
     },
   ),

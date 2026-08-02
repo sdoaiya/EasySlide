@@ -157,6 +157,25 @@ describe('History EasySlide clone', () => {
     await waitFor(() => expect(endpointMocks.listProjects).toHaveBeenCalledWith(4, 0, undefined, undefined));
   });
 
+  it('shows a persisted snapshot immediately but still calibrates it after restart and invalidation', async () => {
+    const key = { limit: 4, offset: 0, status: null, workspace: null } as const;
+    const staleProject = { project_id: 'stale', project_title: '本地快照', status: 'DRAFT', pages: [] } as any;
+    useProjectCatalogStore.setState({
+      snapshots: { '[4,0,"",""]': { projects: [staleProject], total: 1, stats: null, fetchedAt: Date.now() } },
+      inflight: {},
+      lastFetchedAt: {},
+    });
+    endpointMocks.listProjects.mockResolvedValue({ data: { projects: [], total: 0 } });
+    const callsBefore = endpointMocks.listProjects.mock.calls.length;
+
+    await useProjectCatalogStore.getState().loadCatalog(key);
+    expect(endpointMocks.listProjects).toHaveBeenCalledTimes(callsBefore + 1);
+
+    useProjectCatalogStore.getState().invalidate(key);
+    await useProjectCatalogStore.getState().loadCatalog(key);
+    expect(endpointMocks.listProjects).toHaveBeenCalledTimes(callsBefore + 2);
+  });
+
   it('keeps the original list layout on /history', async () => {
     endpointMocks.listProjects.mockResolvedValueOnce({
       data: {

@@ -275,6 +275,35 @@ class TestPublish:
             assert second.published_version_id == first.published_version_id
             assert WorkspaceVersion.query.filter_by(workspace_id=workspace.id).count() == 1
 
+    def test_publish_video_freezes_wizard_voice_into_settings(self, app):
+        from models import Project, ProjectWorkspace, db
+        from services.workspace_generation_service import (
+            create_generation_run,
+            publish_run,
+            set_candidate,
+            transition_run,
+        )
+
+        with app.app_context():
+            project = db.session.get(Project, _project_with_ppt(app))
+            run = create_generation_run(
+                project, target_workspace_kind='video', source_kind='ppt', mode='ai_adapt',
+                options={'voice_profile_id': 'edge:zh-CN-YunxiNeural'},
+                page_ids=[],
+            )
+            candidate = _video_candidate(json.loads(project.content_spine.document_json))
+            set_candidate(run, candidate)
+            transition_run(run, 'RUNNING')
+            transition_run(run, 'REVIEW_READY')
+            db.session.commit()
+
+            publish_run(run, project)
+            workspace = db.session.get(ProjectWorkspace, run.target_workspace_id)
+            settings = json.loads(workspace.settings_json or '{}')
+            assert settings['voice_config']['voice'] == 'edge:zh-CN-YunxiNeural'
+            # 候选富化字段不下沉到正式 V1 文档（语音由 settings 承载）
+            assert 'voice' not in json.loads(workspace.document_json)
+
     def test_publish_without_candidate_rejected(self, app):
         from models import Project, db
         from services.workspace_generation_service import (

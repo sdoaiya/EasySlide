@@ -275,6 +275,29 @@ def resolve_historical_voice(raw, language: str = 'zh') -> tuple[str, bool]:
     return DEFAULT_VOICE_BY_LANGUAGE.get(lang, DEFAULT_VOICE_BY_LANGUAGE['zh']), True
 
 
+def normalize_export_voice(raw) -> tuple[str | None, str | None]:
+    """导出音色归一化：canonical ID → ``(裸 voice, tts_provider)``。
+
+    ``edge:`` / ``fish:`` 前缀同时推导 TTS 引擎；裸音色名原样透传
+    （provider 未知，由调用方决定）；空值返回 ``(None, None)``。
+    带前缀但无法解析的值返回 ``(None, None)``，由调用方回退默认，
+    不把畸形 canonical id 当裸音色透传给 TTS。
+    经典导出与工作区导出共用此规则，保证同一音色两种链路产出一致。
+    """
+    value = str(raw or '').strip()
+    canonical = resolve_voice_id(value) if value else None
+    if canonical:
+        provider, _, upstream = canonical.partition(':')
+        return upstream, 'fish_audio' if provider == 'fish' else 'edge'
+    if value:
+        if value.lower() == 'default':
+            return None, None
+        if value.startswith(('edge:', 'fish:')):
+            return None, None
+        return value, None
+    return None, None
+
+
 def get_voice_detail(voice_id: str) -> dict | None:
     """Return one catalog item by canonical voice id, or None."""
     for item in get_voice_catalog():

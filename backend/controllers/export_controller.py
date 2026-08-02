@@ -1558,6 +1558,19 @@ def export_video(project_id):
         )
 
         voice = str(data.get('voice') or '').strip()
+        # canonical ID（edge:/fish: 前缀）归一化为裸 ID 并推导 TTS 引擎，
+        # 与工作区导出共用 voice_catalog 的统一规则
+        from services.voice_catalog_service import normalize_export_voice
+
+        canonical_voice, canonical_provider = normalize_export_voice(voice)
+        if canonical_provider:
+            tts_provider = canonical_provider
+        if canonical_voice:
+            voice = canonical_voice
+        elif voice and ':' in voice:
+            # 带前缀但无法解析（拼写错误/未知音色）——不把畸形 ID 透传给 TTS，
+            # 回退为未设置，由引擎使用默认音色
+            voice = ''
         rate = data.get('rate', current_app.config.get('TTS_DEFAULT_RATE', '+0%'))
         try:
             speed = float(data.get('speed', 1.0))

@@ -588,6 +588,9 @@ export interface Project {
   project_id: string;  // 后端返回 project_id
   id?: string;         // 前端使用的别名
   cover_url?: string | null;  // 项目摘要封面（阶段3 ProjectSummary）
+  dashboard_status?: 'completed' | 'generating' | 'in_progress';
+  page_count?: number;
+  active_task_count?: number;
   project_title?: string;
   idea_prompt: string;
   outline_text?: string;  // 用户输入的大纲文本（用于outline类型）
@@ -668,6 +671,7 @@ export interface Task {
   error?: string; // 别名
   created_at?: string;
   completed_at?: string;
+  dismissed_at?: string | null;
 }
 
 // 创建项目请求

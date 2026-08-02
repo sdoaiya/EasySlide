@@ -184,6 +184,13 @@ vi.mock('@/components/shared', () => ({
   TextStyleSelector: () => null,
   useToast: () => ({ show: mocks.toastShow, ToastContainer: () => null }),
   useConfirm: () => ({ confirm: vi.fn(), ConfirmDialog: null }),
+  SegmentedControl: ({ options, value, onChange, ariaLabel }: any) => (
+    <div role="radiogroup" aria-label={ariaLabel}>{options.map((option: any) => (
+      <button key={option.value} type="button" role="radio" aria-label={option.label} aria-checked={option.value === value} onClick={() => onChange(option.value)}>{option.label}</button>
+    ))}</div>
+  ),
+  VoicePicker: () => <div>声音选择器</div>,
+  VoiceComparisonDialog: () => null,
 }));
 
 vi.mock('@/components/outline/OutlineCard', () => ({

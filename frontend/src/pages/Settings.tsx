@@ -2416,9 +2416,10 @@ export const Settings: React.FC<SettingsProps> = ({ embedded = false }) => {
                 <h3 className="text-sm font-semibold">人物声线资产库</h3>
                 <div className="mt-2 divide-y divide-[var(--app-border)]">
                   {fishVoiceAssets.map((asset) => (
-                    <div key={asset.id} className="grid gap-3 py-4 sm:grid-cols-[48px_minmax(0,1fr)_auto]">
-                      <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-full bg-[var(--app-surface-secondary)] text-sm font-semibold text-[var(--app-text-secondary)]">
-                        {/^https?:\/\/|^data:image\//.test(asset.avatar) ? <img src={asset.avatar} alt="" className="h-full w-full object-cover" /> : asset.avatar || asset.name.slice(0, 1)}
+                    <div key={asset.id} className="grid gap-3 py-4 sm:grid-cols-[44px_minmax(0,1fr)_auto]">
+                      <div title={asset.name} className="relative flex h-11 w-11 items-center justify-center overflow-hidden rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface-secondary)] text-[var(--app-text-secondary)] shadow-[var(--app-shadow-control)]">
+                        {/^(https?:\/\/|data:image\/)/.test(asset.avatar) ? <img src={asset.avatar} alt="" className="h-full w-full object-cover" /> : <Mic2 size={18} aria-hidden="true" />}
+                        <span aria-hidden="true" className="absolute bottom-1 right-1 h-1.5 w-1.5 rounded-full bg-[var(--app-success)] ring-2 ring-[var(--app-surface-secondary)]" />
                       </div>
                       <div className="grid min-w-0 gap-2 sm:grid-cols-2">
                         <input aria-label={`角色名称 ${asset.id}`} value={asset.name} onChange={(event) => updateFishVoiceAsset(asset.id, { name: event.target.value })} placeholder="角色名称" className="h-9 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-sm" />

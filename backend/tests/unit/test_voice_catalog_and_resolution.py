@@ -7,6 +7,9 @@
 当前没有目录服务与解析层，本套测试必须失败。
 """
 
+from pathlib import Path
+from unittest.mock import patch
+
 import pytest
 
 
@@ -37,6 +40,24 @@ class TestVoiceCatalogApi:
         item = response.get_json()['data']
         assert item['voice_id'] == 'edge:zh-CN-XiaoxiaoNeural'
 
+    def test_voice_preview_uses_custom_text(self, client, tmp_path):
+        """A/B 对比弹窗的共用文案通过 text 参数透传到试听合成。"""
+        def _fake_synthesize(text, output_path, **kwargs):
+            Path(output_path).write_bytes(b'ID3-edge-preview')
+            return output_path
+
+        with patch(
+            'services.tts_video_service.generate_tts_audio_sync',
+            side_effect=_fake_synthesize,
+        ) as synthesize:
+            response = client.get(
+                '/api/voices/edge:zh-CN-XiaoxiaoNeural/preview',
+                query_string={'text': '这是 A/B 对比的共用试听文案。'},
+            )
+        assert response.status_code == 200
+        assert response.data == b'ID3-edge-preview'
+        assert '这是 A/B 对比的共用试听文案。' in synthesize.call_args[0][0]
+
 
 class TestVoiceResolution:
     def test_canonical_voice_id_contract(self):
@@ -62,3 +83,41 @@ class TestVoiceResolution:
         resolved, needs_confirmation = resolve_historical_voice(None, language='en')
         assert resolved.startswith(('edge:', 'fish:'))
         assert needs_confirmation is True
+
+
+class TestNormalizeExportVoice:
+    """导出音色归一化：canonical 剥前缀；非法前缀值拒绝而非透传。"""
+
+    def test_canonical_edge_strips_prefix(self):
+        from services.voice_catalog_service import normalize_export_voice
+
+        assert normalize_export_voice('edge:zh-CN-XiaoxiaoNeural') == (
+            'zh-CN-XiaoxiaoNeural', 'edge',
+        )
+
+    def test_canonical_fish_strips_prefix(self):
+        from services.voice_catalog_service import normalize_export_voice
+
+        assert normalize_export_voice('fish:clone-reference-123') == (
+            'clone-reference-123', 'fish_audio',
+        )
+
+    def test_bare_voice_passes_through_with_unknown_provider(self):
+        from services.voice_catalog_service import normalize_export_voice
+
+        assert normalize_export_voice('zh-CN-YunxiNeural') == ('zh-CN-YunxiNeural', None)
+
+    def test_empty_and_default_return_none(self):
+        from services.voice_catalog_service import normalize_export_voice
+
+        assert normalize_export_voice('') == (None, None)
+        assert normalize_export_voice(None) == (None, None)
+        assert normalize_export_voice('default') == (None, None)
+
+    def test_unresolvable_prefixed_value_is_rejected_not_passed_through(self):
+        """修复：带前缀但无法解析的值不得以裸音色名透传给 TTS。"""
+        from services.voice_catalog_service import normalize_export_voice
+
+        assert normalize_export_voice('fish:') == (None, None)
+        assert normalize_export_voice('edge:badvoice') == (None, None)
+        assert normalize_export_voice('fish:short') == (None, None)  # 不足 8 字符

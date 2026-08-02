@@ -28,6 +28,7 @@ const wizardModule = { PptToVideoWizard };
 
 vi.mock('@/api/endpoints', () => ({
   getProject: mocks.getProject,
+  getSettings: vi.fn().mockResolvedValue({ data: { fish_audio_voice_assets: [] } }),
 }));
 
 // VoicePicker 的目录请求：契约测试只关心“无手填框”，目录数据 stub 为空即可

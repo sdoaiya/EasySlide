@@ -1,12 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { act } from '@testing-library/react'
 import { useExportTasksStore } from '@/store/useExportTasksStore'
-import { getTaskStatus, pauseTask as pauseTaskApi, resumeTask as resumeTaskApi } from '@/api/endpoints'
+import { deleteTask as deleteTaskApi, getTaskStatus, pauseTask as pauseTaskApi, resumeTask as resumeTaskApi } from '@/api/endpoints'
 
 vi.mock('@/api/endpoints', () => ({
   getTaskStatus: vi.fn(),
   pauseTask: vi.fn(),
   resumeTask: vi.fn(),
+  deleteTask: vi.fn(),
 }))
 
 describe('useExportTasksStore', () => {
@@ -20,6 +21,7 @@ describe('useExportTasksStore', () => {
   })
 
   it('clears completed export tasks only for the selected project', () => {
+    useExportTasksStore.setState({ total: 4 })
     act(() => {
       useExportTasksStore.getState().addTask({
         id: 'completed-current',
@@ -60,6 +62,8 @@ describe('useExportTasksStore', () => {
       'active-current',
       'completed-other',
     ])
+    // 按移除数量同步减少 total
+    expect(useExportTasksStore.getState().total).toBe(2)
   })
 
   it('keeps the existing global clear behavior when no project is provided', () => {
@@ -141,6 +145,80 @@ describe('useExportTasksStore', () => {
     expect(useExportTasksStore.getState().tasks.map(task => task.id)).toEqual([
       'active-current',
     ])
+  })
+
+  it('removes a server task only after persistent deletion succeeds', async () => {
+    vi.mocked(deleteTaskApi).mockResolvedValue({ data: { task_id: 'task-1', deleted: true } } as any)
+    useExportTasksStore.setState({ total: 1 })
+    useExportTasksStore.getState().addTask({
+      id: 'task-1', taskId: 'task-1', projectId: 'project-a', type: 'video', status: 'PAUSED',
+    })
+
+    await useExportTasksStore.getState().removeTask('task-1')
+
+    expect(deleteTaskApi).toHaveBeenCalledWith('project-a', 'task-1')
+    expect(useExportTasksStore.getState().tasks).toEqual([])
+    expect(useExportTasksStore.getState().total).toBe(0)
+  })
+
+  it('keeps a server task visible and polling when persistent deletion fails, surfacing the error', async () => {
+    vi.useFakeTimers()
+    vi.mocked(deleteTaskApi).mockRejectedValue(new Error('network error'))
+    vi.mocked(getTaskStatus)
+      .mockResolvedValueOnce({ data: { status: 'RUNNING' } } as any)
+      .mockResolvedValueOnce({ data: { status: 'COMPLETED' } } as any)
+    useExportTasksStore.getState().addTask({
+      id: 'task-1', taskId: 'task-1', projectId: 'project-a', type: 'video', status: 'RUNNING',
+    })
+
+    // 先挂上轮询定时器
+    await useExportTasksStore.getState().pollTask('task-1', 'project-a', 'task-1')
+
+    // 删除失败：任务保留、错误被 surface（store 抛错 + errorMessage 标志）、轮询继续
+    await expect(useExportTasksStore.getState().removeTask('task-1')).rejects.toThrow('network error')
+    expect(useExportTasksStore.getState().tasks).toHaveLength(1)
+    expect(useExportTasksStore.getState().tasks[0].status).toBe('RUNNING')
+    expect(useExportTasksStore.getState().tasks[0].errorMessage).toBe('Network error. Please check your connection.')
+
+    // 轮询定时器未被清理：下一次轮询仍会发生
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(getTaskStatus).toHaveBeenCalledTimes(2)
+    expect(useExportTasksStore.getState().tasks[0].status).toBe('COMPLETED')
+  })
+
+  it('removes a dismissed server task locally when polling gets a 404 instead of marking it failed', async () => {
+    vi.mocked(getTaskStatus).mockRejectedValue({ response: { status: 404, data: {} } })
+    useExportTasksStore.setState({ total: 1 })
+    useExportTasksStore.getState().addTask({
+      id: 'task-1', taskId: 'task-1', projectId: 'project-a', type: 'video', status: 'RUNNING',
+    })
+
+    await useExportTasksStore.getState().pollTask('task-1', 'project-a', 'task-1')
+
+    expect(useExportTasksStore.getState().tasks).toEqual([])
+    expect(useExportTasksStore.getState().total).toBe(0)
+  })
+
+  it('keeps local PAUSED when a late in-flight poll response arrives instead of resurrecting RUNNING', async () => {
+    vi.useFakeTimers()
+    let resolveStatus!: (value: any) => void
+    vi.mocked(getTaskStatus).mockImplementation(() => new Promise((resolve) => { resolveStatus = resolve }))
+    useExportTasksStore.getState().addTask({
+      id: 'export-1', taskId: 'task-1', projectId: 'project-a', type: 'pptx', status: 'RUNNING',
+    })
+
+    const pollPromise = useExportTasksStore.getState().pollTask('export-1', 'project-a', 'task-1')
+    // 请求在途时用户暂停（pauseTask 成功后本地状态先变为 PAUSED）
+    act(() => { useExportTasksStore.getState().updateTask('export-1', { status: 'PAUSED' }) })
+    await act(async () => {
+      resolveStatus({ data: { status: 'RUNNING', task_id: 'task-1', project_id: 'project-a' } })
+      await pollPromise
+    })
+
+    // 本地状态被保留，且未重新挂轮询定时器
+    expect(useExportTasksStore.getState().tasks[0].status).toBe('PAUSED')
+    await vi.advanceTimersByTimeAsync(4000)
+    expect(getTaskStatus).toHaveBeenCalledTimes(1)
   })
 
   it('pauses a running task and stops its scheduled polling', async () => {

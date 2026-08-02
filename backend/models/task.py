@@ -21,6 +21,7 @@ class Task(db.Model):
     error_message = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     completed_at = db.Column(db.DateTime, nullable=True)
+    dismissed_at = db.Column(db.DateTime, nullable=True)
     
     # Relationships
     project = db.relationship('Project', back_populates='tasks')
@@ -60,6 +61,7 @@ class Task(db.Model):
             'error_message': self.error_message,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'completed_at': self.completed_at.isoformat() if self.completed_at else None,
+            'dismissed_at': self.dismissed_at.isoformat() if self.dismissed_at else None,
         }
     
     def __repr__(self):

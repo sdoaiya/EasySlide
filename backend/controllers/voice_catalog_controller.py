@@ -40,7 +40,11 @@ def get_voice(voice_id: str):
 
 @voice_catalog_bp.get('/voices/<voice_id>/preview')
 def preview_voice(voice_id: str):
-    """合成一句试听音频：Edge 用本地 TTS，Fish 委托 Fish Audio API。"""
+    """合成一句试听音频：Edge 用本地 TTS，Fish 委托 Fish Audio API。
+
+    可选 ``text`` 参数用于 A/B 对比等场景共用同一段试听文案；
+    缺失时使用默认示例文案。
+    """
     import os
     import tempfile
 
@@ -54,7 +58,7 @@ def preview_voice(voice_id: str):
     item = get_voice_detail(canonical)
     if not item:
         return not_found('Voice')
-    text = '你好，欢迎使用 EasySlide。这是声音试听示例。'
+    text = str(request.args.get('text') or '').strip()[:200] or '你好，欢迎使用 EasySlide。这是声音试听示例。'
     if item['provider'] == 'edge':
         from services.tts_video_service import generate_tts_audio_sync
         output_path = os.path.join(

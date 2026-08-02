@@ -17,16 +17,19 @@ export function PptToVideoWizard(props: {
   isOpen: boolean;
   onClose: () => void;
   onCreated?: () => void;
+  /** 目标工作区：video（默认）或 podcast（从 PPT 转播客） */
+  targetKind?: 'video' | 'podcast';
 }) {
   if (!props.isOpen) return null;
   return <PptToVideoWizardInner {...props} />;
 }
 
-function PptToVideoWizardInner({ projectId, isOpen, onClose, onCreated }: {
+function PptToVideoWizardInner({ projectId, isOpen, onClose, onCreated, targetKind = 'video' }: {
   projectId: string;
   isOpen: boolean;
   onClose: () => void;
   onCreated?: () => void;
+  targetKind?: 'video' | 'podcast';
 }) {
   const navigate = useNavigate();
   const project = useContentProjectStore((state) => state.project);
@@ -35,13 +38,14 @@ function PptToVideoWizardInner({ projectId, isOpen, onClose, onCreated }: {
   const [scriptSource, setScriptSource] = useState<'confirmed_narration' | 'page'>('confirmed_narration');
   const [visualStrategy, setVisualStrategy] = useState<'reuse_ppt' | 'generate'>('reuse_ppt');
   const [aspectRatio, setAspectRatio] = useState<'16:9' | '9:16' | '1:1'>('16:9');
+  const [podcastFormat, setPodcastFormat] = useState<'single' | 'dialogue'>('dialogue');
   // 声音走统一 VoicePicker；空值 = 跟随全局默认（后端解析为实际 canonical ID）
   const [voiceProfileId, setVoiceProfileId] = useState('');
   const [expressivenessId, setExpressivenessId] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [pages, setPages] = useState<Page[]>([]);
-  const videoWorkspace = selectContentWorkspace(project, 'video');
+  const videoWorkspace = selectContentWorkspace(project, targetKind);
   const hasFormalVersion = Boolean(videoWorkspace && videoWorkspace.state !== 'uninitialized');
 
   useEffect(() => {
@@ -58,12 +62,13 @@ function PptToVideoWizardInner({ projectId, isOpen, onClose, onCreated }: {
     setScriptSource('confirmed_narration');
     setVisualStrategy('reuse_ppt');
     setAspectRatio('16:9');
+    setPodcastFormat('dialogue');
     setVoiceProfileId('');
     setExpressivenessId('');
     setBusy(false);
     setMessage('');
     return () => { active = false; };
-  }, [isOpen, projectId]);
+  }, [isOpen, projectId, targetKind]);
 
   const togglePage = (pageId: string) => {
     setPageIds((current) => {
@@ -82,7 +87,7 @@ function PptToVideoWizardInner({ projectId, isOpen, onClose, onCreated }: {
     setBusy(true);
     setMessage('');
     const run = await createRun(projectId, {
-      targetWorkspaceKind: 'video',
+      targetWorkspaceKind: targetKind,
       sourceKind: 'ppt',
       mode: 'ai_adapt',
       operation: 'generate',
@@ -91,6 +96,7 @@ function PptToVideoWizardInner({ projectId, isOpen, onClose, onCreated }: {
         script_source: scriptSource,
         visual_strategy: visualStrategy,
         aspect_ratio: aspectRatio,
+        format: podcastFormat,
         voice_profile_id: voiceProfileId,
         expressiveness_id: expressivenessId,
       },
@@ -98,7 +104,7 @@ function PptToVideoWizardInner({ projectId, isOpen, onClose, onCreated }: {
     if (run?.run_id) {
       onCreated?.();
       onClose();
-      navigate(`/project/${projectId}/video/review/${run.run_id}`);
+      navigate(`/project/${projectId}/${targetKind}/review/${run.run_id}`);
     } else {
       setMessage(error || '创建生成运行失败');
     }
@@ -111,7 +117,7 @@ function PptToVideoWizardInner({ projectId, isOpen, onClose, onCreated }: {
       <section className="relative max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)] p-5 shadow-[var(--app-shadow-floating)]">
         <div className="flex items-center gap-2">
           <Film size={18} className="text-[var(--app-accent)]" aria-hidden="true" />
-          <h2 className="text-lg font-semibold">从 PPT 转换视频</h2>
+          <h2 className="text-lg font-semibold">{targetKind === 'podcast' ? '从 PPT 转换播客' : '从 PPT 转换视频'}</h2>
         </div>
         {hasFormalVersion && (
           <p className="mt-2 rounded-[var(--app-radius-control)] bg-[var(--app-surface-muted)] p-3 text-xs leading-5 text-[var(--app-text-secondary)]">
@@ -142,33 +148,45 @@ function PptToVideoWizardInner({ projectId, isOpen, onClose, onCreated }: {
             </select>
           </label>
 
-          <label className="grid gap-1.5 text-xs font-medium text-[var(--app-text-secondary)]">
-            <span>画面策略</span>
-            <select value={visualStrategy} onChange={(event) => setVisualStrategy(event.target.value as typeof visualStrategy)} className="h-9 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-sm">
-              <option value="reuse_ppt">复用 PPT 页面画面</option>
-              <option value="generate">生成新画面</option>
-            </select>
-          </label>
+          {targetKind === 'podcast' ? (
+            <label className="grid gap-1.5 text-xs font-medium text-[var(--app-text-secondary)]">
+              <span>节目形式</span>
+              <select value={podcastFormat} onChange={(event) => setPodcastFormat(event.target.value as 'single' | 'dialogue')} className="h-9 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-sm">
+                <option value="dialogue">多人对话（主持人 + 嘉宾）</option>
+                <option value="single">单人播讲</option>
+              </select>
+            </label>
+          ) : (
+            <>
+              <label className="grid gap-1.5 text-xs font-medium text-[var(--app-text-secondary)]">
+                <span>画面策略</span>
+                <select value={visualStrategy} onChange={(event) => setVisualStrategy(event.target.value as typeof visualStrategy)} className="h-9 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-sm">
+                  <option value="reuse_ppt">复用 PPT 页面画面</option>
+                  <option value="generate">生成新画面</option>
+                </select>
+              </label>
 
-          <div className="grid grid-cols-2 gap-3">
-            <label className="grid gap-1.5 text-xs font-medium text-[var(--app-text-secondary)]">
-              <span>画幅</span>
-              <select value={aspectRatio} onChange={(event) => setAspectRatio(event.target.value as typeof aspectRatio)} className="h-9 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-sm">
-                <option value="16:9">16:9</option>
-                <option value="9:16">9:16</option>
-                <option value="1:1">1:1</option>
-              </select>
-            </label>
-            <label className="grid gap-1.5 text-xs font-medium text-[var(--app-text-secondary)]">
-              <span>表现力</span>
-              <select value={expressivenessId} onChange={(event) => setExpressivenessId(event.target.value)} className="h-9 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-sm">
-                <option value="">跟随默认</option>
-                <option value="expression.warm.v1">温暖</option>
-                <option value="expression.energetic.v1">活力</option>
-                <option value="expression.soft.v1">轻柔</option>
-              </select>
-            </label>
-          </div>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="grid gap-1.5 text-xs font-medium text-[var(--app-text-secondary)]">
+                  <span>画幅</span>
+                  <select value={aspectRatio} onChange={(event) => setAspectRatio(event.target.value as typeof aspectRatio)} className="h-9 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-sm">
+                    <option value="16:9">16:9</option>
+                    <option value="9:16">9:16</option>
+                    <option value="1:1">1:1</option>
+                  </select>
+                </label>
+                <label className="grid gap-1.5 text-xs font-medium text-[var(--app-text-secondary)]">
+                  <span>表现力</span>
+                  <select value={expressivenessId} onChange={(event) => setExpressivenessId(event.target.value)} className="h-9 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-sm">
+                    <option value="">跟随默认</option>
+                    <option value="expression.warm.v1">温暖</option>
+                    <option value="expression.energetic.v1">活力</option>
+                    <option value="expression.soft.v1">轻柔</option>
+                  </select>
+                </label>
+              </div>
+            </>
+          )}
 
           <label className="grid gap-1.5 text-xs font-medium text-[var(--app-text-secondary)]">
             <span>声音</span>

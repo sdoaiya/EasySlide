@@ -1,7 +1,24 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { NarrationInspector } from '@/components/narration/NarrationInspector';
+
+vi.mock('@/api/client', () => ({
+  getStaticAssetUrl: (path: string) => path,
+  getImageUrl: (path: string) => path,
+  apiClient: {
+    get: vi.fn().mockResolvedValue({
+      data: {
+        data: {
+          voices: [
+            { voice_id: 'edge:zh-CN-XiaoxiaoNeural', provider: 'edge', upstream_id: 'zh-CN-XiaoxiaoNeural', name: '晓晓（中文女声）' },
+            { voice_id: 'edge:zh-CN-YunxiNeural', provider: 'edge', upstream_id: 'zh-CN-YunxiNeural', name: '云希（中文男声）' },
+          ],
+        },
+      },
+    }),
+  },
+}));
 
 describe('NarrationInspector', () => {
   it('generates from page content when the page has no confirmed narration', () => {
@@ -89,5 +106,28 @@ describe('NarrationInspector', () => {
     );
 
     expect(screen.getAllByText('legacy.unknown').length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('selects a catalog voice instead of accepting a hand-written ID', async () => {
+    const onPreview = vi.fn();
+    render(
+      <NarrationInspector
+        versions={[]}
+        language="zh-CN"
+        onGenerate={vi.fn()}
+        onApply={vi.fn()}
+        onDiscard={vi.fn()}
+        onPreview={onPreview}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('radio', { name: '试听' }));
+    await screen.findByText('晓晓（中文女声）');
+    fireEvent.click(screen.getByRole('button', { name: '音色' }));
+    fireEvent.click(screen.getByText('云希（中文男声）'));
+    fireEvent.click(screen.getByRole('button', { name: '试听当前草稿' }));
+
+    await waitFor(() => expect(onPreview).toHaveBeenCalledWith('edge', 'zh-CN-YunxiNeural'));
+    expect(screen.queryByLabelText('试听音色')).not.toBeInTheDocument();
   });
 });

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Volume2, Search, Loader2, X } from 'lucide-react';
 import { apiClient } from '@/api/client';
+import { getSettings } from '@/api/endpoints';
 import { useT } from '@/hooks/useT';
 import { cn } from '@/utils';
 
@@ -8,10 +9,11 @@ const voicePickerI18n = {
   zh: {
     voice: {
       label: '声音',
-      placeholder: '搜索声音（名称或 ID）',
+      placeholder: '搜索声音（名称）',
       allProviders: '全部来源',
       edge: 'Edge 在线声音',
       fish: 'Fish 克隆声音',
+      asset: '已保存角色',
       preview: '试听',
       noVoices: '没有匹配的声音',
       loading: '加载声音目录…',
@@ -21,10 +23,11 @@ const voicePickerI18n = {
   en: {
     voice: {
       label: 'Voice',
-      placeholder: 'Search voices (name or ID)',
+      placeholder: 'Search voices (name)',
       allProviders: 'All providers',
       edge: 'Edge voices',
       fish: 'Fish cloned voices',
+      asset: 'Saved roles',
       preview: 'Preview',
       noVoices: 'No matching voices',
       loading: 'Loading voice catalog…',
@@ -40,6 +43,8 @@ export interface CatalogVoice {
   name: string;
   gender?: string | null;
   languages?: string[];
+  /** 来自「已保存角色」资产（Settings 里管理的角色预设） */
+  role_asset?: boolean;
 }
 
 interface VoicePickerProps {
@@ -48,14 +53,20 @@ interface VoicePickerProps {
   language?: string;
   /** 是否允许「跟随全局默认」（值为空字符串） */
   allowUnset?: boolean;
+  /** 限定列表只显示该来源的声音（如多人对话限定同引擎），缺省显示全部来源 */
+  providerFilter?: 'edge' | 'fish_audio';
   className?: string;
 }
 
+const providerLabel = (t: (key: string) => string, item: CatalogVoice) =>
+  item.role_asset ? t('voice.asset') : item.provider === 'edge' ? t('voice.edge') : t('voice.fish');
+
 /**
- * 统一声音选择器（计划 §7.4.5）：从 /api/voices 加载 Edge + Fish 目录，
- * 支持搜索、来源筛选与试听；选择结果始终是 canonical voice id。
+ * 统一声音选择器：从 /api/voices 加载 Edge + Fish 目录，并合并设置里的
+ * 「已保存角色」资产；支持搜索、来源筛选与试听；选择结果始终是 canonical voice id。
+ * 列表项显示名称、语言与来源，不展示裸 ID。
  */
-export const VoicePicker: React.FC<VoicePickerProps> = ({ value, onChange, language = 'zh', allowUnset = true, className }) => {
+export const VoicePicker: React.FC<VoicePickerProps> = ({ value, onChange, language = 'zh', allowUnset = true, providerFilter, className }) => {
   const t = useT(voicePickerI18n);
   const [voices, setVoices] = useState<CatalogVoice[]>([]);
   const [loading, setLoading] = useState(false);
@@ -69,13 +80,25 @@ export const VoicePicker: React.FC<VoicePickerProps> = ({ value, onChange, langu
   useEffect(() => {
     let active = true;
     setLoading(true);
-    apiClient.get<{ data: { voices: CatalogVoice[] } }>(`/api/voices?language=${encodeURIComponent(language)}`)
-      .then((response) => {
+    // 两个请求独立失败处理：目录失败 → 空目录；「已保存角色」资产失败 → 仅没有资产，不清空目录
+    const loadCatalog = apiClient.get<{ data: { voices: CatalogVoice[] } }>(`/api/voices?language=${encodeURIComponent(language)}`)
+      .then((response) => (response.data?.data?.voices ?? []) as CatalogVoice[])
+      .catch(() => [] as CatalogVoice[]);
+    const loadAssets = getSettings()
+      .then((response) => (response.data?.fish_audio_voice_assets || []).map((asset) => ({
+        voice_id: `fish:${asset.voice}`,
+        provider: 'fish_audio' as const,
+        upstream_id: asset.voice,
+        name: asset.name,
+        languages: asset.language ? [asset.language] : [],
+        role_asset: true,
+      })))
+      .catch(() => [] as CatalogVoice[]);
+    Promise.all([loadCatalog, loadAssets])
+      .then(([catalog, assets]) => {
         if (!active) return;
-        setVoices((response.data?.data?.voices ?? []) as CatalogVoice[]);
-      })
-      .catch(() => {
-        if (active) setVoices([]);
+        const assetIds = new Set(assets.map((asset) => asset.voice_id));
+        setVoices([...catalog.filter((item) => !assetIds.has(item.voice_id)), ...assets]);
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -97,13 +120,13 @@ export const VoicePicker: React.FC<VoicePickerProps> = ({ value, onChange, langu
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return voices.filter((item) => {
+      if (providerFilter && item.provider !== providerFilter) return false;
       if (provider && item.provider !== provider) return false;
       if (!q) return true;
-      return item.voice_id.toLowerCase().includes(q)
-        || item.upstream_id.toLowerCase().includes(q)
-        || item.name.toLowerCase().includes(q);
+      return item.name.toLowerCase().includes(q)
+        || (item.upstream_id || '').toLowerCase().includes(q);
     });
-  }, [voices, query, provider]);
+  }, [voices, query, provider, providerFilter]);
 
   const selected = useMemo(
     () => voices.find((item) => item.voice_id === value),
@@ -129,6 +152,8 @@ export const VoicePicker: React.FC<VoicePickerProps> = ({ value, onChange, langu
       setPreviewing(null);
     }
   };
+
+  const showProviderFilter = !providerFilter;
 
   return (
     <div ref={rootRef} className={cn('relative', className)}>
@@ -163,27 +188,29 @@ export const VoicePicker: React.FC<VoicePickerProps> = ({ value, onChange, langu
               </button>
             )}
           </div>
-          <div className="flex items-center gap-2 border-b border-[var(--app-border-soft)] px-2 py-1.5">
-            {[
-              { key: '', label: t('voice.allProviders') },
-              { key: 'edge', label: t('voice.edge') },
-              { key: 'fish_audio', label: t('voice.fish') },
-            ].map((option) => (
-              <button
-                key={option.key}
-                type="button"
-                onClick={() => setProvider(option.key)}
-                className={cn(
-                  'rounded-[var(--app-radius-control)] px-2 py-1 text-xs transition-colors',
-                  provider === option.key
-                    ? 'bg-[var(--app-accent-soft)] text-[var(--app-accent)]'
-                    : 'text-[var(--app-text-tertiary)] hover:bg-[var(--app-surface-hover)]',
-                )}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
+          {showProviderFilter && (
+            <div className="flex items-center gap-2 border-b border-[var(--app-border-soft)] px-2 py-1.5">
+              {[
+                { key: '', label: t('voice.allProviders') },
+                { key: 'edge', label: t('voice.edge') },
+                { key: 'fish_audio', label: t('voice.fish') },
+              ].map((option) => (
+                <button
+                  key={option.key}
+                  type="button"
+                  onClick={() => setProvider(option.key)}
+                  className={cn(
+                    'rounded-[var(--app-radius-control)] px-2 py-1 text-xs transition-colors',
+                    provider === option.key
+                      ? 'bg-[var(--app-accent-soft)] text-[var(--app-accent)]'
+                      : 'text-[var(--app-text-tertiary)] hover:bg-[var(--app-surface-hover)]',
+                  )}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          )}
           <ul role="listbox" className="max-h-56 overflow-y-auto p-1">
             {allowUnset && (
               <li role="option" aria-selected={value === ''}>
@@ -211,7 +238,11 @@ export const VoicePicker: React.FC<VoicePickerProps> = ({ value, onChange, langu
                     className="flex-1 truncate"
                   >
                     <span className="block truncate">{item.name}</span>
-                    <span className="block truncate text-[11px] text-[var(--app-text-tertiary)]">{item.voice_id}</span>
+                    <span className="block truncate text-[11px] text-[var(--app-text-tertiary)]">
+                      {(item.languages?.length ? item.languages.join('、') : '')}
+                      {item.languages?.length ? ' · ' : ''}
+                      {providerLabel(t, item)}
+                    </span>
                   </button>
                   <button
                     type="button"

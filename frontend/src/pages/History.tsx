@@ -10,7 +10,7 @@ import * as api from '@/api/endpoints';
 import { getFirstPageImage, getProjectTitle, getProjectRoute } from '@/utils/projectUtils';
 import type { Project, ProjectDashboardStats } from '@/types';
 import { useExportTasksStore } from '@/store/useExportTasksStore';
-import { useProjectCatalogStore } from '@/store/useProjectCatalogStore';
+import { catalogPageKeyOf, useProjectCatalogStore } from '@/store/useProjectCatalogStore';
 
 // 页面特有翻译 - AI 可以直接看到所有文案
 const historyI18n = {
@@ -163,7 +163,7 @@ export const History: React.FC<{ showNavigation?: boolean }> = ({ showNavigation
       })),
   ];
 
-  const loadProjects = useCallback(async (page: number) => {
+  const loadProjects = useCallback(async (page: number, force = false) => {
     setIsLoading(true);
     try {
       const snapshot = await useProjectCatalogStore.getState().loadCatalog({
@@ -171,7 +171,7 @@ export const History: React.FC<{ showNavigation?: boolean }> = ({ showNavigation
         offset: (page - 1) * pageSize,
         status: statusFilter,
         workspace: workspaceFilter,
-      });
+      }, { force });
       setProjects(snapshot.projects);
       setTotalProjects(snapshot.total);
       setProjectStats(snapshot.stats);
@@ -191,6 +191,7 @@ export const History: React.FC<{ showNavigation?: boolean }> = ({ showNavigation
     status: statusFilter,
     workspace: workspaceFilter,
   }), [pageSize, currentPage, statusFilter, workspaceFilter]);
+  const catalogSnapshot = useProjectCatalogStore((state) => state.snapshots[catalogPageKeyOf(catalogPageKey)]);
 
   useEffect(() => {
     // 有最近成功快照：立即展示作品墙，后台再校准（计划 §7.5.3）
@@ -202,6 +203,14 @@ export const History: React.FC<{ showNavigation?: boolean }> = ({ showNavigation
       setIsLoading(false);
     }
   }, [catalogPageKey]);
+
+  useEffect(() => {
+    if (!catalogSnapshot) return;
+    setProjects(catalogSnapshot.projects);
+    setTotalProjects(catalogSnapshot.total);
+    setProjectStats(catalogSnapshot.stats);
+    setError(null);
+  }, [catalogSnapshot]);
 
   useEffect(() => {
     loadProjects(currentPage);
@@ -266,7 +275,9 @@ export const History: React.FC<{ showNavigation?: boolean }> = ({ showNavigation
       const syncedProject = await syncProject(projectId);
       
       // 根据项目状态跳转到不同页面
-      const route = getProjectRoute(syncedProject || project);
+      const route = getProjectRoute(syncedProject
+        ? { ...project, ...syncedProject, dashboard_status: syncedProject.dashboard_status ?? project.dashboard_status }
+        : project);
       navigate(route, { state: { from: 'history' } });
     } catch (err: any) {
       console.error('打开项目失败:', err);
@@ -555,14 +566,14 @@ export const History: React.FC<{ showNavigation?: boolean }> = ({ showNavigation
     <div className="min-h-screen bg-[var(--app-background)] text-[var(--app-text)] lg:pl-[var(--app-nav-offset,216px)]">
       {showNavigation && <AppTopNav />}
 
-      <main>
+      <main className={isHomeRoute ? 'min-h-[calc(100vh-2.5rem)]' : undefined}>
         {isHomeRoute && (
-        <section className="border-b border-[var(--app-border)] bg-[var(--app-surface)]">
-          <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-5 md:px-6 xl:flex-row xl:items-center xl:justify-between">
+        <section className="px-4 pt-4 md:px-6">
+          <div className="mx-auto flex max-w-[1600px] flex-col gap-3 rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)] px-4 py-3 shadow-[var(--app-shadow-control)] xl:flex-row xl:items-center xl:justify-between">
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--app-text-tertiary)]">EasySlide · Editorial Workbench</p>
-              <h1 className="mt-1 text-xl font-semibold">作品工作台</h1>
-              <p className="mt-1 text-sm text-[var(--app-text-secondary)]">在一个内容项目中组织 PPT、视频与播客。</p>
+              <p className="text-xs font-medium text-[var(--app-text-tertiary)]">本地创作工作台 · 最近项目</p>
+              <h1 className="mt-0.5 text-lg font-semibold">作品工作台</h1>
+              <p className="mt-0.5 text-xs text-[var(--app-text-secondary)]">PPT、视频与播客统一创作，内容保存在本机。</p>
             </div>
             <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row xl:max-w-[620px]">
               <label className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-background)] px-3 text-[var(--app-text-tertiary)] focus-within:border-[var(--app-accent)]">
@@ -576,7 +587,7 @@ export const History: React.FC<{ showNavigation?: boolean }> = ({ showNavigation
         </section>
         )}
 
-        <div className="mx-auto max-w-7xl px-4 py-6 md:px-6 md:py-7">
+        <div className={`mx-auto px-4 md:px-6 ${isHomeRoute ? 'max-w-[1600px] py-4' : 'max-w-7xl py-6 md:py-7'}`}>
           {!isHomeRoute && (
             <section className="mb-7 grid gap-6 border-b border-[var(--app-border)] pb-6 lg:grid-cols-[minmax(0,1fr)_minmax(420px,0.78fr)] lg:items-stretch">
               <header className="flex min-h-40 flex-col items-start justify-between gap-6 py-1">
@@ -615,7 +626,7 @@ export const History: React.FC<{ showNavigation?: boolean }> = ({ showNavigation
           // 无快照且加载失败：显示错误与重试（计划 §7.5.3 非阻塞）
           <section className="border-y border-[var(--app-border)] py-10 text-center">
             <p className="mb-4 text-sm text-[var(--app-text-secondary)]">{error}</p>
-            <Button variant="primary" onClick={() => loadProjects(currentPage)}>
+            <Button variant="primary" onClick={() => loadProjects(currentPage, true)}>
               {t('common.retry')}
             </Button>
           </section>
@@ -634,12 +645,12 @@ export const History: React.FC<{ showNavigation?: boolean }> = ({ showNavigation
             {error && (
               <div className="mb-3 flex items-center gap-2 rounded-[var(--app-radius-control)] border border-[var(--app-warning-soft)] bg-[var(--app-warning-soft)] px-3 py-2 text-xs text-[var(--app-warning)]">
                 <span className="min-w-0 flex-1 truncate">{error}</span>
-                <Button variant="secondary" size="sm" onClick={() => loadProjects(currentPage)}>
+                <Button variant="secondary" size="sm" onClick={() => loadProjects(currentPage, true)}>
                   {t('common.retry')}
                 </Button>
               </div>
             )}
-            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h2 id="project-list-title" className="text-[15px] font-semibold leading-[22px]">{t('history.listTitle')}</h2>
                 <p className="mt-0.5 text-xs text-[var(--app-text-secondary)]">{t('history.listSubtitle')}</p>
@@ -648,13 +659,13 @@ export const History: React.FC<{ showNavigation?: boolean }> = ({ showNavigation
                 variant="secondary"
                 size="sm"
                 icon={<RefreshCw size={16} />}
-                onClick={() => loadProjects(currentPage)}
+                onClick={() => loadProjects(currentPage, true)}
               >
                 {t('history.refresh')}
               </Button>
             </div>
 
-            <div className="mb-3 flex min-h-10 flex-wrap items-center gap-3 border-y border-[var(--app-border)] py-2">
+            <div className="mb-3 flex min-h-10 flex-wrap items-center gap-3 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 py-1.5 shadow-[var(--app-shadow-control)]">
               <div className="flex items-center gap-1" role="group" aria-label="项目类型筛选">
                 {([['ppt', 'PPT'], ['video', '视频'], ['podcast', '播客']] as const).map(([value, label]) => (
                   <button key={value} type="button" aria-pressed={workspaceFilter === value} onClick={() => handleWorkspaceFilter(value)} className={`h-8 rounded-[var(--app-radius-control)] px-3 text-xs font-medium transition-colors ${workspaceFilter === value ? 'bg-[var(--app-text)] text-[var(--app-surface)]' : 'text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]'}`}>{label}</button>
@@ -735,15 +746,15 @@ export const History: React.FC<{ showNavigation?: boolean }> = ({ showNavigation
           </section>
         )}
         {isHomeRoute && (
-          <section aria-labelledby="inspiration-title" className="mt-8 border-t border-[var(--app-border)] pt-5">
+          <section aria-labelledby="inspiration-title" className="mt-5 border-t border-[var(--app-border)] pt-4">
             <div className="mb-3">
               <h2 id="inspiration-title" className="text-[15px] font-semibold">灵感墙</h2>
               <p className="mt-1 text-xs text-[var(--app-text-secondary)]">精选模板与视觉素材，保持少量、可用、不过度装饰。</p>
             </div>
             <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
               {inspirationImages.map((image, index) => (
-                <div key={`${image.src}-${index}`} className="overflow-hidden rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)]">
-                  <img src={image.src} alt={image.alt} className="aspect-video w-full object-cover" loading="lazy" />
+                <div key={`${image.src}-${index}`} className="group overflow-hidden rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)] shadow-[var(--app-shadow-card)]">
+                  <img src={image.src} alt={image.alt} className="aspect-[3/1] w-full object-cover transition-transform duration-300 motion-safe:group-hover:scale-[1.025]" loading="lazy" />
                 </div>
               ))}
             </div>

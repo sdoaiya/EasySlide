@@ -23,6 +23,17 @@ def _add_project_with_ppt_workspace(project, settings=None, stage='DRAFT'):
     )
 
 
+def _drop_prefilled_pages(projects, manual_page_ids):
+    """工作区初始化会按内容主线预填 1 页；删除预填页使 stats fixture 精确。"""
+    from models import Page, db
+
+    Page.query.filter(
+        Page.project_id.in_([item.id for item in projects]),
+        ~Page.id.in_(manual_page_ids),
+    ).delete(synchronize_session=False)
+    db.session.commit()
+
+
 def test_template_visual_preferences_prompt_targets_image_generation():
     from controllers.project_controller import _build_template_visual_preferences_prompt
 
@@ -345,6 +356,10 @@ class TestProjectList:
         _add_project_with_ppt_workspace(video_ready, stage='DRAFT')
         video_workspace = next(item for item in video_ready.workspaces if item.kind == 'video')
         video_workspace.state = 'ready'
+        # 有页面项目须全部页面有图才算 completed：给预填页补图
+        prefilled_page = video_ready.pages[0]
+        prefilled_page.status = 'COMPLETED'
+        prefilled_page.generated_image_path = 'generated/video-ready.png'
 
         podcast_generating = Project(
             id='stats-podcast-generating', creation_type='idea', status='active',
@@ -357,6 +372,9 @@ class TestProjectList:
             id='stats-video-exported', creation_type='idea', status='active',
         )
         _add_project_with_ppt_workspace(video_exported, stage='DRAFT')
+        # 无页面项目才由导出任务兜底判定 completed：删除预填页
+        for page in video_exported.pages:
+            db.session.delete(page)
         db.session.add(Task(
             id='stats-video-export-task',
             project_id=video_exported.id,
@@ -436,6 +454,14 @@ class TestProjectList:
             completed_page, generating_page, draft_page, described_page,
             partial_page_with_image, partial_page_without_image,
         ])
+        _drop_prefilled_pages(
+            [completed, generating, draft, described, partial],
+            {
+                'stats-completed-page', 'stats-generating-page', 'stats-draft-page',
+                'stats-described-page', 'stats-partial-image-page',
+                'stats-partial-pending-page',
+            },
+        )
         db.session.commit()
 
         data = assert_success_response(client.get('/api/projects?limit=1&offset=0'))['data']
@@ -464,6 +490,7 @@ class TestProjectList:
         page.set_description_content({'text': 'ready to regenerate'})
         _add_project_with_ppt_workspace(project, stage='COMPLETED')
         db.session.add(page)
+        _drop_prefilled_pages([project], {'stats-missing-image-page'})
         db.session.commit()
 
         data = assert_success_response(client.get('/api/projects?limit=10&offset=0'))['data']
@@ -1112,16 +1139,21 @@ class TestImageGenerationConcurrency:
                     time.sleep(0.05)
 
                 assert task['status'] == 'COMPLETED'
-                assert task['progress']['completed'] == 1
-                assert task['progress']['failed'] == 0
-                assert task['progress']['status'] == 'completed'
-                page_manifest = task['progress']['pages'][0]
+                # 任务内部 progress 细节（manifest 结构）经 HTTP 投影被裁剪，
+                # 直接查库断言完整结构
+                with app.app_context():
+                    from models import Task as ServerTask
+                    progress = ServerTask.query.get(task_id).get_progress()
+                assert progress['completed'] == 1
+                assert progress['failed'] == 0
+                assert progress['status'] == 'completed'
+                page_manifest = progress['pages'][0]
                 assert page_manifest['status'] == 'completed'
                 assert page_manifest['version_number'] == 1
                 assert page_manifest['output_path'] == f'generated/{page.id}.png'
                 assert len(page_manifest['prompt_hash']) == 64
                 assert page_manifest['prompt_path'].endswith(f'{page.id}_attempt-1.txt')
-                manifest_path = Path(app.config['UPLOAD_FOLDER']) / task['progress']['manifest_path']
+                manifest_path = Path(app.config['UPLOAD_FOLDER']) / progress['manifest_path']
                 persisted_manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
                 assert persisted_manifest['pages'][0]['status'] == 'completed'
                 assert BatchAIService.page_indexes == [2]
@@ -1258,14 +1290,15 @@ class TestResourceConcurrency:
                     time.sleep(0.05)
 
                 assert all(status == 'COMPLETED' for status in statuses)
-                first_task = client.get(
-                    f'/api/projects/{project.id}/tasks/{task_ids[0]}'
-                ).get_json()['data']
-                assert first_task['progress']['generation_id'] == task_ids[0]
-                assert first_task['progress']['status'] == 'completed'
-                assert first_task['progress']['pages'][0]['status'] == 'completed'
-                assert first_task['progress']['pages'][0]['version_number'] == 1
-                assert len(first_task['progress']['pages'][0]['prompt_hash']) == 64
+                # 任务内部 progress 细节经 HTTP 投影被裁剪，直接查库断言
+                with app.app_context():
+                    from models import Task as ServerTask
+                    first_progress = ServerTask.query.get(task_ids[0]).get_progress()
+                assert first_progress['generation_id'] == task_ids[0]
+                assert first_progress['status'] == 'completed'
+                assert first_progress['pages'][0]['status'] == 'completed'
+                assert first_progress['pages'][0]['version_number'] == 1
+                assert len(first_progress['pages'][0]['prompt_hash']) == 64
 
 
 class TestProjectOutlineStream:

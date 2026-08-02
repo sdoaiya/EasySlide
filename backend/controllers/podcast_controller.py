@@ -20,6 +20,21 @@ from utils import bad_request, error_response, not_found, success_response
 podcast_bp = Blueprint('podcasts', __name__, url_prefix='/api/content-projects')
 
 
+@podcast_bp.route('/bgm-library', methods=['GET'])
+def list_bgm_library():
+    """内置背景音乐库：程序化合成免版权曲目，首次访问时生成并注册。"""
+    from services.bgm_library_service import ensure_bgm_library
+
+    try:
+        tracks = ensure_bgm_library(
+            current_app.config['UPLOAD_FOLDER'],
+            current_app.config.get('FFMPEG_PATH', 'ffmpeg'),
+        )
+    except Exception as exc:
+        return error_response('BGM_LIBRARY_FAILED', str(exc), 503)
+    return success_response({'tracks': tracks})
+
+
 def _workspace_or_404(project_id):
     project = db.session.get(Project, project_id)
     workspace = ProjectWorkspace.query.filter_by(project_id=project_id, kind='podcast').one_or_none()
@@ -70,6 +85,18 @@ def preview_podcast_workspace(project_id):
     with tempfile.TemporaryDirectory(prefix='podcast_preview_', dir=upload_root) as working_dir:
         try:
             if provider == 'edge':
+                from services.voice_catalog_service import (
+                    normalize_export_voice,
+                    resolve_historical_voice,
+                )
+
+                for item in segments:
+                    canonical_ref, _needs_confirmation = resolve_historical_voice(
+                        item.get('voice'), language=language,
+                    )
+                    voice, engine = normalize_export_voice(canonical_ref)
+                    # 克隆声音（fish）无法用于 edge 试听，回退语言默认音色
+                    item['voice'] = voice if engine == 'edge' else default_voice
                 audio_path, _duration, _durations, cache_hit = generate_narration_segments_audio_sync(
                     segments=segments,
                     cache_dir=str(cache_dir),
@@ -82,6 +109,11 @@ def preview_podcast_workspace(project_id):
                 )
                 timing_quality = 'segment_exact'
             else:
+                from services.voice_catalog_service import (
+                    normalize_export_voice,
+                    resolve_historical_voice,
+                )
+
                 api_key = str(
                     Settings.get_settings().fish_audio_api_key
                     or current_app.config.get('FISH_AUDIO_API_KEY')
@@ -89,10 +121,19 @@ def preview_podcast_workspace(project_id):
                 ).strip()
                 if not api_key:
                     return bad_request('Fish Audio API Key 未配置，请先在设置中保存并验证')
-                fish_speakers = [
-                    {'id': item['speaker_id'], 'name': item.get('name') or item['speaker_id'], 'voice': item.get('voice_ref') or selected_voice}
-                    for item in speakers if isinstance(item, dict)
-                ]
+                fish_speakers = []
+                for item in speakers if isinstance(speakers, list) else []:
+                    if not isinstance(item, dict):
+                        continue
+                    canonical_ref, _needs_confirmation = resolve_historical_voice(
+                        item.get('voice_ref') or selected_voice, language='zh',
+                    )
+                    voice, _provider = normalize_export_voice(canonical_ref)
+                    fish_speakers.append({
+                        'id': item['speaker_id'],
+                        'name': item.get('name') or item['speaker_id'],
+                        'voice': voice or '',
+                    })
                 if segment_id:
                     fish_speakers = [item for item in fish_speakers if item['id'] == segments[0]['speaker_id']]
                 if any(not item['voice'] for item in fish_speakers):

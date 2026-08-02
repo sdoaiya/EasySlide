@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import layoutManifest from '../../../../shared/native-deck/layout-manifest.json'
@@ -66,7 +66,7 @@ const exportMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@/api/client', () => ({
-  apiClient: { put: vi.fn() },
+  apiClient: { put: vi.fn(), get: vi.fn() },
   getImageUrl: vi.fn((path: string) => path),
   getStaticAssetUrl: vi.fn((path: string) => path),
 }))
@@ -103,7 +103,7 @@ vi.mock('@/api/endpoints', () => ({
   getTaskStatus: vi.fn(),
   generateMaterialImage: nativeApiMocks.generateMaterialImage,
   updateNativePptxProgress: vi.fn(),
-  getSettings: vi.fn(() => new Promise(() => {})),
+  getSettings: vi.fn().mockResolvedValue({ data: { fish_audio_voice_assets: [] } }),
   listUserTemplates: vi.fn(() => new Promise(() => {})),
   getPageImageVersions: vi.fn(() => new Promise(() => {})),
   setCurrentImageVersion: vi.fn(),
@@ -179,6 +179,19 @@ describe('NativeDeckWorkspace', () => {
           { id: 'fish-expert', title: '产品专家', state: 'trained', languages: ['zh'], visibility: 'private' },
           { id: 'fish-guest', title: '客户嘉宾', state: 'trained', languages: ['zh'], visibility: 'private' },
         ],
+      },
+    })
+    vi.mocked(apiClient.get).mockReset().mockResolvedValue({
+      data: {
+        data: {
+          voices: [
+            { voice_id: 'edge:zh-CN-XiaoxiaoNeural', provider: 'edge', upstream_id: 'zh-CN-XiaoxiaoNeural', name: '晓晓（中文女声）', languages: ['zh-CN'] },
+            { voice_id: 'edge:zh-CN-YunxiNeural', provider: 'edge', upstream_id: 'zh-CN-YunxiNeural', name: '云希（中文男声）', languages: ['zh-CN'] },
+            { voice_id: 'fish:fish-host', provider: 'fish_audio', upstream_id: 'fish-host', name: '品牌主讲人', languages: ['zh'] },
+            { voice_id: 'fish:fish-expert', provider: 'fish_audio', upstream_id: 'fish-expert', name: '产品专家', languages: ['zh'] },
+            { voice_id: 'fish:fish-guest', provider: 'fish_audio', upstream_id: 'fish-guest', name: '客户嘉宾', languages: ['zh'] },
+          ],
+        },
       },
     })
     nativeApiMocks.getProjectNarrations.mockReset().mockResolvedValue({
@@ -764,17 +777,37 @@ describe('NativeDeckWorkspace', () => {
     await waitFor(() => expect(exportButton).toBeEnabled())
   })
 
-  it('loads Fish voices and exports a three-person expressive narration', async () => {
+  it('switches to Fish voices and exports a three-person expressive narration', async () => {
     vi.useRealTimers()
     renderWorkspace(slides.slice(0, 1))
     fireEvent.change(screen.getByLabelText('导出格式'), { target: { value: '讲解视频' } })
     fireEvent.click(screen.getByRole('button', { name: '导出讲解视频' }))
-    fireEvent.click(await screen.findByRole('button', { name: '高级设置' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Fish Audio s2.1-pro-free' }))
+    await screen.findByRole('dialog', { name: '讲解视频设置' })
 
-    await waitFor(() => expect(screen.getByLabelText('语音音色')).toHaveValue('fish-host'))
-    fireEvent.click(screen.getByRole('button', { name: '多人对话' }))
+    // 旁白模式在首屏直接可见（不再藏在高级设置里）
+    fireEvent.click(screen.getByRole('radio', { name: '多人对话' }))
+
+    const openVoicePicker = (row: HTMLElement) => {
+      const trigger = within(row).getAllByRole('button').find((button) => button.getAttribute('aria-haspopup') === 'listbox')
+      expect(trigger).toBeTruthy()
+      fireEvent.click(trigger!)
+    }
+
+    // 主持人切到 Fish 声音：声音决定引擎，其他角色跟随切到同引擎
+    const hostRow = screen.getByLabelText('角色 1 名称').closest('div.grid') as HTMLElement
+    openVoicePicker(hostRow)
+    fireEvent.click(await screen.findByText('品牌主讲人'))
+
+    // 专家与新增嘉宾分别选择 Fish 声音
+    const expertRow = screen.getByLabelText('角色 2 名称').closest('div.grid') as HTMLElement
+    openVoicePicker(expertRow)
+    fireEvent.click(await screen.findByText('产品专家'))
+
     fireEvent.click(screen.getByRole('button', { name: '添加角色' }))
+    const guestRow = screen.getByLabelText('角色 3 名称').closest('div.grid') as HTMLElement
+    openVoicePicker(guestRow)
+    fireEvent.click(await screen.findByText('客户嘉宾'))
+
     fireEvent.click(screen.getByLabelText('场景自动匹配语气'))
     fireEvent.click(screen.getByRole('button', { name: '开始导出视频' }))
 

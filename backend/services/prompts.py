@@ -1531,3 +1531,42 @@ def get_video_scene_optimize_prompt(
 只返回一个合法 JSON 对象：{{"text": "优化后的旁白文本"}}
 {profile_hint}
 输入：{json.dumps(payload, ensure_ascii=False)}"""
+
+
+def get_podcast_script_prompt(
+    *,
+    title: str,
+    source_text: str,
+    segment_count: int,
+    fmt: str,
+    speaker_names: list,
+    language: str = 'zh-CN',
+) -> str:
+    """Build a provider-independent podcast script polishing prompt.
+
+    The provider returns a single JSON object with the polished per-segment
+    texts; segment count must be preserved so the speaker rotation stays
+    stable. Facts from the source must be preserved.
+    """
+    fmt_hint = (
+        '多人对话节目：段落之间体现两位主持人的问答与回应感，'
+        f'说话人依次为：{"、".join(speaker_names or [])}。'
+        if fmt == 'dialogue'
+        else '单人播讲节目：语气自然连贯，像一位主持人在娓娓道来。'
+    )
+    payload = {
+        'title': title,
+        'source_text': source_text,
+        'segment_count': segment_count,
+        'format': fmt,
+    }
+    return f"""你是一位资深的播客节目编导。请把下面的原始材料改写成一集口语化的播客节目逐字稿。
+要求：
+- 只返回一个合法 JSON 对象：{{"segments": [{{"text": "第 1 段口播稿"}}, ...]}}
+- segments 的数量必须严格等于 {segment_count} 段
+- 每段是自然的口播文本：首段要有开场引入，段落间有承上启下的过渡，末段要有收尾
+- 不得添加原始材料中不存在的事实、数字或结论
+- 不得返回 Markdown、代码块或任何解释文字
+- {fmt_hint}
+- 输出语言：{'中文' if str(language).lower().startswith('zh') else '英文'}
+输入：{json.dumps(payload, ensure_ascii=False)}"""

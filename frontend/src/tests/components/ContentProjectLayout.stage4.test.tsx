@@ -73,7 +73,7 @@ describe('ContentProjectLayout 阶段4 壳层', () => {
     renderShell('/project/project-1/video');
     expect(screen.getAllByRole('button', { name: /PPT|视频|播客/ }).length).toBeGreaterThanOrEqual(3);
     expect(screen.getByRole('button', { name: '项目任务' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '返回作品墙' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '返回作品墙' })).not.toBeInTheDocument();
   });
 
   it('未保存内容时切换触发保护：取消停留、保存后切换', async () => {

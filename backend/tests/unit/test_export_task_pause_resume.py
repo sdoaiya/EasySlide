@@ -675,3 +675,42 @@ def test_pause_active_exports_pauses_async_exports_and_image_generation(client):
     assert video.status == "PAUSED"
     assert native.status == "PAUSED"
     assert generation.status == "PAUSED"
+
+
+def test_retry_refused_for_dismissed_task(client):
+    """修复：被删除（dismissed）的任务不可重试，避免产生不可见的孤儿产物。"""
+    from datetime import datetime
+
+    project = Project(id="retry-dismissed-project", creation_type="idea")
+    db.session.add(project)
+    db.session.commit()
+    task = _create_export_task(project.id, status="CANCELLED")
+    task.dismissed_at = datetime.utcnow()
+    db.session.commit()
+
+    with patch("controllers.project_controller.task_manager.submit_task") as submit_task:
+        response = client.post(f"/api/projects/{project.id}/tasks/{task.id}/retry")
+
+    assert_success_response(response)
+    db.session.refresh(task)
+    assert task.status == "CANCELLED"
+    submit_task.assert_not_called()
+
+
+def test_retry_refused_while_worker_still_active(client):
+    """修复：watchdog 判失败后 worker 可能仍在运行，重试会并发写同一工作目录。"""
+    from services.task_manager import task_manager
+
+    project = Project(id="retry-active-project", creation_type="idea")
+    db.session.add(project)
+    db.session.commit()
+    task = _create_export_task(project.id, status="FAILED")
+
+    with patch.object(task_manager, "is_task_active", return_value=True), \
+         patch("controllers.project_controller.task_manager.submit_task") as submit_task:
+        response = client.post(f"/api/projects/{project.id}/tasks/{task.id}/retry")
+
+    assert_success_response(response)
+    db.session.refresh(task)
+    assert task.status == "FAILED"
+    submit_task.assert_not_called()

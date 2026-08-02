@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   handoffFrames: vi.fn(),
   getTaskStatus: vi.fn(),
   fetch: vi.fn(),
+  apiClient: { get: vi.fn() },
 }));
 
 vi.mock('@/api/endpoints', () => ({
@@ -20,6 +21,14 @@ vi.mock('@/api/endpoints', () => ({
   getProject: mocks.getProject,
   handoffVideoWorkspaceFrames: mocks.handoffFrames,
   getTaskStatus: mocks.getTaskStatus,
+  getSettings: vi.fn().mockResolvedValue({ data: { fish_audio_voice_assets: [] } }),
+}));
+
+// VoicePicker 的声音目录请求：stub 空目录即可（契约测试同款做法）
+vi.mock('@/api/client', () => ({
+  apiClient: mocks.apiClient,
+  getImageUrl: (path: string) => path,
+  getStaticAssetUrl: (path: string) => path,
 }));
 
 vi.mock('@/components/content-project/WorkspaceVersionHistory', () => ({
@@ -74,8 +83,43 @@ describe('VideoWorkspace', () => {
     mocks.getTaskStatus.mockResolvedValue({ data: { status: 'COMPLETED' } });
     mocks.getProject.mockResolvedValue({ data: { pages: [] } });
     mocks.handoffFrames.mockResolvedValue({ data: { attached: true } });
+    mocks.apiClient.get.mockResolvedValue({ data: { data: { voices: [] } } });
     vi.stubGlobal('fetch', mocks.fetch);
     mocks.fetch.mockResolvedValue({ ok: true, blob: async () => new Blob(['png'], { type: 'image/png' }) });
+  });
+
+  it('saves voice speed into workspace settings', async () => {
+    render(
+      <>
+        <div data-content-project-rail-slot />
+        <VideoWorkspace projectId="project-1" spineRevision={3} workspace={workspace} onChanged={vi.fn()} />
+      </>
+    );
+
+    fireEvent.change(screen.getByLabelText('语速'), { target: { value: '1.15' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存版本' }));
+    await waitFor(() => expect(mocks.update).toHaveBeenCalled());
+    expect(mocks.update.mock.calls[0][4].voice_config.speed).toBe(1.15);
+    expect(mocks.update.mock.calls[0][3].scenes[0].narration.text).toBe('原旁白');
+  });
+
+  it('sends voice and speed configured in settings with the export', async () => {
+    const voicedWorkspace = {
+      ...workspace,
+      settings: { voice_config: { voice: 'edge:zh-CN-YunxiNeural', speed: 1.15 } },
+    };
+    render(
+      <>
+        <div data-content-project-rail-slot />
+        <VideoWorkspace projectId="project-1" spineRevision={3} workspace={voicedWorkspace} onChanged={vi.fn()} />
+      </>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '生成预览' }));
+    await waitFor(() => expect(mocks.exportVideo).toHaveBeenCalledWith(
+      'project-1',
+      expect.objectContaining({ renderProfile: 'proof', voice: 'edge:zh-CN-YunxiNeural', speed: 1.15 }),
+    ));
   });
 
   it('edits a scene and saves a new revision without a spine sync proposal', async () => {

@@ -376,6 +376,118 @@ def test_video_workspace_proof_then_final_reuses_snapshot(client, app, monkeypat
     assert final_kwargs['snapshot_hash'] == proof_kwargs['snapshot_hash']
 
 
+def _create_video_workspace(client, idea_prompt):
+    project_id = client.post('/api/projects', json={
+        'creation_type': 'idea', 'idea_prompt': idea_prompt, 'initial_workspace': 'video',
+    }).get_json()['data']['project_id']
+    document = client.get(f'/api/content-projects/{project_id}').get_json()['data']['workspaces'][1]['document']
+    document['scenes'] = [{
+        'scene_id': 'scene.1', 'title': '语音场景',
+        'visual': {'kind': 'blank', 'source_ref': None},
+        'narration': {'mode': 'single', 'text': '语音旁白。', 'segments': []},
+        'subtitles': {'enabled': True, 'text': '语音旁白。'},
+        'duration_ms': 3000, 'transition': 'cut',
+        'animation': {'intensity': 'subtle', 'cues': []}, 'audio_cues': [],
+    }]
+    assert client.put(
+        f'/api/content-projects/{project_id}/workspaces/video',
+        json={'base_revision': 1, 'document': document},
+    ).status_code == 200
+    return project_id
+
+
+def _capture_workspace_submit(client, monkeypatch):
+    monkeypatch.setattr(
+        'controllers.content_workspace_controller.submit_workspace_task',
+        _run_workspace_task_now,
+    )
+    submitted = []
+    monkeypatch.setattr(
+        'controllers.content_workspace_controller.task_manager.submit_task',
+        lambda task_id, _fn, **kwargs: submitted.append((task_id, kwargs)),
+    )
+    return submitted
+
+
+def _save_video_settings(client, project_id, document, settings):
+    return client.put(
+        f'/api/content-projects/{project_id}/workspaces/video',
+        json={'base_revision': 2, 'document': document, 'settings': settings},
+    )
+
+
+def test_video_workspace_export_resolves_voice_from_settings(client, monkeypatch):
+    submitted = _capture_workspace_submit(client, monkeypatch)
+    project_id = _create_video_workspace(client, '设置音色')
+    document = client.get(f'/api/content-projects/{project_id}').get_json()['data']['workspaces'][1]['document']
+    assert _save_video_settings(client, project_id, document, {
+        'voice_config': {'voice': 'edge:zh-CN-YunxiNeural', 'speed': 1.15},
+    }).status_code == 200
+
+    response = client.post(
+        f'/api/content-projects/{project_id}/workspaces/video/export',
+        json={'render_profile': 'proof'},
+    )
+    assert response.status_code == 202, response.get_json()
+    kwargs = submitted[0][1]
+    assert kwargs['voice'] == 'zh-CN-YunxiNeural'
+    assert kwargs['tts_provider'] == 'edge'
+    assert kwargs['speed'] == 1.15
+    assert kwargs['rate'] == '+0%'
+    assert kwargs['render_profile'] == 'proof'
+
+
+def test_video_workspace_export_empty_voice_config_uses_default(client, monkeypatch):
+    submitted = _capture_workspace_submit(client, monkeypatch)
+    project_id = _create_video_workspace(client, '显式默认')
+    document = client.get(f'/api/content-projects/{project_id}').get_json()['data']['workspaces'][1]['document']
+    # 工作区显式选择「跟随全局默认」：空串不得被历史音色覆盖
+    assert _save_video_settings(client, project_id, document, {
+        'voice_config': {'voice': ''},
+    }).status_code == 200
+
+    response = client.post(
+        f'/api/content-projects/{project_id}/workspaces/video/export',
+        json={},
+    )
+    assert response.status_code == 202, response.get_json()
+    kwargs = submitted[0][1]
+    assert kwargs['voice'] == 'zh-CN-XiaoxiaoNeural'
+    assert kwargs['tts_provider'] == 'edge'
+
+
+def test_video_workspace_export_normalizes_canonical_fish_voice(client, monkeypatch):
+    submitted = _capture_workspace_submit(client, monkeypatch)
+    project_id = _create_video_workspace(client, 'Fish 音色')
+    response = client.post(
+        f'/api/content-projects/{project_id}/workspaces/video/export',
+        json={'voice': 'fish:clone-reference-12345'},
+    )
+    assert response.status_code == 202, response.get_json()
+    kwargs = submitted[0][1]
+    assert kwargs['voice'] == 'clone-reference-12345'
+    assert kwargs['tts_provider'] == 'fish_audio'
+
+
+def test_video_workspace_export_body_voice_overrides_settings(client, monkeypatch):
+    submitted = _capture_workspace_submit(client, monkeypatch)
+    project_id = _create_video_workspace(client, '请求体优先')
+    document = client.get(f'/api/content-projects/{project_id}').get_json()['data']['workspaces'][1]['document']
+    assert _save_video_settings(client, project_id, document, {
+        'voice_config': {'voice': 'edge:zh-CN-XiaoxiaoNeural'},
+    }).status_code == 200
+
+    response = client.post(
+        f'/api/content-projects/{project_id}/workspaces/video/export',
+        json={'voice': 'zh-CN-YunxiaNeural', 'speed': 0.85},
+    )
+    assert response.status_code == 202, response.get_json()
+    kwargs = submitted[0][1]
+    assert kwargs['voice'] == 'zh-CN-YunxiaNeural'
+    assert kwargs['tts_provider'] == 'edge'
+    assert kwargs['speed'] == 0.85
+
+
 def test_podcast_workspace_export_freezes_current_workspace_version(client, app, monkeypatch):
     from models import Task
     monkeypatch.setattr('controllers.content_workspace_controller.submit_workspace_task', _run_workspace_task_now)
@@ -403,12 +515,13 @@ def test_podcast_workspace_export_freezes_current_workspace_version(client, app,
     subprocess.run(['ffmpeg', '-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', source_audio], check=True, capture_output=True)
     import services.tts_video_service as tts_video_service
 
+    # 默认播客声音（voice_ref='default' 裸名）→ 本地 edge 引擎，无 Fish key 依赖
+    captured = {}
     monkeypatch.setattr(
         tts_video_service,
-        'generate_fish_narration_audio_sync',
-        lambda **_kwargs: (source_audio, 1.5, []),
+        'generate_narration_segments_audio_sync',
+        lambda **kwargs: (captured.update(kwargs) or (source_audio, 1.5, [])),
     )
-    app.config['FISH_AUDIO_API_KEY'] = 'test-key'
     from services.task_manager import export_podcast_workspace_task
     export_podcast_workspace_task(payload['task_id'], **submitted[0][1])
     with app.app_context():
@@ -418,6 +531,45 @@ def test_podcast_workspace_export_freezes_current_workspace_version(client, app,
         assert len(task.get_progress()['audio_mix_manifest_hash']) == 64
         assert task.get_progress()['peak_db'] <= 0
         assert task.get_progress()['sidecars']['transcript'].endswith('.transcript.json')
+    assert 'generate_fish_narration_audio_sync' not in captured
+    # voice_ref='default' 解析为语言默认 edge 音色（不落到无效音色/SAPI 兜底）
+    assert captured['default_voice'] == 'zh-CN-XiaoxiaoNeural'
+    assert captured['segments'][0]['voice'] == 'zh-CN-XiaoxiaoNeural'
+
+
+def test_podcast_workspace_export_uses_fish_when_role_voice_is_fish(client, app, monkeypatch):
+    from models import Task
+    monkeypatch.setattr('controllers.content_workspace_controller.submit_workspace_task', _run_workspace_task_now)
+    submitted = []
+    monkeypatch.setattr('controllers.content_workspace_controller.task_manager.submit_task', lambda task_id, _fn, **kwargs: submitted.append((task_id, kwargs)))
+    project_id = client.post('/api/projects', json={'creation_type': 'idea', 'idea_prompt': 'Fish 播客导出', 'initial_workspace': 'podcast'}).get_json()['data']['project_id']
+    document = client.get(f'/api/content-projects/{project_id}').get_json()['data']['workspaces'][2]['document']
+    document['speakers'][0]['voice_ref'] = 'fish:clone-reference-12345'
+    document['segments'] = [{'segment_id': 'segment.1', 'speaker_id': document['speakers'][0]['speaker_id'], 'text': 'Fish 内容。', 'locked': False, 'audio_cues': []}]
+    assert client.put(f'/api/content-projects/{project_id}/workspaces/podcast', json={'base_revision': 1, 'document': document}).status_code == 200
+    response = client.post(f'/api/content-projects/{project_id}/workspaces/podcast/export', json={})
+    assert response.status_code == 202, response.get_json()
+    task_id = response.get_json()['data']['task_id']
+
+    import subprocess
+    source_audio = app.config['UPLOAD_FOLDER'] + '/source.mp3'
+    subprocess.run(['ffmpeg', '-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', source_audio], check=True, capture_output=True)
+    import services.tts_video_service as tts_video_service
+    captured = {}
+    monkeypatch.setattr(
+        tts_video_service,
+        'generate_fish_narration_audio_sync',
+        lambda **kwargs: (captured.update(kwargs) or (source_audio, 1.5, [])),
+    )
+    app.config['FISH_AUDIO_API_KEY'] = 'test-key'
+    from services.task_manager import export_podcast_workspace_task
+    export_podcast_workspace_task(task_id, **submitted[0][1])
+    with app.app_context():
+        task = Task.query.get(task_id)
+        assert task.status == 'COMPLETED'
+    # canonical fish: 前缀被剥掉，Fish API 收到裸 reference id
+    assert captured['speakers'][0]['voice'] == 'clone-reference-12345'
+    assert captured['speakers'][0]['id'] == 'speaker.main'
 
 
 def test_podcast_workspace_export_accepts_wav_format(client, app, monkeypatch):
@@ -449,6 +601,8 @@ def test_podcast_workspace_export_times_out_fish_audio(client, app, monkeypatch)
     monkeypatch.setattr('controllers.content_workspace_controller.task_manager.submit_task', lambda task_id, _fn, **kwargs: submitted.append((task_id, kwargs)))
     project_id = client.post('/api/projects', json={'creation_type': 'idea', 'idea_prompt': 'podcast timeout', 'initial_workspace': 'podcast'}).get_json()['data']['project_id']
     document = client.get(f'/api/content-projects/{project_id}').get_json()['data']['workspaces'][2]['document']
+    # 显式 fish 声音才会走 Fish 引擎（默认声音走本地 edge，不会超时）
+    document['speakers'][0]['voice_ref'] = 'fish:clone-reference-12345'
     document['segments'] = [{'segment_id': 'segment.1', 'speaker_id': document['speakers'][0]['speaker_id'], 'text': 'timeout body', 'locked': False, 'audio_cues': []}]
     assert client.put(f'/api/content-projects/{project_id}/workspaces/podcast', json={'base_revision': 1, 'document': document}).status_code == 200
     response = client.post(f'/api/content-projects/{project_id}/workspaces/podcast/export', json={'filename': 'timeout-podcast'})

@@ -54,6 +54,26 @@ content_workspace_bp = Blueprint(
 )
 
 
+def _resolve_workspace_video_voice(body, voice_config):
+    """解析视频工作区导出音色，返回 ``(voice, tts_provider)``。
+
+    优先级：请求体 ``voice`` → 工作区设置 ``voice_config.voice``
+    （编辑页面选择 / 转换向导固化）→ 全局默认。
+    canonical ID 归一化与引擎推导复用 voice_catalog 的统一规则。
+    """
+    from services.voice_catalog_service import normalize_export_voice
+
+    raw = str(body.get('voice') or '').strip()
+    if not raw:
+        raw = str((voice_config or {}).get('voice') or '').strip()
+    voice, provider = normalize_export_voice(raw)
+    if voice:
+        return voice, provider or 'edge'
+    from services.tts_video_service import get_default_voice
+    language = str((voice_config or {}).get('language') or body.get('language') or 'zh')
+    return get_default_voice(language, dict(current_app.config)), 'edge'
+
+
 def submit_workspace_task(task: Task, app) -> None:
     resume = task.get_progress()['_resume']
     task_manager.submit_task(
@@ -367,10 +387,22 @@ def export_video_workspace(project_id):
             candidate = file_service.get_absolute_path(normalized)
             return candidate if os.path.isfile(candidate) else None
 
+        document = json.loads(workspace.current_version.document_json)
         preflight_video_audio_materials(
             project_id,
-            json.loads(workspace.current_version.document_json),
+            document,
         )
+        workspace_settings = json.loads(workspace.current_version.settings_json or '{}')
+        voice_config = workspace_settings.get('voice_config') or {}
+        voice, tts_provider = _resolve_workspace_video_voice(data, voice_config)
+        if tts_provider == 'fish_audio' and not voice:
+            raise ValueError('Fish Audio 导出需要选择克隆声音。')
+        try:
+            speed = float(data.get('speed', voice_config.get('speed', 1.0)))
+        except (TypeError, ValueError):
+            speed = 1.0
+        speed = max(0.7, min(speed, 1.2))
+        rate = str(data.get('rate') or '+0%')
 
         if source_proof_task_id:
             proof_task = db.session.get(Task, source_proof_task_id)
@@ -410,8 +442,10 @@ def export_video_workspace(project_id):
                 ),
                 path_resolver=resolve_upload_path,
                 export_config={
-                    'voice': data.get('voice') or 'zh-CN-XiaoxiaoNeural',
-                    'rate': data.get('rate') or '+0%',
+                    'voice': voice,
+                    'rate': rate,
+                    'speed': speed,
+                    'tts_provider': tts_provider,
                     'enable_ken_burns': bool(data.get('enable_ken_burns', False)),
                 },
             )

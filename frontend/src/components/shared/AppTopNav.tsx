@@ -65,7 +65,11 @@ export function AppTopNav() {
       >
         <div className="mx-auto flex h-full max-w-7xl items-center justify-between px-5 lg:mx-0 lg:max-w-none lg:flex-col lg:items-stretch lg:px-0">
           <button autoFocus type="button" onClick={() => navigate('/home')} className={`flex h-10 items-center overflow-hidden lg:h-14 lg:w-full ${collapsed ? 'lg:justify-center lg:px-0' : 'lg:justify-start lg:px-3'}`} aria-label="EasySlide">
-            <img src={getStaticAssetUrl('/logo-nav-transparent.png')} alt="EasySlide Logo" className={`max-w-none object-contain ${collapsed ? 'w-10 lg:w-10' : 'w-[132px] lg:w-[160px]'}`} />
+            <img
+              src={getStaticAssetUrl(collapsed ? '/logo-mark.png' : '/logo-nav-transparent.png')}
+              alt="EasySlide Logo"
+              className={collapsed ? 'h-8 w-8 object-contain' : 'w-[132px] max-w-none object-contain lg:w-[160px]'}
+            />
           </button>
           <div className={`flex items-center gap-0.5 lg:mt-4 lg:w-full lg:flex-1 lg:flex-col lg:items-stretch lg:gap-1.5 ${collapsed ? 'lg:px-0' : 'lg:px-2'}`}>
             {items.map(({ path, label, icon: Icon, action }) => {
@@ -88,7 +92,7 @@ export function AppTopNav() {
               );
             })}
           </div>
-          <div className={`flex items-center gap-1.5 lg:grid lg:w-full lg:gap-1 lg:border-t lg:border-[var(--app-border)] lg:pt-3 ${collapsed ? 'lg:grid-cols-1' : 'lg:grid-cols-3'} ${collapsed ? 'lg:px-0' : 'lg:px-2'}`}>
+          <div className={`flex items-center gap-1.5 lg:grid lg:w-full lg:gap-1 lg:border-t lg:border-[var(--app-border)] lg:pt-3 ${collapsed ? 'lg:grid-cols-1' : 'lg:grid-cols-4'} ${collapsed ? 'lg:px-0' : 'lg:px-2'}`}>
             <button
               type="button"
               onClick={() => setCollapsed((current) => !current)}

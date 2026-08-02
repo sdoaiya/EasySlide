@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Download, Film, Link2, RefreshCw, Save } from 'lucide-react';
-import { Button, Textarea } from '@/components/shared';
+import { Button, Textarea, VoicePicker } from '@/components/shared';
 import { MaterialSelector } from '@/components/shared/MaterialSelector';
 import { WorkspaceShell } from '@/components/workspace/WorkspaceShell';
 import { WorkspaceStatusBar } from '@/components/workspace/WorkspaceStatusBar';
@@ -28,6 +28,14 @@ type VideoDocument = {
   title: string;
   aspect_ratio: '16:9' | '9:16' | '1:1';
   scenes: VideoScene[];
+};
+
+/** 全片解说语音配置（存 workspace settings，导出时后端据此解析） */
+type VoiceConfig = {
+  /** canonical voice id，空串 = 跟随全局默认 */
+  voice?: string;
+  /** 语速（0.7 慢 — 1.0 默认 — 1.2 快） */
+  speed?: number;
 };
 
 type ProofStatus = 'PENDING' | 'PROCESSING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | null;
@@ -77,6 +85,7 @@ export function VideoWorkspace({
   const [document, setDocument] = useState<VideoDocument>(
     workspace.document as VideoDocument,
   );
+  const [settings, setSettings] = useState<Record<string, unknown>>(workspace.settings);
   const [selectedId, setSelectedId] = useState(
     (workspace.document as VideoDocument).scenes[0]?.scene_id || '',
   );
@@ -86,10 +95,17 @@ export function VideoWorkspace({
   const [proofTaskId, setProofTaskId] = useState<string | null>(null);
   const [materialTarget, setMaterialTarget] = useState<'visual' | 'audio' | null>(null);
   const { tasks, addTask, pollTask } = useExportTasksStore();
+  const lastSyncedRevision = useRef(workspace.revision);
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
 
   useEffect(() => {
+    // 版本变化（保存成功/历史恢复等）：以服务端为准同步；不因 document/settings 引用抖动而清掉编辑
+    if (lastSyncedRevision.current === workspace.revision) return;
+    lastSyncedRevision.current = workspace.revision;
     const next = workspace.document as VideoDocument;
     setDocument(next);
+    setSettings(workspace.settings);
     setSelectedId((current) => (
       next.scenes.some((scene) => scene.scene_id === current)
         ? current
@@ -97,7 +113,13 @@ export function VideoWorkspace({
     ));
     setDirty(false);
     setProofTaskId(null);
-  }, [workspace.document, workspace.revision]);
+  }, [workspace.revision, workspace.document, workspace.settings]);
+
+  useEffect(() => {
+    // settings 引用变化（未变更版本）：仅当没有未保存改动时才同步覆盖，避免清掉未保存的 voice_config 编辑
+    if (dirtyRef.current) return;
+    setSettings(workspace.settings);
+  }, [workspace.settings]);
 
   const proofTask = useMemo(() => {
     const currentVersionTasks = tasks.filter((task) => (
@@ -130,6 +152,20 @@ export function VideoWorkspace({
     setDirty(true);
     setMessage('');
   };
+
+  const updateVoiceConfig = (patch: Partial<VoiceConfig>) => {
+    setSettings((current) => ({
+      ...current,
+      voice_config: {
+        ...((current.voice_config as VoiceConfig | undefined) || {}),
+        ...patch,
+      },
+    }));
+    setDirty(true);
+    setMessage('');
+  };
+
+  const voiceConfig = (settings.voice_config as VoiceConfig | undefined) || {};
 
   const handleMaterialSelect = (materials: Material[]) => {
     const material = materials[0];
@@ -168,7 +204,7 @@ export function VideoWorkspace({
         'video',
         workspace.revision,
         document as unknown as Record<string, unknown>,
-        workspace.settings,
+        settings,
       );
       setDirty(false);
       setMessage('已保存新版本');
@@ -187,6 +223,8 @@ export function VideoWorkspace({
     try {
       const response = await exportVideoWorkspace(projectId, {
         renderProfile,
+        voice: voiceConfig.voice || undefined,
+        speed: voiceConfig.speed && voiceConfig.speed !== 1 ? voiceConfig.speed : undefined,
         sourceProofTaskId: renderProfile === 'final' ? proofTask?.taskId || undefined : undefined,
       });
       const taskId = response.data?.task_id || '';
@@ -316,6 +354,22 @@ export function VideoWorkspace({
       sidebar={sceneRail}
       inspector={selected ? (
         <div className="space-y-4 p-4">
+          <div className="space-y-3 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-3">
+            <p className="text-xs font-medium">解说语音（全片生效）</p>
+            <div className="grid gap-1.5 text-xs text-[var(--app-text-secondary)]" data-testid="video-voice-config">
+              <span>音色</span>
+              <VoicePicker value={voiceConfig.voice ?? ''} onChange={(voice) => updateVoiceConfig({ voice })} language="zh" />
+            </div>
+            <label className="grid gap-1.5 text-xs text-[var(--app-text-secondary)]">
+              <span>语速</span>
+              <select value={voiceConfig.speed ?? 1} onChange={(event) => updateVoiceConfig({ speed: Number(event.target.value) })} className="h-9 w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-sm">
+                <option value={0.85}>慢速 0.85</option>
+                <option value={1}>标准 1.0</option>
+                <option value={1.15}>稍快 1.15</option>
+                <option value={1.2}>快速 1.2</option>
+              </select>
+            </label>
+          </div>
           <div>
             <label htmlFor="video-scene-title" className="mb-1.5 block text-xs font-medium">场景标题</label>
             <input id="video-scene-title" value={selected.title} onChange={(event) => updateSelected({ title: event.target.value })} className="h-9 w-full rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 text-sm" />

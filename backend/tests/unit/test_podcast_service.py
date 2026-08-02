@@ -274,3 +274,162 @@ def test_podcast_preview_slice_and_cache_key_are_revision_stable():
     ) != podcast_preview_cache_key(
         document={**document, 'revision': 2}, provider='edge', segment_id='segment.1', speed=1,
     )
+
+
+class TestAiPolishPodcastDocument:
+    def _document(self):
+        return {
+            'schema_version': 1,
+            'title': '测试播客',
+            'format': 'single',
+            'speakers': [{'speaker_id': 'speaker.main', 'name': '主持人', 'voice_ref': 'edge:zh-CN-XiaoxiaoNeural'}],
+            'segments': [
+                {'segment_id': 'segment.1', 'speaker_id': 'speaker.main', 'text': '原始第一段', 'locked': False, 'audio_cues': []},
+                {'segment_id': 'segment.2', 'speaker_id': 'speaker.main', 'text': '原始第二段', 'locked': False, 'audio_cues': []},
+            ],
+        }
+
+    def test_success_replaces_text_keeps_structure(self, monkeypatch):
+        from services.podcast_service import ai_polish_podcast_document
+
+        def fake_generate(prompt, thinking_budget=0):
+            assert '口语化' in prompt and 'segments' in prompt
+            return '{"segments": [{"text": "打磨后第一段"}, {"text": "打磨后第二段"}]}'
+
+        ai_service = type('AI', (), {'text_provider': type('P', (), {'generate_text': staticmethod(fake_generate)})()})()
+        monkeypatch.setattr('services.ai_service_manager.get_ai_service', lambda: ai_service)
+        document = self._document()
+        result = ai_polish_podcast_document(document, {'source_text': '来源材料内容'})
+        assert result is not None
+        assert [item['text'] for item in result['segments']] == ['打磨后第一段', '打磨后第二段']
+        assert result['segments'][0]['segment_id'] == 'segment.1'
+        assert result['segments'][0]['speaker_id'] == 'speaker.main'
+
+    def test_markdown_fence_is_tolerated(self, monkeypatch):
+        from services.podcast_service import ai_polish_podcast_document
+
+        def fake_generate(prompt, thinking_budget=0):
+            return '```json\n{"segments": [{"text": "甲"}, {"text": "乙"}]}\n```'
+
+        ai_service = type('AI', (), {'text_provider': type('P', (), {'generate_text': staticmethod(fake_generate)})()})()
+        monkeypatch.setattr('services.ai_service_manager.get_ai_service', lambda: ai_service)
+        result = ai_polish_podcast_document(self._document(), {'source_text': '来源'})
+        assert result is not None
+        assert [item['text'] for item in result['segments']] == ['甲', '乙']
+
+    def test_garbage_response_falls_back_to_none(self, monkeypatch):
+        from services.podcast_service import ai_polish_podcast_document
+
+        def fake_generate(prompt, thinking_budget=0):
+            raise RuntimeError('AI unavailable')
+
+        ai_service = type('AI', (), {'text_provider': type('P', (), {'generate_text': staticmethod(fake_generate)})()})()
+        monkeypatch.setattr('services.ai_service_manager.get_ai_service', lambda: ai_service)
+        assert ai_polish_podcast_document(self._document(), {'source_text': '来源'}) is None
+
+    def test_segment_count_mismatch_falls_back(self, monkeypatch):
+        from services.podcast_service import ai_polish_podcast_document
+
+        def fake_generate(prompt, thinking_budget=0):
+            return '{"segments": [{"text": "只有一段"}]}'
+
+        ai_service = type('AI', (), {'text_provider': type('P', (), {'generate_text': staticmethod(fake_generate)})()})()
+        monkeypatch.setattr('services.ai_service_manager.get_ai_service', lambda: ai_service)
+        assert ai_polish_podcast_document(self._document(), {'source_text': '来源'}) is None
+
+    def test_empty_source_falls_back_without_ai_call(self, monkeypatch):
+        from services.podcast_service import ai_polish_podcast_document
+
+        called = []
+
+        def fake_generate(prompt, thinking_budget=0):
+            called.append(True)
+            return '{}'
+
+        ai_service = type('AI', (), {'text_provider': type('P', (), {'generate_text': staticmethod(fake_generate)})()})()
+        monkeypatch.setattr('services.ai_service_manager.get_ai_service', lambda: ai_service)
+        assert ai_polish_podcast_document(self._document(), {'source_text': '   '}) is None
+        assert called == []
+
+
+class TestChunkPodcastSegments:
+    def _segment(self, index, text, speaker='speaker.main'):
+        return {'segment_id': f'segment.{index}', 'speaker_id': speaker, 'text': text, 'locked': False, 'audio_cues': []}
+
+    def test_single_mode_splits_by_char_budget(self):
+        from services.podcast_service import chunk_podcast_segments
+
+        segments = [self._segment(i, '中' * 100) for i in range(1, 6)]
+        chunks = chunk_podcast_segments(segments, speaker_ids=[], max_chars=250, mode='single')
+        assert len(chunks) == 3  # 100*2=200 ≤250, +100=300 >250 → 2,2,1
+        assert sum(len(chunk) for chunk in chunks) == 5
+
+    def test_dialogue_waits_for_all_configured_speakers(self):
+        from services.podcast_service import chunk_podcast_segments
+
+        segments = [
+            self._segment(1, '主' * 200, 'host'),
+            self._segment(2, '客' * 200, 'guest'),
+            self._segment(3, '主' * 200, 'host'),
+            self._segment(4, '客' * 200, 'guest'),
+        ]
+        chunks = chunk_podcast_segments(
+            segments, speaker_ids=['host', 'guest'], max_chars=250, mode='dialogue',
+        )
+        # 预算 250：第一块需要 host+guest 都出现才切 → 段1+2；同样段3+4
+        assert len(chunks) == 2
+        for chunk in chunks:
+            speakers = {item['speaker_id'] for item in chunk}
+            assert speakers == {'host', 'guest'}
+
+    def test_single_huge_segment_becomes_its_own_chunk(self):
+        from services.podcast_service import chunk_podcast_segments
+
+        segments = [
+            self._segment(1, '超' * 500),
+            self._segment(2, '后' * 100),
+        ]
+        chunks = chunk_podcast_segments(segments, speaker_ids=[], max_chars=200, mode='single')
+        assert len(chunks) == 2
+        assert len(chunks[0]) == 1 and len(chunks[1]) == 1
+
+
+class TestBuildPodcastFromPptSnapshot:
+    def _snapshot(self):
+        return {
+            'project_title': '季度复盘播客',
+            'pages': [
+                {'page_id': 'page-1', 'order_index': 0, 'narration': '开场白内容', 'description': {'text': '描述一'}},
+                {'page_id': 'page-2', 'order_index': 1, 'narration': '', 'description': {'text': '描述二'}},
+                {'page_id': 'page-3', 'order_index': 2, 'narration': '收尾内容', 'description': {'text': '描述三'}},
+            ],
+        }
+
+    def test_dialogue_default_builds_segments_with_rotating_roles(self):
+        from services.podcast_service import build_podcast_document_from_ppt_snapshot
+
+        document = build_podcast_document_from_ppt_snapshot(self._snapshot(), {})
+        assert document['format'] == 'dialogue'
+        assert [item['name'] for item in document['speakers']] == ['主持人', '嘉宾']
+        assert [item['speaker_id'] for item in document['segments']] == ['speaker.1', 'speaker.2', 'speaker.1']
+        assert document['segments'][0]['text'] == '开场白内容'
+        # 无旁白页回退页面描述
+        assert document['segments'][1]['text'] == '描述二'
+        assert document['segments'][0]['source_ref'] == 'page-1'
+        assert document['segments'][0]['source_kind'] == 'ppt_page'
+
+    def test_single_format_uses_one_speaker(self):
+        from services.podcast_service import build_podcast_document_from_ppt_snapshot
+
+        document = build_podcast_document_from_ppt_snapshot(self._snapshot(), {'format': 'single'})
+        assert document['format'] == 'single'
+        assert len(document['speakers']) == 1
+        assert all(item['speaker_id'] == 'speaker.main' for item in document['segments'])
+
+    def test_page_order_is_stable(self):
+        from services.podcast_service import build_podcast_document_from_ppt_snapshot
+
+        snapshot = self._snapshot()
+        snapshot['pages'].reverse()
+        document = build_podcast_document_from_ppt_snapshot(snapshot, {})
+        assert [item['source_ref'] for item in document['segments']] == ['page-1', 'page-2', 'page-3']

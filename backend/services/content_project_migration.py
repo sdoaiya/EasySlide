@@ -141,6 +141,7 @@ def ensure_sqlite_content_project_schema(connection: sqlite3.Connection) -> None
     _add_column(connection, 'pages', 'narration_status', 'TEXT')
     _add_column(connection, 'pages', 'narration_audio_manifest', 'TEXT')
     _add_column(connection, 'pages', 'narration_error', 'TEXT')
+    _add_column(connection, 'tasks', 'dismissed_at', 'DATETIME')
     _add_column(connection, 'page_image_versions', 'scene_manifest_path', 'TEXT')
     _add_column(connection, 'page_image_versions', 'scene_manifest_sha256', 'TEXT')
     _add_column(connection, 'page_image_versions', 'scene_status', "TEXT NOT NULL DEFAULT 'missing'")

@@ -34,3 +34,4 @@ export { WorkspaceShell } from '../workspace/WorkspaceShell';
 export { WorkspaceStatusBar } from '../workspace/WorkspaceStatusBar';
 export { UpdateChecker } from './UpdateChecker';
 export { VoicePicker } from './VoicePicker';
+export { VoiceComparisonDialog } from './VoiceComparisonDialog';

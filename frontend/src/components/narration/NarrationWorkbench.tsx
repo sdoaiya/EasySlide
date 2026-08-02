@@ -599,6 +599,7 @@ export function NarrationWorkbench({
               versions={details?.versions || []}
               currentVersionId={details?.current_version_id}
               preview={preview}
+              language={draft.language}
               disabled={pending || details?.locked}
               onGenerate={(operation, instruction) => void run(async () => {
                 if (!details) return;

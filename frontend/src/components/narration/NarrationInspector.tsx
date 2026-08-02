@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Play, Sparkles, Trash2, Undo2 } from 'lucide-react';
 
-import { Button, SegmentedControl, Textarea } from '@/components/shared';
+import { Button, SegmentedControl, Textarea, VoicePicker } from '@/components/shared';
 import type { NarrationPreviewResult, NarrationVersion } from '@/types';
 
 const UNKNOWN_ID = 'legacy.unknown';
@@ -35,6 +35,7 @@ interface NarrationInspectorProps {
   versions: NarrationVersion[];
   currentVersionId?: string | null;
   preview?: NarrationPreviewResult | null;
+  language?: string;
   disabled?: boolean;
   onGenerate: (operation: string, instruction: string) => void;
   onApply: (versionId: string) => void;
@@ -46,6 +47,7 @@ export function NarrationInspector({
   versions,
   currentVersionId,
   preview,
+  language = 'zh-CN',
   disabled = false,
   onGenerate,
   onApply,
@@ -55,8 +57,7 @@ export function NarrationInspector({
   const [tab, setTab] = useState<InspectorTab>('candidates');
   const [operation, setOperation] = useState('polish');
   const [instruction, setInstruction] = useState('');
-  const [provider, setProvider] = useState<'edge' | 'fish_audio'>('edge');
-  const [voice, setVoice] = useState('zh-CN-XiaoxiaoNeural');
+  const [voiceId, setVoiceId] = useState('edge:zh-CN-XiaoxiaoNeural');
   const effectiveOperation = currentVersionId ? operation : 'generate';
 
   const candidates = versions.filter((version) => version.status === 'candidate');
@@ -219,31 +220,24 @@ export function NarrationInspector({
 
         {tab === 'preview' && (
           <div className="space-y-4">
-            <SegmentedControl
-              ariaLabel="试听语音引擎"
-              value={provider}
-              onChange={setProvider}
-              options={[
-                { value: 'edge', label: '标准旁白' },
-                { value: 'fish_audio', label: '表现力旁白' },
-              ]}
-            />
             <label className="grid gap-1.5 text-sm font-medium text-[var(--app-text-secondary)]">
-              <span>{provider === 'fish_audio' ? 'Fish 私有 voice ID' : 'Edge 音色'}</span>
-              <input
-                aria-label="试听音色"
-                value={voice}
-                disabled={disabled}
-                onChange={(event) => setVoice(event.target.value)}
-                className="h-10 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 text-sm outline-none focus-visible:border-[var(--app-accent)] focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)]"
+              <span>音色</span>
+              <VoicePicker
+                value={voiceId}
+                onChange={setVoiceId}
+                language={language}
+                allowUnset={false}
               />
             </label>
             <Button
               type="button"
               className="w-full"
               icon={<Play size={16} aria-hidden="true" />}
-              disabled={disabled || !voice.trim()}
-              onClick={() => onPreview(provider, voice.trim())}
+              disabled={disabled || !voiceId}
+              onClick={() => {
+                const [voiceProvider, upstreamId] = voiceId.split(':', 2);
+                onPreview(voiceProvider === 'fish' ? 'fish_audio' : 'edge', upstreamId);
+              }}
             >
               试听当前草稿
             </Button>
