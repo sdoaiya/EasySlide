@@ -89,7 +89,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
   if (!projectId) return null;
 
   const title = getProjectTitle(project);
-  const pageCount = project.pages?.length || 0;
+  const pageCount = project.page_count ?? project.pages?.length ?? 0;
   const statusText = getStatusText(project);
   const statusColor = getStatusColor(project);
   const typeKey = project.creation_type === 'outline'
@@ -145,7 +145,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
             </div>
           )}
         </div>
-        <div className="p-4">
+        <div className="p-3">
           <div className="flex min-h-7 items-start gap-2">
             {isEditing ? (
               <input type="text" value={editingTitle} onChange={(event) => onTitleChange(event.target.value)} onKeyDown={(event) => onTitleKeyDown(event, projectId)} onBlur={() => onSaveEdit(projectId)} autoFocus className="min-w-0 flex-1 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 py-1 text-[15px] font-semibold text-[var(--app-text)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)]" onClick={(event) => event.stopPropagation()} />
@@ -169,13 +169,11 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
           </div>
           <div className={`relative mt-3 flex items-center justify-end gap-1 border-t border-[var(--app-border)] pt-2 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100 ${isSelected ? 'opacity-100' : 'opacity-0'}`}>
             <button type="button" onClick={(event) => onStartEdit(event, project)} className="flex h-10 w-10 items-center justify-center rounded-[var(--app-radius-control)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)] [@media(hover:none)]:hidden" aria-label={t('common.edit')} title={t('common.edit')}><Pencil size={16} /></button>
-            <button type="button" onClick={(event) => onExport(event, project)} className="flex h-10 w-10 items-center justify-center rounded-[var(--app-radius-control)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)] [@media(hover:none)]:hidden" aria-label="导出" title="导出"><Download size={16} /></button>
             <button type="button" onClick={(event) => onDelete(event, project)} className="flex h-10 w-10 items-center justify-center rounded-[var(--app-radius-control)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-error)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)] [@media(hover:none)]:hidden" aria-label={t('common.delete')} title={t('common.delete')}><Trash2 size={16} /></button>
             <details className="group/more hidden [@media(hover:none)]:block" onClick={(event) => event.stopPropagation()}>
               <summary role="button" className="flex h-10 w-10 list-none items-center justify-center rounded-[var(--app-radius-control)] text-[var(--app-text-secondary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)]" aria-label="更多操作"><MoreHorizontal size={17} /></summary>
               <div role="menu" className="absolute bottom-11 right-0 z-20 min-w-28 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] p-1 shadow-[var(--app-shadow-medium)]">
                 <button type="button" role="menuitem" onClick={(event) => onStartEdit(event, project)} className="flex h-10 w-full items-center gap-2 rounded-[var(--app-radius-control)] px-3 text-sm hover:bg-[var(--app-surface-hover)]"><Pencil size={15} />{t('common.edit')}</button>
-                <button type="button" role="menuitem" onClick={(event) => onExport(event, project)} className="flex h-10 w-full items-center gap-2 rounded-[var(--app-radius-control)] px-3 text-sm hover:bg-[var(--app-surface-hover)]"><Download size={15} />导出</button>
                 <button type="button" role="menuitem" onClick={(event) => onDelete(event, project)} className="flex h-10 w-full items-center gap-2 rounded-[var(--app-radius-control)] px-3 text-sm text-[var(--app-error)] hover:bg-[var(--app-surface-hover)]"><Trash2 size={15} />{t('common.delete')}</button>
               </div>
             </details>

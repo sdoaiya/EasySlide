@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ClipboardList, Film, Home, Mic2, Presentation } from 'lucide-react';
+import { ClipboardList, Film, Mic2, Presentation } from 'lucide-react';
 import { animate } from 'animejs';
 import { Button, ExportTasksPanel, Loading } from '@/components/shared';
 import { setLastProjectEntry } from '@/api/endpoints';
@@ -152,19 +152,9 @@ export function ContentProjectLayout() {
   return (
     <ProjectEditorSessionContext.Provider value={sessionContext}>
       <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-[var(--app-background)] text-[var(--app-text)]">
-        {/* 统一项目栏（阶段4）：返回、项目标题、模式切换、任务面板 */}
+        {/* 统一项目栏：项目标题、模式切换、任务面板；返回由应用工具架负责。 */}
         <header className="flex h-[52px] shrink-0 items-center gap-2 border-b border-[var(--app-border)] bg-[var(--app-surface)] px-3">
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<Home size={16} />}
-            onClick={() => navigate('/home')}
-            aria-label="返回作品墙"
-            className="shrink-0"
-          >
-            <span className="hidden md:inline">作品墙</span>
-          </Button>
-          <span className="hidden min-w-0 max-w-[220px] truncate text-sm font-medium text-[var(--app-text-secondary)] sm:block" title={projectTitle}>
+          <span className="min-w-0 max-w-[260px] truncate text-sm font-semibold text-[var(--app-text)]" title={projectTitle}>
             {projectTitle}
           </span>
           <nav aria-label="项目模式" className="ml-auto flex items-center gap-1">
