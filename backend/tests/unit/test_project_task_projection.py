@@ -197,3 +197,69 @@ def test_native_deck_generation_projection_keeps_failed_page_ids(client, app):
     assert item['progress']['completed'] == 2
     assert item['progress']['failed'] == 1
     assert item['progress']['failed_page_ids'] == ['page-broken']
+
+
+def test_native_deck_generation_is_pausable_and_retryable(client, app):
+    """批量生成页面：GENERATE_NATIVE_DECK 任务可暂停/恢复，失败后可重试，
+    且面板能力标记与之匹配。"""
+    from models import Task, db
+    from services.task_control_service import task_capabilities
+
+    with app.app_context():
+        project_id = _project_id(client)
+        task = Task(
+            project_id=project_id,
+            task_type='GENERATE_NATIVE_DECK',
+            status='PENDING',
+        )
+        task.set_progress({
+            'total': 2,
+            'completed': 0,
+            'failed': 0,
+            'page_ids': ['page-a', 'page-b'],
+            '_resume': {
+                'kind': 'native-deck',
+                'kwargs': {'project_id': project_id, 'page_ids': ['page-a', 'page-b']},
+            },
+        })
+        db.session.add(task)
+        db.session.commit()
+        task_id = task.id
+
+    # 暂停能力：PENDING 阶段可暂停
+    response = client.post(f'/api/projects/{project_id}/tasks/{task_id}/pause')
+    assert response.status_code == 200
+    assert response.get_json()['data']['status'] == 'PAUSED'
+
+    with app.app_context():
+        task = db.session.get(Task, task_id)
+        assert task.status == 'PAUSED'
+        assert task_capabilities(task)['resume'] is True
+
+    # 失败后重试：_resubmit 重新提交原生生成任务
+    from controllers import native_deck_controller as controller
+    from services.task_manager import generate_native_deck_task, task_manager
+
+    submitted = []
+    original = task_manager.submit_task
+
+    def fake_submit(task_id_arg, fn, *args, **kwargs):
+        submitted.append((fn, args, kwargs))
+        return None
+
+    task_manager.submit_task = fake_submit
+    try:
+        with app.app_context():
+            task = db.session.get(Task, task_id)
+            task.status = 'FAILED'
+            task.error_message = 'images[0] 必须使用项目素材路径'
+            db.session.commit()
+        from services.task_control_service import retry_task
+        retry_task(db.session.get(Task, task_id))
+        assert len(submitted) == 1
+        fn, args, kwargs = submitted[0]
+        assert fn is generate_native_deck_task
+        assert kwargs.get('page_ids') == ['page-a', 'page-b']
+        assert args[0] == project_id
+    finally:
+        task_manager.submit_task = original

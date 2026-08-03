@@ -15,6 +15,7 @@ const exportI18n = {
       tasks: "导出任务", inProgress: "{{count}} 进行中", clearHistory: "清除",
       exportPptx: "PPTX", exportPdf: "PDF", exportEditablePptx: "可编辑 PPTX", exportNativePptx: "原生可编辑 PPTX", exportNativePdf: "原生 PDF", exportNativeHtml: "离线 HTML", exportImages: "图片", exportVideo: "讲解视频", exportPodcast: "播客音频",
       generateVideo: "生成视频候选", generatePodcast: "生成节目候选", initializeWorkspace: "初始化工作区",
+      generatePages: "批量生成页面", generateImages: "批量生成图片", generateDescriptions: "生成描述", narrationBatch: "旁白批量处理",
       allPages: "全部", pageRange: "第{{start}}-{{end}}页", singlePage: "第{{num}}页", pagesCount: "{{count}}页",
       warnings: "{{count}} 条警告", clickToView: "点击查看", warningsTitle: "导出警告",
       warningsCount: "导出警告 ({{count}} 条)", detailInfo: "详细信息",
@@ -33,6 +34,7 @@ const exportI18n = {
       tasks: "Export Tasks", inProgress: "{{count}} in progress", clearHistory: "Clear",
       exportPptx: "PPTX", exportPdf: "PDF", exportEditablePptx: "Editable PPTX", exportNativePptx: "Native editable PPTX", exportNativePdf: "Native PDF", exportNativeHtml: "Offline HTML", exportImages: "Images", exportVideo: "Narration Video", exportPodcast: "Podcast audio",
       generateVideo: "Generate video candidate", generatePodcast: "Generate podcast candidate", initializeWorkspace: "Initialize workspace",
+      generatePages: "Generate pages", generateImages: "Generate images", generateDescriptions: "Generate descriptions", narrationBatch: "Narration batch",
       allPages: "All", pageRange: "Pages {{start}}-{{end}}", singlePage: "Page {{num}}", pagesCount: "{{count}} pages",
       warnings: "{{count}} warnings", clickToView: "Click to view", warningsTitle: "Export Warnings",
       warningsCount: "Export Warnings ({{count}})", detailInfo: "Details",
@@ -269,6 +271,10 @@ const TaskItem: React.FC<{
     'generate-video': t('export.generateVideo'),
     'generate-podcast': t('export.generatePodcast'),
     'initialize-workspace': t('export.initializeWorkspace'),
+    'generate-pages': t('export.generatePages'),
+    'generate-images': t('export.generateImages'),
+    'generate-descriptions': t('export.generateDescriptions'),
+    'narration-batch': t('export.narrationBatch'),
     'workspace': '准备工作区',
   };
   

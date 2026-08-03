@@ -1899,6 +1899,8 @@ export const SlidePreview: React.FC = () => {
   const handleRetryExport = (task: ExportTask) => {
     if (task.type === 'native-pptx' || task.type === 'native-pdf' || task.type === 'native-html' || task.type === 'podcast' || task.type === 'workspace') return;
     if (task.type === 'generate-video' || task.type === 'generate-podcast' || task.type === 'initialize-workspace') return;
+    // 生成类任务走服务端重试（面板重试按钮），不是客户端导出
+    if (task.type === 'generate-pages' || task.type === 'generate-images' || task.type === 'generate-descriptions' || task.type === 'narration-batch') return;
     handleExport(task.type, { pageIds: task.pageIds });
   };
 

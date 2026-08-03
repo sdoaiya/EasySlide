@@ -13,7 +13,7 @@ const t = getT(exportI18n);
 
 // Note: Backend uses 'RUNNING' but we also accept 'PROCESSING' for compatibility
 export type ExportTaskStatus = 'PENDING' | 'PROCESSING' | 'RUNNING' | 'PAUSED' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
-export type ExportTaskType = 'pptx' | 'pdf' | 'editable-pptx' | 'native-pptx' | 'native-pdf' | 'native-html' | 'images' | 'video' | 'podcast' | 'workspace' | 'generate-video' | 'generate-podcast' | 'initialize-workspace';
+export type ExportTaskType = 'pptx' | 'pdf' | 'editable-pptx' | 'native-pptx' | 'native-pdf' | 'native-html' | 'images' | 'video' | 'podcast' | 'workspace' | 'generate-video' | 'generate-podcast' | 'initialize-workspace' | 'generate-pages' | 'generate-images' | 'generate-descriptions' | 'narration-batch';
 
 export interface ExportTask {
   id: string;
@@ -98,7 +98,10 @@ export function mapTaskType(taskType?: string, workspaceKind?: string): ExportTa
   if (taskType === 'EXPORT_VIDEO_WORKSPACE') return 'video';
   if (taskType === 'EXPORT_PODCAST_WORKSPACE') return 'podcast';
   if (taskType === 'INITIALIZE_CONTENT_WORKSPACE') return 'initialize-workspace';
-  if (taskType === 'GENERATE_DESCRIPTIONS' || taskType === 'GENERATE_IMAGES' || taskType === 'NARRATION_AI_BATCH') return 'workspace';
+  if (taskType === 'GENERATE_NATIVE_DECK') return 'generate-pages';
+  if (taskType === 'GENERATE_IMAGES') return 'generate-images';
+  if (taskType === 'GENERATE_DESCRIPTIONS') return 'generate-descriptions';
+  if (taskType === 'NARRATION_AI_BATCH') return 'narration-batch';
   return 'workspace';
 }
 

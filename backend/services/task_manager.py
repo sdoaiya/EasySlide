@@ -1170,7 +1170,11 @@ def generate_native_deck_task(task_id: str, project_id: str, ai_service, page_id
                 project_topic=get_spine_source_fields(project)['idea_prompt'],
             )
             task.status = 'PROCESSING'
-            task.set_progress({'total': len(pages), 'completed': 0, 'failed': 0, 'failed_page_ids': [], 'warnings': [], 'quality_warnings': []})
+            progress = {'total': len(pages), 'completed': 0, 'failed': 0, 'failed_page_ids': [], 'warnings': [], 'quality_warnings': []}
+            resume = task.get_progress().get('_resume') if isinstance(task.get_progress(), dict) else None
+            if resume:
+                progress['_resume'] = resume
+            task.set_progress(progress)
             db.session.commit()
 
             completed = 0
@@ -1258,14 +1262,17 @@ def generate_native_deck_task(task_id: str, project_id: str, ai_service, page_id
                         used_layouts.add(page.native_layout)
                         layout_history.append(page.native_layout)
                         completed += 1
-                        task.set_progress({
+                        progress = {
                             'total': len(pages),
                             'completed': completed,
                             'failed': failed,
                             'failed_page_ids': failed_page_ids,
                             'warnings': warnings,
                             'quality_warnings': quality_warnings,
-                        })
+                        }
+                        if resume:
+                            progress['_resume'] = resume
+                        task.set_progress(progress)
                         db.session.commit()
                         continue
                     try:
@@ -1308,14 +1315,17 @@ def generate_native_deck_task(task_id: str, project_id: str, ai_service, page_id
                         })
                         completed += 1
 
-                task.set_progress({
+                progress = {
                     'total': len(pages),
                     'completed': completed,
                     'failed': failed,
                     'failed_page_ids': failed_page_ids,
                     'warnings': warnings,
                     'quality_warnings': quality_warnings,
-                })
+                }
+                if resume:
+                    progress['_resume'] = resume
+                task.set_progress(progress)
                 db.session.commit()
 
             task.status = 'COMPLETED'

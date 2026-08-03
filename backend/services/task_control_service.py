@@ -14,6 +14,7 @@ PAUSABLE_TASK_TYPES = {
     'GENERATE_DESCRIPTIONS',
     'GENERATE_IMAGES',
     'NARRATION_AI_BATCH',
+    'GENERATE_NATIVE_DECK',
     'GENERATE_WORKSPACE_CANDIDATE',
     'EXPORT_VIDEO_WORKSPACE',
     'EXPORT_PODCAST_WORKSPACE',
@@ -90,6 +91,21 @@ def _resubmit(task) -> None:
     elif kind == 'content-workspace':
         from controllers.content_workspace_controller import submit_workspace_task
         submit_workspace_task(task.id, **kwargs)
+    elif kind == 'native-deck':
+        from services.task_manager import generate_native_deck_task
+        from services.ai_service_manager import get_ai_service
+        from flask import current_app
+        project_id = kwargs.get('project_id')
+        if not project_id:
+            return
+        task_manager.submit_task(
+            task.id,
+            generate_native_deck_task,
+            project_id,
+            get_ai_service(),
+            page_ids=kwargs.get('page_ids'),
+            app=current_app._get_current_object(),
+        )
 
 
 def resume_task(task) -> None:

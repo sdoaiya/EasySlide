@@ -345,3 +345,15 @@ describe('useExportTasksStore', () => {
     expect(useExportTasksStore.getState().tasks[0].filename).toBe('年度经营复盘.pptx')
   })
 })
+
+describe('mapTaskType', () => {
+  it('maps native deck page generation to a page-generation label instead of workspace', async () => {
+    const { mapTaskType } = await import('@/store/useExportTasksStore')
+    expect(mapTaskType('GENERATE_NATIVE_DECK')).toBe('generate-pages')
+    expect(mapTaskType('GENERATE_IMAGES')).toBe('generate-images')
+    expect(mapTaskType('GENERATE_DESCRIPTIONS')).toBe('generate-descriptions')
+    expect(mapTaskType('NARRATION_AI_BATCH')).toBe('narration-batch')
+    expect(mapTaskType('INITIALIZE_CONTENT_WORKSPACE')).toBe('initialize-workspace')
+    expect(mapTaskType('GENERATE_NATIVE_DECK', 'ppt')).toBe('generate-pages')
+  })
+})

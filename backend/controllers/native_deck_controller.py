@@ -103,7 +103,16 @@ def generate_native_deck(project_id):
         return bad_request('请先生成大纲页面')
 
     task = Task(project_id=project_id, task_type='GENERATE_NATIVE_DECK', status='PENDING')
-    task.set_progress({'total': page_count, 'completed': 0, 'failed': 0, 'page_ids': requested_page_ids})
+    task.set_progress({
+        'total': page_count,
+        'completed': 0,
+        'failed': 0,
+        'page_ids': requested_page_ids,
+        '_resume': {
+            'kind': 'native-deck',
+            'kwargs': {'project_id': project_id, 'page_ids': requested_page_ids},
+        },
+    })
     db.session.add(task)
     db.session.commit()
     task_manager.submit_task(
