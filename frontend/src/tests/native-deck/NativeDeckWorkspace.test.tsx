@@ -59,6 +59,8 @@ const exportTaskMocks = vi.hoisted(() => ({
   loadMoreTasks: vi.fn(),
 }))
 
+const taskStatusMocks = vi.hoisted(() => ({ getTaskStatus: vi.fn() }))
+
 const frameMocks = vi.hoisted(() => ({ capture: vi.fn(), captureManifests: vi.fn() }))
 const sceneBundleMocks = vi.hoisted(() => ({ capture: vi.fn() }))
 const exportMocks = vi.hoisted(() => ({
@@ -100,7 +102,7 @@ vi.mock('@/api/endpoints', () => ({
   updatePagesOrder: nativeApiMocks.updatePagesOrder,
   completeNativePptxExport: nativeApiMocks.completeNativePptxExport,
   createNativePptxExport: nativeApiMocks.createNativePptxExport,
-  getTaskStatus: vi.fn(),
+  getTaskStatus: taskStatusMocks.getTaskStatus,
   generateMaterialImage: nativeApiMocks.generateMaterialImage,
   updateNativePptxProgress: vi.fn(),
   getSettings: vi.fn().mockResolvedValue({ data: { fish_audio_voice_assets: [] } }),
@@ -217,6 +219,7 @@ describe('NativeDeckWorkspace', () => {
     })
     nativeApiMocks.previewFishNarration.mockReset().mockResolvedValue(new Blob(['preview'], { type: 'audio/mpeg' }))
     nativeApiMocks.generateMaterialImage.mockReset()
+    taskStatusMocks.getTaskStatus.mockReset()
     nativeApiMocks.updateProject.mockReset().mockResolvedValue({ data: undefined })
     nativeApiMocks.getNativePageVersions.mockReset().mockResolvedValue({ data: { versions: [] } })
     nativeApiMocks.restoreNativePageVersion.mockReset().mockResolvedValue({ data: {} })
@@ -611,6 +614,25 @@ describe('NativeDeckWorkspace', () => {
 
     await waitFor(() => expect(nativeApiMocks.updateProject).toHaveBeenCalled())
     expect(nativeApiMocks.generateMaterialImage).not.toHaveBeenCalled()
+  })
+
+  it('runs the batch media generation to completion when clicking 批量生成', async () => {
+    vi.useRealTimers()
+    nativeApiMocks.generateMaterialImage.mockResolvedValue({ data: { task_id: 'mat-task-1', status: 'PENDING' } })
+    taskStatusMocks.getTaskStatus.mockResolvedValue({
+      data: { status: 'COMPLETED', progress: { total: 1, completed: 1, image_url: '/files/project-1/materials/gen.webp' } },
+    })
+    renderWorkspace([{ ...slides[1], props: { ...slides[1].props, image: '' } }])
+
+    const batchButton = screen.getByRole('button', { name: '批量生成' })
+    expect(batchButton).toBeEnabled()
+    fireEvent.click(batchButton)
+
+    await waitFor(() => expect(nativeApiMocks.generateMaterialImage).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(taskStatusMocks.getTaskStatus).toHaveBeenCalledWith('project-1', 'mat-task-1'))
+
+    const updated = useNativeDeckStore.getState().slides.find((slide) => slide.pageId === 'page-2')
+    expect(updated?.props.image).toBe('/files/project-1/materials/gen.webp')
   })
 
   it('keeps click-triggered element animation visible while editing', () => {

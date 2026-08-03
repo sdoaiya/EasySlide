@@ -185,10 +185,15 @@ def task_projection(task) -> dict:
         'progress': {
             'total': progress.get('total', 0),
             'completed': progress.get('completed', 0),
+            'failed': progress.get('failed', 0),
             'percent': progress.get('percent', 0),
             'current_step': progress.get('current_step'),
             'stage': progress.get('stage'),
             'item_ids': progress.get('item_ids'),
+            # 素材生成等任务通过 image_url 回传结果图片，前端轮询依赖该字段
+            'image_url': progress.get('image_url'),
+            # 原生批量生成页面的失败页清单，前端用于失败重试
+            'failed_page_ids': progress.get('failed_page_ids'),
         },
         'capabilities': task_capabilities(task),
         'result': result,

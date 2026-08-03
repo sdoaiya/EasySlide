@@ -137,3 +137,63 @@ class TestServerTaskList:
         assert response.status_code == 200
         data = response.get_json()['data']
         assert all(item['project_id'] == project_id for item in data['tasks'])
+
+
+def test_material_generation_projection_keeps_image_url(client, app):
+    """批量生成素材链路：GENERATE_MATERIAL 任务完成时 progress.image_url
+    必须出现在投影里，前端轮询才能拿到结果图（回归：白名单过滤丢字段）。"""
+    from models import Task, db
+
+    with app.app_context():
+        project_id = _project_id(client)
+        task = Task(
+            project_id=project_id,
+            task_type='GENERATE_MATERIAL',
+            status='COMPLETED',
+        )
+        task.set_progress({
+            'total': 1,
+            'completed': 1,
+            'failed': 0,
+            'material_id': 'mat-1',
+            'image_url': '/files/project/materials/img.webp',
+        })
+        db.session.add(task)
+        db.session.commit()
+        task_id = task.id
+
+    response = client.get(f'/api/projects/{project_id}/tasks/{task_id}')
+    assert response.status_code == 200
+    item = response.get_json()['data']
+    assert item['status'] == 'COMPLETED'
+    assert item['progress']['image_url'] == '/files/project/materials/img.webp'
+
+
+def test_native_deck_generation_projection_keeps_failed_page_ids(client, app):
+    """原生批量生成页面：失败页清单必须穿透投影，前端才能重试失败页。"""
+    from models import Task, db
+
+    with app.app_context():
+        project_id = _project_id(client)
+        task = Task(
+            project_id=project_id,
+            task_type='GENERATE_NATIVE_DECK',
+            status='COMPLETED',
+        )
+        task.set_progress({
+            'total': 3,
+            'completed': 2,
+            'failed': 1,
+            'failed_page_ids': ['page-broken'],
+        })
+        db.session.add(task)
+        db.session.commit()
+        task_id = task.id
+
+    response = client.get(f'/api/projects/{project_id}/tasks/{task_id}')
+    assert response.status_code == 200
+    item = response.get_json()['data']
+    assert item['status'] == 'COMPLETED'
+    assert item['progress']['completed'] == 2
+    assert item['progress']['failed'] == 1
+    assert item['progress']['failed_page_ids'] == ['page-broken']
