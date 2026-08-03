@@ -66,12 +66,11 @@ def _scene(scene_id, title, narration_text, *, visual_kind, source_ref, source_r
 
 
 def build_video_document_from_spine(spine_document, settings=None):
-    from services.content_spine_service import get_spine_sections
-
     settings = settings or {}
     title = str(spine_document['topic']['value'] or 'Untitled project')[:255]
     scenes = []
-    for index, section in enumerate(get_spine_sections(spine_document)):
+    # 只物化结构化章节；raw-source 回退仅用于预览，未生成大纲时保持空场景
+    for index, section in enumerate(spine_document.get('sections') or []):
         scene_title = str(section.get('title') or '')
         narration_text = str(section.get('summary') or scene_title)
         scenes.append(_scene(

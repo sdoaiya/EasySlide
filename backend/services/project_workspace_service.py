@@ -8,7 +8,7 @@ from pathlib import Path
 from jsonschema import Draft202012Validator
 
 from models import Material, Page, ProjectWorkspace, Task, WorkspaceVersion, db
-from services.content_spine_service import canonical_json, document_hash, get_spine_sections
+from services.content_spine_service import canonical_json, document_hash
 from services.video_workspace_service import (
     build_video_document_from_ppt,
     build_video_document_from_spine,
@@ -82,7 +82,10 @@ def _ensure_ppt_pages(project_id: str, spine_document: dict) -> list[Page]:
     if existing:
         return existing
     pages = []
-    for index, section in enumerate(get_spine_sections(spine_document)):
+    # 只物化已确认/已生成的结构化章节；raw-source 回退只用于预览，
+    # 否则未生成大纲时会把整段简报误切成一条伪大纲页
+    sections = spine_document.get('sections') or []
+    for index, section in enumerate(sections):
         title = str(section.get('title') or '').strip() or f'第 {index + 1} 页'
         page = Page(
             project_id=project_id,

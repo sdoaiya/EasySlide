@@ -5,8 +5,6 @@ import json
 
 
 def build_podcast_document_from_spine(spine_document, settings=None):
-    from services.content_spine_service import get_spine_sections
-
     settings = settings or {}
     title = str(spine_document['topic']['value'] or 'Untitled project')[:255]
     speakers = settings.get('speakers') or [
@@ -18,7 +16,8 @@ def build_podcast_document_from_spine(spine_document, settings=None):
     if fmt == 'dialogue' and len(speakers) < 2:
         raise ValueError('dialogue podcast requires at least two speakers')
     segments = []
-    for index, section in enumerate(get_spine_sections(spine_document)):
+    # 只物化结构化章节；raw-source 回退仅用于预览，未生成大纲时保持空片段
+    for index, section in enumerate(spine_document.get('sections') or []):
         speaker = speakers[index % len(speakers)]
         segments.append({
             'segment_id': f'segment.{index + 1}',

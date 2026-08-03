@@ -121,7 +121,9 @@ def test_confirm_materializes_source_sections_without_changing_revision(client, 
         assert [item['title'] for item in document['sections']] == ['背景', '方案']
 
 
-def test_workspace_adapters_fallback_to_frozen_source_when_sections_are_empty():
+def test_workspace_adapters_do_not_materialize_raw_source_fallback():
+    """raw-source 回退只用于预览/确认提升；工作区物化必须等待结构化章节，
+    否则创建后会把整段简报误切成伪大纲页/场景。"""
     from services.content_spine_service import get_spine_sections
     from services.podcast_service import build_podcast_document_from_spine
     from services.video_workspace_service import build_video_document_from_spine
@@ -139,5 +141,16 @@ def test_workspace_adapters_fallback_to_frozen_source_when_sections_are_empty():
     sections = get_spine_sections(spine)
     assert [item['title'] for item in sections] == ['背景', '方案']
     assert sections[0]['key_points'] == ['现状']
-    assert len(build_video_document_from_spine(spine)['scenes']) == 2
-    assert len(build_podcast_document_from_spine(spine)['segments']) == 2
+    assert build_video_document_from_spine(spine)['scenes'] == []
+    assert build_podcast_document_from_spine(spine)['segments'] == []
+
+    spine['sections'] = [{
+        'section_id': 'section.1',
+        'title': '结构化章节',
+        'summary': '摘要',
+        'key_points': [],
+        'fact_refs': [],
+        'source_refs': [],
+    }]
+    assert len(build_video_document_from_spine(spine)['scenes']) == 1
+    assert len(build_podcast_document_from_spine(spine)['segments']) == 1
