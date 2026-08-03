@@ -29,6 +29,9 @@ try {
 
   Copy-Item -Recurse -Force frontend\dist\* $frontendStage
   Copy-Item -Recurse -Force backend\dist\easyslide-backend\* $backendStage
+  # 打包后端在 _internal 之外按 resources/backend 解析离线 GSAP 运行时，
+  # 需要把 experiments/hyperframes-m0 放到 resources\backend\experiments
+  Copy-Item -Recurse -Force experiments\hyperframes-m0 (Join-Path $backendStage 'experiments\hyperframes-m0')
   $credentialSource = if ($env:EASLIDE_CREDENTIALS_DB) {
     $env:EASLIDE_CREDENTIALS_DB
   } else {
