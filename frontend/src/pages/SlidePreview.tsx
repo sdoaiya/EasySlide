@@ -94,6 +94,7 @@ const previewI18n = {
       projectSettings: "项目设置", changeTemplate: "更换模板", refresh: "刷新",
       batchGenerate: "开始生成 ({{count}})", generateSelected: "生成选中页面 ({{count}})",
       pauseGeneration: "暂停生成", resumeGeneration: "继续生成",
+      batchGenerateTitle: "批量生成图片",
       generationProgress: "{{status}} {{completed}} / {{total}}",
       generationRunning: "正在生成", generationPaused: "已暂停",
       multiSelect: "多选", cancelMultiSelect: "取消多选", pagesUnit: "页",
@@ -227,6 +228,7 @@ const previewI18n = {
       projectSettings: "Project Settings", changeTemplate: "Change Template", refresh: "Refresh",
       batchGenerate: "Start Generation ({{count}})", generateSelected: "Generate Selected ({{count}})",
       pauseGeneration: "Pause Generation", resumeGeneration: "Resume Generation",
+      batchGenerateTitle: "Batch generate images",
       generationProgress: "{{status}} {{completed}} / {{total}}",
       generationRunning: "Generating", generationPaused: "Paused",
       multiSelect: "Multi-select", cancelMultiSelect: "Cancel Multi-select", pagesUnit: " pages",
@@ -293,7 +295,7 @@ import {
   Check,
   FileText,
   Film,
-  Loader2, ChevronDown,
+  Loader2, ChevronDown, PauseCircle,
   Info,
   Pause,
   Play,
@@ -3591,19 +3593,28 @@ export const SlidePreview: React.FC = () => {
         statusBar={(
           <WorkspaceStatusBar className="gap-3">
             {imageGenerationActive && activeImageTask?.progress ? (
-              <>
-                <span className="min-w-0 flex-1 truncate">
-                  {t('preview.generationProgress', {
-                    status: imageGenerationPaused ? t('preview.generationPaused') : t('preview.generationRunning'),
-                    completed: activeImageTask.progress.completed || 0,
-                    total: activeImageTask.progress.total || 0,
-                  })}
+              <span data-testid="image-generation-progress" className="inline-flex min-w-0 items-center gap-2 rounded-md border border-[var(--app-border)] bg-[var(--app-surface)] px-2 py-1">
+                {imageGenerationPaused ? (
+                  <PauseCircle size={13} className="shrink-0 text-[var(--app-warning)]" aria-hidden="true" />
+                ) : (
+                  <Loader2 size={13} className="shrink-0 animate-spin text-[var(--app-accent)]" aria-hidden="true" />
+                )}
+                <span className="hidden whitespace-nowrap font-medium text-[var(--app-text)] sm:inline">{t('preview.batchGenerateTitle')}</span>
+                <span className="whitespace-nowrap" role="status" aria-live="polite">
+                  {activeImageTask.progress.completed || 0}/{activeImageTask.progress.total || 0}
                 </span>
-                <div className="h-1.5 w-28 overflow-hidden rounded-full bg-[var(--app-surface-hover)]" aria-hidden="true">
-                  <div className="h-full rounded-full bg-[var(--app-accent)] transition-[width] duration-300" style={{ width: `${imageGenerationProgressPercent}%` }} />
-                </div>
-                <span className="w-9 text-right font-medium text-[var(--app-accent)]">{imageGenerationProgressPercent}%</span>
-              </>
+                {(activeImageTask.progress.failed || 0) > 0 && (
+                  <span className="whitespace-nowrap text-[var(--app-error)]">失败 {activeImageTask.progress.failed}</span>
+                )}
+                <span className="h-1.5 w-16 shrink-0 overflow-hidden rounded-full bg-[var(--app-border)]" aria-hidden="true">
+                  <span className="block h-full rounded-full bg-[var(--app-accent)] transition-[width] duration-300" style={{ width: `${imageGenerationProgressPercent}%` }} />
+                </span>
+                {imageGenerationPaused ? (
+                  <button type="button" onClick={resumeImageGeneration} className="whitespace-nowrap font-medium text-[var(--app-accent)] hover:underline">{t('preview.resumeGeneration')}</button>
+                ) : (
+                  <button type="button" onClick={pauseImageGeneration} className="whitespace-nowrap font-medium text-[var(--app-text-secondary)] hover:underline">{t('preview.pauseGeneration')}</button>
+                )}
+              </span>
             ) : (
               <span>{currentProject.pages.length > 0 ? `第 ${selectedIndex + 1} 页` : '0 页'}</span>
             )}

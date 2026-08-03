@@ -573,6 +573,45 @@ describe('EasySlide internal workflow chrome', () => {
     });
   }, 15_000);
 
+  it('shows batch image generation progress with pause in the bottom status bar', () => {
+    mocks.store.activeImageTask = {
+      task_id: 'img-task-1',
+      task_type: 'GENERATE_IMAGES',
+      status: 'PROCESSING',
+      progress: { total: 4, completed: 2, failed: 1, page_ids: ['page-1'] },
+    };
+    mocks.store.pauseImageGeneration.mockClear();
+    mocks.store.resumeImageGeneration.mockClear();
+
+    renderAt('/project/project-1/preview', <SlidePreview />);
+
+    const progress = screen.getByTestId('image-generation-progress');
+    expect(progress).toHaveTextContent('批量生成图片');
+    expect(progress).toHaveTextContent('2/4');
+    expect(progress).toHaveTextContent('失败 1');
+
+    fireEvent.click(within(progress).getByRole('button', { name: '暂停生成' }));
+    expect(mocks.store.pauseImageGeneration).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows resume control when batch image generation is paused', () => {
+    mocks.store.activeImageTask = {
+      task_id: 'img-task-1',
+      task_type: 'GENERATE_IMAGES',
+      status: 'PAUSED',
+      progress: { total: 4, completed: 3, failed: 0, page_ids: ['page-1'] },
+    };
+    mocks.store.resumeImageGeneration.mockClear();
+
+    renderAt('/project/project-1/preview', <SlidePreview />);
+
+    const progress = screen.getByTestId('image-generation-progress');
+    expect(progress).toHaveTextContent('批量生成图片');
+    expect(progress).toHaveTextContent('3/4');
+    fireEvent.click(within(progress).getByRole('button', { name: '继续生成' }));
+    expect(mocks.store.resumeImageGeneration).toHaveBeenCalledTimes(1);
+  });
+
   it('shows quality reminders for conflicting image prompt requirements', () => {
     renderAt('/project/project-1/preview', <SlidePreview />);
 
@@ -717,7 +756,7 @@ describe('EasySlide internal workflow chrome', () => {
 
     const { rerender } = renderAt('/project/project-1/preview', <SlidePreview />);
 
-    fireEvent.click(screen.getByRole('button', { name: '暂停生成' }));
+    fireEvent.click(within(screen.getByTestId('image-generation-progress')).getByRole('button', { name: '暂停生成' }));
     expect(mocks.store.pauseImageGeneration).toHaveBeenCalledTimes(1);
 
     mocks.store.activeImageTask = {
@@ -732,7 +771,7 @@ describe('EasySlide internal workflow chrome', () => {
       </MemoryRouter>
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '继续生成' }));
+    fireEvent.click(within(screen.getByTestId('image-generation-progress')).getByRole('button', { name: '继续生成' }));
     expect(mocks.store.resumeImageGeneration).toHaveBeenCalledTimes(1);
   });
 
@@ -793,7 +832,8 @@ describe('EasySlide internal workflow chrome', () => {
 
     renderAt('/project/project-1/preview', <SlidePreview />);
 
-    const progress = screen.getByText('正在生成 1 / 3');
+    const progress = screen.getByTestId('image-generation-progress');
+    expect(progress).toHaveTextContent('1/3');
     expect(progress.closest('footer')).not.toBeNull();
   });
 
