@@ -667,6 +667,56 @@ describe('NativeDeckWorkspace', () => {
     expect(pageAction).toHaveClass('bg-[var(--app-primary-action)]')
   })
 
+  it('shows batch page generation progress in the bottom status bar', () => {
+    const onPause = vi.fn()
+    const onResume = vi.fn()
+    const { rerender } = render(
+      <NativeDeckWorkspace
+        projectId="project-1"
+        slides={slides}
+        layoutContracts={layoutContracts}
+        pageGenerationStatus={{ status: 'PROCESSING', completed: 2, failed: 0, total: 4, onPause, onResume }}
+        autoSaveDelay={300}
+      />,
+    )
+
+    const progress = screen.getByTestId('native-generation-progress')
+    expect(progress).toHaveTextContent('批量生成页面')
+    expect(progress).toHaveTextContent('2/4')
+    fireEvent.click(within(progress).getByRole('button', { name: '暂停' }))
+    expect(onPause).toHaveBeenCalledTimes(1)
+
+    rerender(
+      <NativeDeckWorkspace
+        projectId="project-1"
+        slides={slides}
+        layoutContracts={layoutContracts}
+        pageGenerationStatus={{ status: 'FAILED', completed: 2, failed: 1, total: 4, error: '第 3 页: 生成失败', onPause, onResume }}
+        autoSaveDelay={300}
+      />,
+    )
+
+    const failed = screen.getByTestId('native-generation-progress')
+    expect(failed).toHaveTextContent('失败 1')
+    expect(failed).toHaveTextContent('第 3 页: 生成失败')
+    fireEvent.click(within(failed).getByRole('button', { name: '重试失败页' }))
+    expect(onResume).toHaveBeenCalledTimes(1)
+  })
+
+  it('hides the generation progress when idle or complete', () => {
+    render(
+      <NativeDeckWorkspace
+        projectId="project-1"
+        slides={slides}
+        layoutContracts={layoutContracts}
+        pageGenerationStatus={{ status: 'COMPLETED', completed: 4, failed: 0, total: 4 }}
+        autoSaveDelay={300}
+      />,
+    )
+
+    expect(screen.queryByTestId('native-generation-progress')).not.toBeInTheDocument()
+  })
+
   it('uses the compact native toolbar and tracks PPTX export as a task', async () => {
     vi.useRealTimers()
     render(

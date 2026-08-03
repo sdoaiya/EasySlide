@@ -122,7 +122,13 @@ export function NativeDeckWorkspaceLoader({ generationTaskId, totalPages = 0, ..
         <NativeDeckWorkspace
           {...props}
           layoutContracts={contracts}
-          pageGenerationStatus={generation ? { ...generation, onPause: generation.status === 'PENDING' || generation.status === 'PROCESSING' ? () => void pauseGeneration() : undefined, onResume: generation.status === 'FAILED' && generation.failedPageIds.length ? () => void startGeneration(generation.failedPageIds) : generation.status === 'PAUSED' ? () => void resumeGeneration() : undefined } : undefined}
+          pageGenerationStatus={generation ? {
+            ...generation,
+            onPause: generation.status === 'PENDING' || generation.status === 'PROCESSING' ? () => void pauseGeneration() : undefined,
+            onResume: generation.status === 'FAILED'
+              ? () => void startGeneration(generation.failedPageIds.length ? generation.failedPageIds : undefined)
+              : generation.status === 'PAUSED' ? () => void resumeGeneration() : undefined,
+          } : undefined}
           pageGenerationAction={props.slides.some(slide => slide.pending) && !generationActive
             ? { label: '批量生成页面', onClick: () => void startGeneration(props.slides.filter(slide => slide.pending).map(slide => slide.pageId)) }
             : undefined}

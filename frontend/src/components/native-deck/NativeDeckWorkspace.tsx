@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MutableRefObject } from 'react'
-import { ChevronDown, Download, FileText, Film, ListTodo, Loader2, Maximize2, MonitorPlay, Play, Plus, Redo2, RefreshCw, Settings2, Sparkles, Trash2, Undo2, X, ZoomIn, ZoomOut } from 'lucide-react'
+import { AlertTriangle, ChevronDown, Download, FileText, Film, ListTodo, Loader2, Maximize2, MonitorPlay, PauseCircle, Play, Plus, Redo2, RefreshCw, Settings2, Sparkles, Trash2, Undo2, X, ZoomIn, ZoomOut } from 'lucide-react'
 import type { NativeSlideSpec } from '@/native-deck/types'
 import type { NarrationPreferences, NarrationPreviewResult, NarrationSpeaker, ProjectNarrationSummary, PronunciationEntry } from '@/types'
 import { useNativeDeckStore } from '@/store/useNativeDeckStore'
@@ -915,6 +915,46 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
       )}
       statusBar={(
         <WorkspaceStatusBar className="gap-4">
+          {pageGenerationStatus && ['PENDING', 'PROCESSING', 'PAUSED', 'FAILED'].includes(pageGenerationStatus.status) && (
+            <span data-testid="native-generation-progress" className="inline-flex min-w-0 items-center gap-2 rounded-md border border-[var(--app-border)] bg-[var(--app-surface)] px-2 py-1">
+              {pageGenerationStatus.status === 'FAILED' ? (
+                <AlertTriangle size={13} className="shrink-0 text-[var(--app-error)]" aria-hidden="true" />
+              ) : pageGenerationStatus.status === 'PAUSED' ? (
+                <PauseCircle size={13} className="shrink-0 text-[var(--app-warning)]" aria-hidden="true" />
+              ) : (
+                <Loader2 size={13} className="shrink-0 animate-spin text-[var(--app-accent)]" aria-hidden="true" />
+              )}
+              <span className="hidden whitespace-nowrap font-medium text-[var(--app-text)] sm:inline">批量生成页面</span>
+              <span className="whitespace-nowrap" role="status" aria-live="polite">
+                {pageGenerationStatus.completed}/{pageGenerationStatus.total}
+              </span>
+              {pageGenerationStatus.failed > 0 && (
+                <span className="whitespace-nowrap text-[var(--app-error)]">失败 {pageGenerationStatus.failed}</span>
+              )}
+              <span className="h-1.5 w-16 shrink-0 overflow-hidden rounded-full bg-[var(--app-border)]" aria-hidden="true">
+                <span
+                  className={`block h-full rounded-full ${pageGenerationStatus.status === 'FAILED' ? 'bg-[var(--app-error)]' : 'bg-[var(--app-accent)]'}`}
+                  style={{ width: `${pageGenerationStatus.total > 0 ? Math.round((pageGenerationStatus.completed / pageGenerationStatus.total) * 100) : 0}%` }}
+                />
+              </span>
+              {pageGenerationStatus.status === 'FAILED' && pageGenerationStatus.error && (
+                <span className="hidden max-w-56 truncate text-[var(--app-text-tertiary)] lg:inline" title={pageGenerationStatus.error}>{pageGenerationStatus.error}</span>
+              )}
+              {pageGenerationStatus.status === 'FAILED' ? (
+                pageGenerationStatus.onResume && (
+                  <button type="button" onClick={pageGenerationStatus.onResume} className="whitespace-nowrap font-medium text-[var(--app-accent)] hover:underline">重试失败页</button>
+                )
+              ) : pageGenerationStatus.status === 'PAUSED' ? (
+                pageGenerationStatus.onResume && (
+                  <button type="button" onClick={pageGenerationStatus.onResume} className="whitespace-nowrap font-medium text-[var(--app-accent)] hover:underline">继续</button>
+                )
+              ) : (
+                pageGenerationStatus.onPause && (
+                  <button type="button" onClick={pageGenerationStatus.onPause} className="whitespace-nowrap font-medium text-[var(--app-text-secondary)] hover:underline">暂停</button>
+                )
+              )}
+            </span>
+          )}
           <span className="inline-flex items-center gap-2" role="status" aria-live="polite"><span className={`h-1.5 w-1.5 rounded-full ${dirtyPageIds.size || exportError || saveError ? 'bg-[var(--app-warning)]' : 'bg-[var(--app-success)]'}`} aria-hidden="true" />{saveStatus}</span>
           <span>{slides.length ? `第 ${selectedIndex + 1} / ${slides.length} 页` : '0 页'}</span>
           <span className="hidden sm:inline">{currentProject?.image_aspect_ratio || '16:9'}</span>
