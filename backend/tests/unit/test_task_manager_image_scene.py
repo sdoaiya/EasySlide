@@ -81,3 +81,42 @@ def test_prepare_image_scene_version_uses_hero_and_stable_page_copy(
     )
     assert artifacts['scene_manifest_ref']['page_id'] == 'page-1'
     version_image.close()
+
+
+def test_prepare_image_scene_version_falls_back_to_plain_image_on_render_failure(
+    tmp_path,
+    monkeypatch,
+):
+    """Hyperframes 渲染失败（如打包运行时缺目录）必须降级为普通图片，
+    生图不能被附属的可编辑场景渲染拖垮，残留目录一并清理。"""
+    monkeypatch.setattr(
+        'services.hyperframes_renderer.HyperframesRuntime.for_development',
+        lambda *_args, **_kwargs: object(),
+    )
+
+    def failing_create(**kwargs):
+        output_directory = kwargs['output_directory']
+        (output_directory / 'image_scene_orphan').mkdir(parents=True, exist_ok=True)
+        raise RuntimeError('Hyperframes 页面渲染失败，退出码 1: ENOENT mkdtemp')
+
+    monkeypatch.setattr(
+        'services.image_scene_service.create_image_scene_artifacts',
+        failing_create,
+    )
+    source = Image.new('RGB', (1200, 1200), '#17324d')
+
+    result = task_manager._prepare_image_scene_version(
+        source,
+        project_id='project-1',
+        page_id='page-1',
+        page_data={'title': '降级页'},
+        description='',
+        page_index=1,
+        file_service=_Files(tmp_path),
+        app=_App(),
+    )
+
+    assert result is None
+    # 失败残留的 image_scene_* 目录被清理
+    assert not (tmp_path / 'project-1' / 'image-scenes' / 'page-1').exists()
+    source.close()

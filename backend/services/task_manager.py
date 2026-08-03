@@ -170,6 +170,7 @@ def _prepare_image_scene_version(
             browser_path=os.environ.get('HYPERFRAMES_BROWSER_PATH'),
         )
     background = fit_image_scene_background(image)
+    output_directory = Path(file_service.upload_folder) / project_id / 'image-scenes' / page_id
     try:
         artifacts = create_image_scene_artifacts(
             page_id=page_id,
@@ -177,12 +178,20 @@ def _prepare_image_scene_version(
             title=title,
             body_lines=body_lines,
             chart_data=_image_scene_chart_data(page_data),
-            output_directory=(
-                Path(file_service.upload_folder) / project_id / 'image-scenes' / page_id
-            ),
+            output_directory=output_directory,
             runtime=runtime,
             ffmpeg_path=app.config.get('FFMPEG_PATH', 'ffmpeg'),
         )
+    except Exception as exc:
+        # 可编辑场景是可增值的附属渲染：失败必须降级为普通图片，
+        # 生图只依赖生图模型，不能被 Hyperframes 渲染拖垮
+        logger.warning(
+            'Image scene artifacts failed for page %s (falling back to plain image): %s',
+            page_id,
+            exc,
+        )
+        shutil.rmtree(output_directory, ignore_errors=True)
+        return None
     finally:
         background.close()
     with Image.open(artifacts['hero_path']) as hero:
@@ -1810,7 +1819,7 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                         version_image = image
                         scene_artifacts = None
                         if _image_scene_enabled(app):
-                            version_image, scene_artifacts = _prepare_image_scene_version(
+                            prepared = _prepare_image_scene_version(
                                 image,
                                 project_id=project_id,
                                 page_id=page_id,
@@ -1820,7 +1829,9 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                                 file_service=file_service,
                                 app=app,
                             )
-                            qa = scene_artifacts['quality']
+                            if prepared is not None:
+                                version_image, scene_artifacts = prepared
+                                qa = scene_artifacts['quality']
                         try:
                             image_path, next_version = save_image_with_version(
                                 version_image,
@@ -2240,7 +2251,7 @@ def generate_single_page_image_task(task_id: str, project_id: str, page_id: str,
             version_image = image
             scene_artifacts = None
             if _image_scene_enabled(app):
-                version_image, scene_artifacts = _prepare_image_scene_version(
+                prepared = _prepare_image_scene_version(
                     image,
                     project_id=project_id,
                     page_id=page_id,
@@ -2250,7 +2261,9 @@ def generate_single_page_image_task(task_id: str, project_id: str, page_id: str,
                     file_service=file_service,
                     app=app,
                 )
-                qa = scene_artifacts['quality']
+                if prepared is not None:
+                    version_image, scene_artifacts = prepared
+                    qa = scene_artifacts['quality']
 
             # 保存同源 hero 并在同一数据库事务中绑定最终 Scene Manifest。
             try:
