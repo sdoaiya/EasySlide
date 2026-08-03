@@ -405,6 +405,20 @@ class NativeDeckService:
             if not self._is_empty_value(value)
         }
         merged = self._merge_missing_values(fallback, props)
+        # 清洗模型返回的 media 值：非项目素材路径（外部 URL/文本）清为占位空串，
+        # 否则 normalize 校验会让整页生成失败
+        for key, shape in contract.get('propShapes', {}).items():
+            if shape == 'media':
+                value = merged.get(key)
+                if isinstance(value, str) and value and not value.startswith(('/files/', 'data:', 'assets/')):
+                    merged[key] = ''
+            elif isinstance(shape, list) and 'media' in shape:
+                values = merged.get(key)
+                if isinstance(values, list):
+                    merged[key] = [
+                        item if (isinstance(item, str) and (not item or item.startswith(('/files/', 'data:', 'assets/')))) else ''
+                        for item in values
+                    ]
         for key, limits in contract.get('arrayLimits', {}).items():
             value = merged.get(key)
             if not isinstance(value, list) or not value:
@@ -673,7 +687,8 @@ class NativeDeckService:
             raise ValueError(f'{key} 必须是数字')
         if shape == 'boolean' and not isinstance(value, bool):
             raise ValueError(f'{key} 必须是布尔值')
-        if shape == 'media' and (not isinstance(value, str) or not value.startswith(('/files/', 'data:', 'assets/'))):
+        # media 允许空串占位（等待批量生成/上传填充）；非空值必须是项目素材路径
+        if shape == 'media' and (not isinstance(value, str) or (value and not value.startswith(('/files/', 'data:', 'assets/')))):
             raise ValueError(f'{key} 必须使用项目素材路径')
         if shape == 'string[]':
             shape = ['string']

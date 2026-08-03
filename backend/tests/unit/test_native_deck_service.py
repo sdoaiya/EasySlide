@@ -92,6 +92,36 @@ def test_rejects_wrong_array_count_and_invalid_media_path():
         )
 
 
+def test_accepts_empty_media_placeholders_and_scrubs_model_junk():
+    """批量生成页面：media 空串是合法占位；模型返回的外部 URL/垃圾值
+    在 fill_outline_props 阶段被清空，整页生成不能因此失败。"""
+    service = NativeDeckService()
+
+    # 空串占位合法（等待批量生成/上传填充）
+    assert service.validate_props(
+        'core01_case',
+        {'title': '案例', 'summary': '说明', 'image': ''},
+    ) is True
+
+    slide = service.normalize_slide(
+        'theme01_page008',
+        {'title': '布局', 'images': ['']},
+    )
+    assert slide['props']['images'] == ['']
+
+    # 模型返回外部 URL / 非字符串 → 清洗为占位空串
+    merged = service.fill_outline_props(
+        'theme01_page008',
+        {'title': '布局', 'images': ['https://example.com/x.png', 42, '']},
+        {'title': '布局', 'points': [], 'section': '正文'},
+    )
+    assert merged['images'] == ['', '', '']
+
+    # 清洗后正常归一化，不抛 images[0] 素材路径错误
+    slide = service.normalize_slide('theme01_page008', merged)
+    assert slide['props']['images'] == ['', '', '']
+
+
 def test_normalizes_only_contract_fields():
     service = NativeDeckService()
 
