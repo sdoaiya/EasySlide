@@ -326,3 +326,60 @@ def test_invalid_expires_in_falls_back_to_default(client, app):
 )
 def test_parse_expires_in_is_defensive(value, expected):
     assert openai_oauth_controller._parse_expires_in(value) == expected
+
+
+def _models_http_response(payload):
+    response = Mock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = payload
+    return response
+
+
+def test_models_supplements_known_image_models_when_upstream_omits_them(client, app):
+    """ChatGPT 模型列表常不含图片生成模型：上游只返回文本模型时，
+    响应必须补充已知图片模型，否则设置页「图片模型」组为空。"""
+    from models import Settings, db
+
+    with app.app_context():
+        settings = Settings.get_settings()
+        settings.openai_oauth_access_token = "access-token"
+        settings.openai_oauth_expires_at = None
+        db.session.commit()
+
+    with patch(
+        "controllers.openai_oauth_controller.http_requests.get",
+        return_value=_models_http_response({
+            "models": [{"slug": "gpt-5.5"}, {"slug": "gpt-4o"}],
+        }),
+    ):
+        response = client.get("/api/settings/openai-oauth/models")
+
+    assert response.status_code == 200
+    data = response.get_json()["data"]
+    assert data["text_models"] == ["gpt-5.5", "gpt-4o"]
+    assert "gpt-image-2" in data["image_models"]
+    assert "gpt-image-1" in data["image_models"]
+    assert data["models"] == data["text_models"] + data["image_models"]
+
+
+def test_models_keeps_upstream_image_models_when_present(client, app):
+    from models import Settings, db
+
+    with app.app_context():
+        settings = Settings.get_settings()
+        settings.openai_oauth_access_token = "access-token"
+        settings.openai_oauth_expires_at = None
+        db.session.commit()
+
+    with patch(
+        "controllers.openai_oauth_controller.http_requests.get",
+        return_value=_models_http_response({
+            "models": [{"slug": "gpt-5.5"}, {"slug": "gpt-image-2"}, {"slug": "gpt-image-1-mini"}],
+        }),
+    ):
+        response = client.get("/api/settings/openai-oauth/models")
+
+    assert response.status_code == 200
+    data = response.get_json()["data"]
+    assert data["image_models"] == ["gpt-image-2", "gpt-image-1-mini"]
+    assert data["text_models"] == ["gpt-5.5"]

@@ -191,8 +191,15 @@ def list_models():
         if models:
             image_models = [model for model in models if "image" in model.lower()]
             text_models = [model for model in models if model not in image_models]
-            if text_models or image_models:
-                return success_response({"text_models": text_models, "image_models": image_models, "models": models})
+            # ChatGPT 模型列表常不含图片生成模型：上游缺失时用已知图片模型补充，
+            # 否则设置页「OpenAI 图片模型」组为空而不渲染
+            if not image_models:
+                image_models = list(fallback_image_models)
+            return success_response({
+                "text_models": text_models,
+                "image_models": image_models,
+                "models": text_models + image_models,
+            })
     except Exception:
         current_app.logger.warning("[openai-oauth] upstream model list unavailable; using fallback", exc_info=True)
 
