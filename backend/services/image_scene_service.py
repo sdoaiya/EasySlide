@@ -9,7 +9,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 from services.image_generation_quality import assess_generated_image
 from services.native_scene_bundle import save_native_scene_bundles
@@ -54,6 +54,77 @@ def fit_image_scene_background(image):
         top = (source.height - crop_height) // 2
         source = source.crop((0, top, source.width, top + crop_height))
     return source.resize((1920, 1080), Image.Resampling.LANCZOS)
+
+
+def compose_plain_page_image(image, title, body_lines=None, layout='text_left'):
+    """把「纯背景」生图结果合成为背景+文字的完整页面图。
+
+    Hyperframes 分层渲染不可用时的降级路径：生图 prompt 在可编辑场景
+    模式下只画背景不画文字，若场景渲染失败直接保存原图会出现
+    「只有背景没有文字」。此函数用 PIL 在左栏半透明遮罩上绘制
+    标题与正文，产出与 scene hero 布局一致的完整页面图。
+    """
+    background = fit_image_scene_background(image).convert('RGBA')
+    margin = 96
+    panel_width = 760
+    overlay = Image.new('RGBA', background.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    draw.rectangle(
+        [margin, 0, margin + panel_width, background.height],
+        fill=(11, 31, 51, 130),
+    )
+    title_font = _load_image_scene_font(64, bold=True)
+    body_font = _load_image_scene_font(36, bold=False)
+    text_left = margin * 2
+    text_max = panel_width - margin
+    y = 140
+    for line in _wrap_image_scene_text(str(title or '').strip(), title_font, draw, text_max):
+        draw.text((text_left, y), line, font=title_font, fill=(247, 245, 239, 255))
+        y += 88
+        if y > 440:
+            break
+    y += 24
+    for raw in (body_lines or [])[:6]:
+        for wrapped in _wrap_image_scene_text(str(raw).strip(), body_font, draw, text_max):
+            draw.text((text_left, y), wrapped, font=body_font, fill=(247, 245, 239, 230))
+            y += 52
+            if y > background.height - 120:
+                break
+    composed = background.copy()
+    composed.alpha_composite(overlay)
+    return composed.convert('RGB')
+
+
+def _load_image_scene_font(size, *, bold):
+    candidates = (
+        [r'C:\Windows\Fonts\msyhbd.ttc', r'C:\Windows\Fonts\msyh.ttc', r'C:\Windows\Fonts\simhei.ttf']
+        if bold
+        else [r'C:\Windows\Fonts\msyh.ttc', r'C:\Windows\Fonts\msyhl.ttc', r'C:\Windows\Fonts\simhei.ttf']
+    )
+    last_error = None
+    for candidate in candidates:
+        try:
+            return ImageFont.truetype(candidate, size)
+        except OSError as exc:
+            last_error = exc
+    raise OSError(f'No CJK font available for image scene composition: {last_error}')
+
+
+def _wrap_image_scene_text(text, font, draw, max_width):
+    if not text:
+        return []
+    lines = []
+    current = ''
+    for char in text:
+        if draw.textlength(current + char, font=font) <= max_width:
+            current += char
+        else:
+            if current:
+                lines.append(current)
+            current = char
+    if current:
+        lines.append(current)
+    return lines
 
 
 def create_image_scene_artifacts(

@@ -83,12 +83,12 @@ def test_prepare_image_scene_version_uses_hero_and_stable_page_copy(
     version_image.close()
 
 
-def test_prepare_image_scene_version_falls_back_to_plain_image_on_render_failure(
+def test_prepare_image_scene_version_falls_back_to_composed_image_on_render_failure(
     tmp_path,
     monkeypatch,
 ):
-    """Hyperframes 渲染失败（如打包运行时缺目录）必须降级为普通图片，
-    生图不能被附属的可编辑场景渲染拖垮，残留目录一并清理。"""
+    """Hyperframes 渲染失败（如打包运行时缺目录）必须降级为合成页面图，
+    生图不能被附属的可编辑场景渲染拖垮，且不能出现「只有背景没有文字」。"""
     monkeypatch.setattr(
         'services.hyperframes_renderer.HyperframesRuntime.for_development',
         lambda *_args, **_kwargs: object(),
@@ -109,14 +109,22 @@ def test_prepare_image_scene_version_falls_back_to_plain_image_on_render_failure
         source,
         project_id='project-1',
         page_id='page-1',
-        page_data={'title': '降级页'},
+        page_data={'title': '降级页', 'key_points': ['要点一', '要点二']},
         description='',
         page_index=1,
         file_service=_Files(tmp_path),
         app=_App(),
     )
 
-    assert result is None
+    # 降级产物是合成图（背景+文字），不是纯背景原图
+    assert result is not None
+    composed, artifacts = result
+    assert artifacts is None
+    assert composed.size == (1920, 1080)
+    # 标题文字区域出现亮色文字像素，证明文字已合成
+    pixels = composed.crop((180, 140, 320, 260)).getcolors(maxcolors=10**7)
+    assert any(count < 1000 for count, _ in pixels), '文字区域应为非纯背景'
+    composed.close()
     # 失败残留的 image_scene_* 目录被清理
     assert not (tmp_path / 'project-1' / 'image-scenes' / 'page-1').exists()
     source.close()

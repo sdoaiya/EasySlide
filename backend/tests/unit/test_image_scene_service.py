@@ -229,3 +229,27 @@ def test_materialize_image_scene_bundle_rebuilds_from_bound_manifest(
 
     assert bundle['page_id'] == 'page-1'
     assert bundle['scene_manifest_sha256'] == artifacts['scene_manifest_ref']['sha256']
+
+
+def test_compose_plain_page_image_draws_title_and_body_over_background():
+    """降级合成：背景+文字，输出 1920x1080 RGB，文字区域出现亮色像素。"""
+    from services.image_scene_service import compose_plain_page_image
+
+    background = Image.new('RGB', (1200, 1200), '#17324d')
+    composed = compose_plain_page_image(
+        background,
+        '年度经营复盘',
+        ['收入同比增长 68%', '产品进入规模化阶段'],
+    )
+
+    assert composed.size == (1920, 1080)
+    assert composed.mode == 'RGB'
+    # 左栏标题区域应出现接近白色的文字像素
+    crop = composed.crop((180, 140, 420, 300))
+    light_pixels = sum(1 for pixel in crop.getdata() if sum(pixel) > 600)
+    assert light_pixels > 100, f'标题区域应有亮色文字像素，实际 {light_pixels}'
+    # 背景主体区域（右侧）保持原背景色，无文字干扰
+    right = composed.crop((1500, 300, 1800, 700))
+    dominant = right.getcolors(maxcolors=10**7)
+    assert any(count / (right.width * right.height) > 0.9 for count, _ in dominant)
+    composed.close()

@@ -184,14 +184,27 @@ def _prepare_image_scene_version(
         )
     except Exception as exc:
         # 可编辑场景是可增值的附属渲染：失败必须降级为普通图片，
-        # 生图只依赖生图模型，不能被 Hyperframes 渲染拖垮
+        # 生图只依赖生图模型，不能被 Hyperframes 渲染拖垮。
+        # 但生图 prompt 在场景模式下只画背景，直接保存原图会「只有背景
+        # 没有文字」——降级用 PIL 合成背景+文字，保证页面图完整。
         logger.warning(
-            'Image scene artifacts failed for page %s (falling back to plain image): %s',
+            'Image scene artifacts failed for page %s (falling back to composed plain image): %s',
             page_id,
             exc,
         )
         shutil.rmtree(output_directory, ignore_errors=True)
-        return None
+        try:
+            from services.image_scene_service import compose_plain_page_image
+
+            composed = compose_plain_page_image(image, title, body_lines)
+        except Exception as compose_exc:
+            logger.warning(
+                'Plain image scene composition failed for page %s (keeping raw image): %s',
+                page_id,
+                compose_exc,
+            )
+            return None
+        return composed, None
     finally:
         background.close()
     with Image.open(artifacts['hero_path']) as hero:
