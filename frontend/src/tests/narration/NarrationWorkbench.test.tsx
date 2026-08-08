@@ -135,8 +135,44 @@ describe('NarrationWorkbench', () => {
       scope: 'missing', operation: 'generate',
     }));
     expect(await screen.findByText('1 / 2', {}, { timeout: 2500 })).toBeInTheDocument();
-    await waitFor(() => expect(endpoints.getProjectNarrations).toHaveBeenCalledTimes(2), { timeout: 4000 });
+    // 每次轮询都会刷新摘要（候选标记实时出现）：初始 1 次 + PROCESSING + COMPLETED
+    await waitFor(() => expect(endpoints.getProjectNarrations).toHaveBeenCalledTimes(3), { timeout: 4000 });
     expect(endpoints.applyNarrationVersion).not.toHaveBeenCalled();
+  });
+
+  it('auto loads the selected page content when the batch completes', async () => {
+    vi.mocked(endpoints.getProjectNarrations)
+      .mockResolvedValueOnce({
+        success: true, message: '', data: { ...summary, missing_pages: 1 },
+      })
+      .mockResolvedValue({
+        success: true, message: '', data: {
+          ...summary,
+          pages: [{
+            page_id: 'page-1', order_index: 0, current_version_id: null,
+            locked: false, revision: 4, word_count: 0, estimated_seconds: 1, candidate_count: 1,
+          }],
+          total_pages: 1,
+          confirmed_pages: 0,
+          missing_pages: 1,
+          candidate_pages: 1,
+        },
+      });
+    vi.mocked(endpoints.getPageNarrationVersions).mockClear();
+    vi.mocked(endpoints.createNarrationAiJob).mockResolvedValue({
+      success: true, data: { task_id: 'task-1', status: 'PENDING', total: 1 },
+    });
+    vi.mocked(endpoints.getNarrationAiJobResult).mockResolvedValue({
+      success: true,
+      data: { task_id: 'task-1', status: 'COMPLETED', total: 1, completed: 1, failed: 0, skipped: 0, pages: [] },
+    });
+
+    render(<NarrationWorkbench open projectId="project-1" initialPageId="page-1" onClose={vi.fn()} />);
+    await screen.findByLabelText('旁白文案');
+    fireEvent.click(screen.getByRole('button', { name: 'AI 生成缺失页' }));
+
+    // 完成后自动重新加载选中页内容，无需退出重进
+    await waitFor(() => expect(endpoints.getPageNarrationVersions).toHaveBeenCalledTimes(2), { timeout: 4000 });
   });
 
   it('pauses, resumes, and cancels a running batch job', async () => {

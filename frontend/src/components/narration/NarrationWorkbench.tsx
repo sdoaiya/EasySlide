@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Lock, PanelRight, Pause, Play, Save, Sparkles, Square, Unlock, X } from 'lucide-react';
 
 import {
@@ -98,6 +98,10 @@ export function NarrationWorkbench({
   const [batchInstruction, setBatchInstruction] = useState('');
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(savedDraft);
+  const selectedPageIdRef = useRef(selectedPageId);
+  const dirtyRef = useRef(dirty);
+  selectedPageIdRef.current = selectedPageId;
+  dirtyRef.current = dirty;
   const visiblePages = useMemo(() => (
     summary?.pages.filter((page) => !pageIds?.length || pageIds.includes(page.page_id)) || []
   ), [pageIds, summary]);
@@ -147,24 +151,6 @@ export function NarrationWorkbench({
     return response.data;
   }, [onSummaryChange, projectId]);
 
-  useEffect(() => {
-    if (!open || !aiJob || ['PAUSED', 'COMPLETED', 'FAILED', 'CANCELLED'].includes(aiJob.status)) return;
-    let active = true;
-    const timer = window.setTimeout(() => {
-      void getNarrationAiJobResult(projectId, aiJob.task_id)
-        .then(async (response) => {
-          if (!active || !response.data) return;
-          setAiJob(response.data);
-          if (['COMPLETED', 'FAILED', 'CANCELLED'].includes(response.data.status)) await refreshSummary();
-        })
-        .catch((cause) => active && setError(errorMessage(cause)));
-    }, 1000);
-    return () => {
-      active = false;
-      window.clearTimeout(timer);
-    };
-  }, [aiJob, open, projectId, refreshSummary]);
-
   const loadPage = useCallback(async (pageId: string) => {
     const response = await getPageNarrationVersions(projectId, pageId);
     if (!response.data) throw new Error('旁白版本为空');
@@ -177,6 +163,34 @@ export function NarrationWorkbench({
     setPreview(null);
     setSelectedPageId(pageId);
   }, [projectId]);
+
+  useEffect(() => {
+    if (!open || !aiJob || ['PAUSED', 'COMPLETED', 'FAILED', 'CANCELLED'].includes(aiJob.status)) return;
+    let active = true;
+    const timer = window.setTimeout(() => {
+      void getNarrationAiJobResult(projectId, aiJob.task_id)
+        .then(async (response) => {
+          if (!active || !response.data) return;
+          setAiJob(response.data);
+          // 每次轮询都刷新摘要：每完成一页，列表的候选标记实时出现，
+          // 而不是等任务结束后才变化
+          const nextSummary = await refreshSummary().catch(() => null);
+          if (['COMPLETED', 'FAILED', 'CANCELLED'].includes(response.data.status)) {
+            // 生成完成：若选中页已有候选且无未保存修改，自动加载该页内容，
+            // 不需要退出重进才能看到生成结果
+            const selected = nextSummary?.pages.find((item) => item.page_id === selectedPageIdRef.current);
+            if (selected && selected.candidate_count > 0 && !selected.current_version_id && !dirtyRef.current) {
+              await loadPage(selected.page_id).catch(() => undefined);
+            }
+          }
+        })
+        .catch((cause) => active && setError(errorMessage(cause)));
+    }, 1000);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [aiJob, loadPage, open, projectId, refreshSummary]);
 
   useEffect(() => {
     if (!open) return;
