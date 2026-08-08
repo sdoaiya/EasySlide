@@ -95,6 +95,14 @@ def list_project_narrations(project_id):
         for page in pages:
             current = ensure_legacy_narration_version(page)
             text = page.get_narration_text() or ''
+            outline = page.get_outline_content() or {}
+            description = page.get_description_content() or {}
+            has_content = bool(
+                text
+                or str(outline.get('title') or '').strip()
+                or any(str(item).strip() for item in outline.get('points') or [])
+                or str(description.get('text') or '').strip()
+            )
             summaries.append({
                 'page_id': page.id,
                 'order_index': page.order_index,
@@ -105,6 +113,9 @@ def list_project_narrations(project_id):
                 'word_count': len(text),
                 'estimated_seconds': round(len(text) / 4.0, 1) if text else 0.0,
                 'narration_status': page.narration_status or ('READY' if text else 'EMPTY'),
+                # 页面已有正文/大纲（原生编辑模式页面文字即旁白基础）时，
+                # 前端不再显示「缺少确认稿」，而是「待生成确认稿」
+                'has_content': has_content,
             })
         return {
             'pages': summaries,

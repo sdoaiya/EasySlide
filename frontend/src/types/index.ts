@@ -189,6 +189,7 @@ export interface NarrationPageSummary {
   estimated_seconds: number;
   candidate_count: number;
   narration_status?: string | null;
+  has_content?: boolean;
   error?: string | null;
 }
 

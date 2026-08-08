@@ -240,3 +240,26 @@ describe('NarrationWorkbench', () => {
     expect(clearTimeout).toHaveBeenCalled();
   });
 });
+
+describe('NarrationWorkbench missing label', () => {
+  it('shows 待生成确认稿 when the page has content and 缺少确认稿 when empty', async () => {
+    vi.mocked(endpoints.getProjectNarrations).mockResolvedValue({
+      success: true, message: '', data: {
+        pages: [
+          { page_id: 'page-1', order_index: 0, current_version_id: null, locked: false, revision: 1, word_count: 0, estimated_seconds: 0, candidate_count: 0, has_content: true },
+          { page_id: 'page-2', order_index: 1, current_version_id: null, locked: false, revision: 1, word_count: 0, estimated_seconds: 0, candidate_count: 0, has_content: false },
+        ],
+        total_pages: 2,
+        confirmed_pages: 0,
+        missing_pages: 2,
+        candidate_pages: 0,
+      },
+    });
+
+    render(<NarrationWorkbench open projectId="project-1" initialPageId="page-1" onClose={vi.fn()} />);
+    await screen.findByLabelText('旁白文案');
+
+    expect(screen.getByText('待生成确认稿')).toBeInTheDocument();
+    expect(screen.getByText('缺少确认稿')).toBeInTheDocument();
+  });
+});

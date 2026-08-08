@@ -185,3 +185,24 @@ def test_legacy_put_narration_delegates_to_version_service(client):
     db.session.refresh(page)
     assert page.narration_audio_manifest is None
     assert [version.source_type for version in page.narration_versions.all()] == ['manual', 'legacy']
+
+
+def test_project_narration_summary_reports_has_content_for_page_materials(client):
+    """从 PPT 编辑页进入视频文案：页面有正文/大纲时 has_content=True，
+    前端据此显示「待生成确认稿」而非「缺少确认稿」。"""
+    project = Project(id='narration-content-project', creation_type='idea', render_mode='native')
+    with_content = Page(id='content-page', project_id=project.id, order_index=0)
+    with_content.set_outline_content({'title': '核心观点', 'points': ['要点一']})
+    empty = Page(id='empty-page', project_id=project.id, order_index=1)
+    db.session.add_all([project, with_content, empty])
+    db.session.commit()
+
+    data = assert_success_response(
+        client.get(f'/api/projects/{project.id}/narrations')
+    )['data']
+
+    by_id = {item['page_id']: item for item in data['pages']}
+    assert by_id['content-page']['has_content'] is True
+    assert by_id['content-page']['current_version_id'] is None
+    assert by_id['empty-page']['has_content'] is False
+    assert data['missing_pages'] == 2

@@ -420,7 +420,7 @@ export function NarrationWorkbench({
           >
             <span className="block truncate">第 {page.order_index + 1} 页</span>
             <span className="block truncate text-xs font-normal text-[var(--app-text-tertiary)]">
-              {page.current_version_id ? `${page.word_count} 字` : '缺少确认稿'}
+              {page.current_version_id ? `${page.word_count} 字` : page.has_content ? '待生成确认稿' : '缺少确认稿'}
               {page.candidate_count > 0 ? ` · ${page.candidate_count} 个候选` : ''}
             </span>
           </button>
