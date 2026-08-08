@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import i18n from '@/i18n';
@@ -59,13 +59,16 @@ describe('History EasySlide clone', () => {
 
     expect(container.firstElementChild?.className).toContain('bg-[var(--app-background)]');
     expect(container.firstElementChild?.className).not.toContain('banana');
-    expect(await screen.findByRole('heading', { name: '作品工作台' })).toBeInTheDocument();
-    expect(screen.getByText(/PPT、视频与播客/)).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '今天，从哪一步继续？' })).toBeInTheDocument();
+    expect(screen.getByText(/可交付的 PPT、视频或播客/)).toBeInTheDocument();
     expect(screen.getByRole('searchbox', { name: '搜索项目或灵感...' })).toBeInTheDocument();
     expect(screen.queryByText(/从想法到成稿/)).not.toBeInTheDocument();
     expect(await screen.findByText('暂无项目')).toBeInTheDocument();
     expect(screen.getAllByText('创建新项目').length).toBeGreaterThan(0);
-    expect(screen.getByRole('heading', { name: '灵感墙' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '今天，从哪一步继续？' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '快速开始' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '图片素材中心' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: '灵感墙' })).not.toBeInTheDocument();
     expect(screen.getByAltText('EasySlide Logo')).toBeInTheDocument();
 
     // 应用导航为桌面左侧工具架（216px 可折叠）
@@ -129,18 +132,16 @@ describe('History EasySlide clone', () => {
     );
 
     expect(await screen.findByText('共赢出海 - 为企业搭建出海高速路')).toBeInTheDocument();
-    expect(screen.getByText('项目列表')).toBeInTheDocument();
-    expect(screen.getByText('支持项目编辑、重命名、删除及批量管理。')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /刷新/ })).toBeInTheDocument();
-    expect(screen.getByText((content) => content.includes('16') && content.includes('1') && content.includes('4'))).toBeInTheDocument();
-    // PPT 同时出现在类型筛选按钮与项目卡片徽标中，需断言存在而非唯一
-    expect(screen.getAllByText('PPT').length).toBeGreaterThan(0);
+    expect(screen.getByRole('heading', { name: '最近项目' })).toBeInTheDocument();
+    expect(screen.getByText('按最近更新时间排列，快速回到正在推进的内容。')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '查看全部项目' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '项目概览' })).toBeInTheDocument();
+    expect(screen.getAllByText('16').length).toBeGreaterThan(0);
+    expect(screen.getByText('已完成')).toBeInTheDocument();
     expect(screen.getByTestId('project-grid')).toHaveClass('xl:grid-cols-4');
-    const inspirationWall = screen.getByRole('heading', { name: '灵感墙' }).closest('section');
-    expect(inspirationWall).not.toBeNull();
-    expect(within(inspirationWall!).getAllByRole('img')).toHaveLength(3);
-    expect(within(inspirationWall!).getByRole('img', { name: '共赢出海 - 为企业搭建出海高速路 项目预览' })).toHaveAttribute('src', '/files/p1/page.png');
-    expect(within(inspirationWall!).getByRole('img', { name: '精选模板 2' })).toBeInTheDocument();
+    expect(screen.getByTestId('home-workbench')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /共赢出海 - 为企业搭建出海高速路/ })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: '灵感墙' })).not.toBeInTheDocument();
     expect(endpointMocks.listProjects).toHaveBeenCalledWith(4, 0, undefined, undefined);
     expect(screen.getByTestId('project-grid').innerHTML).not.toContain('shadow-sm');
   });

@@ -10,6 +10,7 @@ _MODULE = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_MODULE)
 append_image_page_role_hint = _MODULE.append_image_page_role_hint
 append_image_layout_hint = _MODULE.append_image_layout_hint
+append_template_layout_lock_hint = _MODULE.append_template_layout_lock_hint
 append_template_visual_profile_hint = _MODULE.append_template_visual_profile_hint
 infer_image_layout_family = _MODULE.infer_image_layout_family
 infer_image_page_role = _MODULE.infer_image_page_role
@@ -68,6 +69,19 @@ def test_appends_layout_hint_without_duplication():
     assert result.startswith('原始要求')
     assert 'timeline' in result
     assert append_image_layout_hint(result, 'timeline') == result
+
+
+def test_template_layout_lock_preserves_geometry_but_allows_palette_override():
+    result = append_template_layout_lock_hint('模板配色变体：黑金。')
+
+    assert result is not None
+    assert result.startswith('模板配色变体：黑金。')
+    assert '模板版式锁定' in result
+    assert '标题区位置' in result
+    assert '内容分区数量' in result
+    assert '允许依据用户选择替换配色' in result
+    assert '不得改成新的流程图' in result
+    assert append_template_layout_lock_hint(result) == result
 
 
 def test_appends_gorden_template_visual_profile_without_duplicate():

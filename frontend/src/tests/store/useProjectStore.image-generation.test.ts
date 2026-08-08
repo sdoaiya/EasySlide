@@ -186,13 +186,19 @@ describe('useProjectStore image generation', () => {
       status: 'PROCESSING',
       progress: { total: 2, completed: 1, page_ids: ['page-ready', 'page-missing'] },
     } as any
-    useProjectStore.setState({ activeImageTask: task } as any)
+    useProjectStore.setState({
+      activeImageTask: task,
+      pageGeneratingTasks: { 'page-missing': 'image-task-1' },
+    } as any)
     vi.mocked(api.pauseTask).mockResolvedValue({ data: { ...task, status: 'PAUSED' } } as any)
 
     await useProjectStore.getState().pauseImageGeneration()
 
     expect(api.pauseTask).toHaveBeenCalledWith('project-images', 'image-task-1')
     expect(useProjectStore.getState().activeImageTask?.status).toBe('PAUSED')
+    expect(useProjectStore.getState().pageGeneratingTasks).toEqual({
+      'page-missing': 'image-task-1',
+    })
   })
 
   it('resumes only pages that still need images from a saved page id list', async () => {

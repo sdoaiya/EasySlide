@@ -415,7 +415,7 @@ def render_image_scene_hero(
         manifest,
         bundle.get('scene_manifest_sha256'),
     )
-    with tempfile.TemporaryDirectory(prefix='image-scene-hero-', dir=target.parent) as temp_dir:
+    with tempfile.TemporaryDirectory(prefix='easyslide-image-scene-hero-') as temp_dir:
         render = render_page(bundle, motion, temp_dir, runtime)
         temporary = Path(temp_dir) / 'hero.png'
         result = subprocess.run(
@@ -432,7 +432,19 @@ def render_image_scene_hero(
                 'utf-8', errors='replace',
             )
             raise RuntimeError(detail.strip())
-        os.replace(temporary, target)
+        descriptor, staged_value = tempfile.mkstemp(
+            prefix='.hero-',
+            suffix='.tmp',
+            dir=target.parent,
+        )
+        os.close(descriptor)
+        staged = Path(staged_value)
+        try:
+            shutil.copyfile(temporary, staged)
+            os.replace(staged, target)
+        finally:
+            if staged.exists():
+                staged.unlink()
     return {'path': str(target), 'renderer': 'hyperframes'}
 
 

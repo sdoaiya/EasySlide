@@ -13,7 +13,8 @@ const slideCardI18n = {
       confirmDeletePage: "确定要删除这一页吗？",
       confirmDeleteTitle: "确认删除",
       coverPage: "封面",
-      coverPageTooltip: "第一页为封面页，通常包含标题和副标题"
+      coverPageTooltip: "第一页为封面页，通常包含标题和副标题",
+      paused: "已暂停"
     }
   },
   en: {
@@ -22,7 +23,8 @@ const slideCardI18n = {
       confirmDeletePage: "Are you sure you want to delete this page?",
       confirmDeleteTitle: "Confirm Delete",
       coverPage: "Cover",
-      coverPageTooltip: "This is the cover page, usually containing the title and subtitle"
+      coverPageTooltip: "This is the cover page, usually containing the title and subtitle",
+      paused: "Paused"
     }
   }
 };
@@ -36,6 +38,7 @@ interface SlideCardProps {
   onEdit: (index: number) => void;
   onDelete: (pageId: string) => void;
   isGenerating?: boolean;
+  isPaused?: boolean;
   aspectRatio?: string;
 }
 
@@ -48,6 +51,7 @@ export const SlideCard: React.FC<SlideCardProps> = memo(function SlideCard({
   onEdit,
   onDelete,
   isGenerating = false,
+  isPaused = false,
   aspectRatio = '16:9',
 }) {
   const renderCount = useRef(0);
@@ -58,7 +62,9 @@ export const SlideCard: React.FC<SlideCardProps> = memo(function SlideCard({
     ? getImageUrl(page.generated_image_path, page.updated_at)
     : '';
   
-  const generating = isGenerating || page.status === 'QUEUED' || page.status === 'GENERATING';
+  const generating = !isPaused && (
+    isGenerating || page.status === 'QUEUED' || page.status === 'GENERATING'
+  );
 
   return (
     <div
@@ -120,7 +126,17 @@ export const SlideCard: React.FC<SlideCardProps> = memo(function SlideCard({
         
         {/* 状态标签 */}
         <div className="absolute bottom-2 right-2">
-          <StatusBadge status={page.status} />
+          {isPaused ? (
+            <span
+              className="inline-flex items-center rounded-[var(--app-radius-control)] border border-[var(--app-border-strong)] bg-[var(--app-surface)] px-2.5 py-0.5 text-xs font-medium text-[var(--app-text-secondary)]"
+              data-status="PAUSED"
+              data-testid="status-badge"
+            >
+              {t('slideCard.paused')}
+            </span>
+          ) : (
+            <StatusBadge status={page.status} />
+          )}
         </div>
       </div>
 
@@ -151,5 +167,6 @@ export const SlideCard: React.FC<SlideCardProps> = memo(function SlideCard({
   && previous.isSelected === next.isSelected
   && previous.isMultiSelectMode === next.isMultiSelectMode
   && previous.isGenerating === next.isGenerating
+  && previous.isPaused === next.isPaused
   && previous.aspectRatio === next.aspectRatio
 ));

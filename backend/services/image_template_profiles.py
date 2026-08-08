@@ -149,7 +149,7 @@ def append_image_page_role_hint(requirements: str | None, role: str) -> str | No
     label = ROLE_LABELS.get(role, ROLE_LABELS['content'])
     role_hint = ROLE_HINTS.get(role, ROLE_HINTS['content'])
     hint = (
-        f'本页视觉角色：{label}。请保持参考模板的色彩、字体层级和留白语言，'
+        f'本页视觉角色：{label}。请保持参考模板的版式骨架、字体层级和留白语言，'
         f'并使用适合{label}的构图密度。{role_hint}不要把本页生成成其他页面角色。'
     )
     if hint in base:
@@ -170,8 +170,23 @@ def append_template_visual_profile_hint(requirements: str | None, template_pack_
 
     hint = (
         f'模板视觉DNA：{profile}'
-        '生成时必须把它作为整页图片的视觉骨架，优先保持模板的色彩、版式密度、图表语言、标题层级和留白节奏；'
+        '生成时必须把它作为整页图片的视觉骨架，优先保持模板的版式密度、图表语言、标题层级和留白节奏；'
+        '若用户选择了模板配色变体，以用户配色为准，只替换色彩系统，不改变版式骨架；'
         '只替换为当前页面内容，不复制模板示例文字。'
+    )
+    if hint in base:
+        return base or None
+    return f'{base}\n\n{hint}' if base else hint
+
+
+def append_template_layout_lock_hint(requirements: str | None) -> str | None:
+    """Lock the reference geometry while still allowing a user palette variant."""
+    base = (requirements or '').strip()
+    hint = (
+        '模板版式锁定（版式要求中的最高优先级）：参考模板是本页的布局蓝图。'
+        '必须保持标题区位置、内容分区数量、各分区相对位置与尺寸比例、对齐关系、边距、留白节奏和视觉层级；'
+        '允许依据用户选择替换配色、材质和图标细节，但不得改成新的流程图、卡片墙、左右分栏或其他几何结构。'
+        '当当前内容与模板槽位不能逐项对应时，应压缩、合并并映射到现有槽位，禁止新增、删减或重排模板分区。'
     )
     if hint in base:
         return base or None

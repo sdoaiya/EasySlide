@@ -159,6 +159,7 @@ interface MaterialGeneratorModalProps {
   projectId?: string | null;
   isOpen: boolean;
   onClose: () => void;
+  presentation?: 'modal' | 'workspace';
 }
 
 type SelectorTarget = 'source' | 'references';
@@ -205,6 +206,7 @@ export const MaterialGeneratorModal: React.FC<MaterialGeneratorModalProps> = ({
   projectId,
   isOpen,
   onClose,
+  presentation = 'modal',
 }) => {
   const t = useT(materialGeneratorI18n);
   const { show } = useToast();
@@ -658,25 +660,8 @@ export const MaterialGeneratorModal: React.FC<MaterialGeneratorModalProps> = ({
 
   const selectionEnabled = toolMode === 'region_edit' || toolMode === 'erase_region';
 
-  return (
-    <Modal
-      isOpen={isOpen}
-      onClose={handleClose}
-      title={t('material.title')}
-      size={isFullscreen ? 'full' : 'wide'}
-      headerActions={(
-        <button
-          type="button"
-          data-testid="material-fullscreen-toggle"
-          onClick={() => setIsFullscreen((prev) => !prev)}
-          className="flex h-9 w-9 items-center justify-center rounded-[var(--app-radius-control)] text-[var(--app-text-tertiary)] transition-colors hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--app-accent-soft)]"
-          aria-label={isFullscreen ? t('material.exitFullscreen') : t('material.enterFullscreen')}
-          title={isFullscreen ? t('material.exitFullscreen') : t('material.enterFullscreen')}
-        >
-          {isFullscreen ? <Minimize2 size={17} strokeWidth={2} /> : <Maximize2 size={17} strokeWidth={2} />}
-        </button>
-      )}
-    >
+  const generatorContent = (
+    <>
       <div className={`grid gap-6 ${isFullscreen ? 'xl:grid-cols-[360px_minmax(0,1fr)]' : 'lg:grid-cols-[320px_minmax(0,1fr)]'}`}>
         <aside className="space-y-5 rounded-[var(--app-radius-panel)] border border-[var(--app-border)] bg-[var(--app-surface)] p-4 shadow-[var(--app-shadow-card)] lg:pr-6">
           <section className="space-y-2">
@@ -1043,6 +1028,48 @@ export const MaterialGeneratorModal: React.FC<MaterialGeneratorModalProps> = ({
         multiple={selectorTarget === 'references'}
         mediaKindFilter={['image']}
       />
+    </>
+  );
+
+  if (presentation === 'workspace') {
+    return (
+      <div className="flex h-full min-h-0 flex-col bg-[var(--app-background)]">
+        <div className="flex h-14 flex-shrink-0 items-center justify-between border-b border-[var(--app-border)] bg-[var(--app-surface)] px-6">
+          <div>
+            <h1 className="text-lg font-semibold text-[var(--app-text)]">{t('material.title')}</h1>
+            <p className="text-xs text-[var(--app-text-tertiary)]">{t('material.saveToLibraryNote')}</p>
+          </div>
+          <Button variant="ghost" size="sm" icon={<X size={17} />} onClick={handleClose} disabled={isGenerating}>
+            {t('common.close')}
+          </Button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-6">
+          {generatorContent}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={handleClose}
+      title={t('material.title')}
+      size={isFullscreen ? 'full' : 'wide'}
+      headerActions={(
+        <button
+          type="button"
+          data-testid="material-fullscreen-toggle"
+          onClick={() => setIsFullscreen((prev) => !prev)}
+          className="flex h-9 w-9 items-center justify-center rounded-[var(--app-radius-control)] text-[var(--app-text-tertiary)] transition-colors hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--app-accent-soft)]"
+          aria-label={isFullscreen ? t('material.exitFullscreen') : t('material.enterFullscreen')}
+          title={isFullscreen ? t('material.exitFullscreen') : t('material.enterFullscreen')}
+        >
+          {isFullscreen ? <Minimize2 size={17} strokeWidth={2} /> : <Maximize2 size={17} strokeWidth={2} />}
+        </button>
+      )}
+    >
+      {generatorContent}
     </Modal>
   );
 };

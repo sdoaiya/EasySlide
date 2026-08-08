@@ -40,4 +40,28 @@ describe('SlideCard', () => {
     expect(screen.getByTestId('ppt-slide-card-ppt-page-20')).toHaveAttribute('data-render-count', '2');
     expect(untouched).toHaveAttribute('data-render-count', '1');
   });
+
+  it('shows a paused badge instead of a generating skeleton for a paused batch page', () => {
+    const page = {
+      ...pages[0],
+      status: 'GENERATING',
+      generated_image_path: undefined,
+    } as Page;
+
+    render(
+      <SlideCard
+        page={page}
+        index={0}
+        isSelected
+        isGenerating
+        isPaused
+        onSelect={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('已暂停')).toBeInTheDocument();
+    expect(screen.getByText('未生成')).toBeInTheDocument();
+  });
 });

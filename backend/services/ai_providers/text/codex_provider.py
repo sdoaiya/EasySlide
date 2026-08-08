@@ -159,11 +159,13 @@ class CodexTextProvider(TextProvider):
     @staticmethod
     def _iter_sse_text(resp) -> Generator[str, None, None]:
         """Parse SSE stream and yield text deltas."""
+        has_text = False
+        completed_text = ""
         for raw_line in resp.iter_lines():
             line = raw_line.decode("utf-8") if isinstance(raw_line, bytes) else raw_line
-            if not line or not line.startswith("data: "):
+            if not line or not line.startswith("data:"):
                 continue
-            raw = line[len("data: "):]
+            raw = line[len("data:"):].lstrip()
             if raw.strip() == "[DONE]":
                 break
             try:
@@ -171,7 +173,39 @@ class CodexTextProvider(TextProvider):
             except json.JSONDecodeError:
                 continue
 
-            if event.get("type") == "response.output_text.delta":
+            event_type = event.get("type", "")
+            if event_type == "response.output_text.delta":
                 delta = event.get("delta", "")
                 if delta:
+                    has_text = True
                     yield delta
+            elif event_type == "response.output_text.done" and not has_text:
+                text = event.get("text", "")
+                if text:
+                    has_text = True
+                    yield text
+            elif event_type == "response.completed" and not has_text:
+                completed_text = CodexTextProvider._extract_response_text(event)
+                if completed_text:
+                    has_text = True
+                    yield completed_text
+
+    @staticmethod
+    def _extract_response_text(event: dict) -> str:
+        """Extract output text from a completed Responses API payload."""
+        response = event.get("response", event)
+        if not isinstance(response, dict):
+            return ""
+        output_text = response.get("output_text")
+        if isinstance(output_text, str):
+            return output_text
+        for item in response.get("output", []):
+            if not isinstance(item, dict):
+                continue
+            for content in item.get("content", []):
+                if not isinstance(content, dict):
+                    continue
+                text = content.get("text") or content.get("value")
+                if isinstance(text, str) and text:
+                    return text
+        return ""

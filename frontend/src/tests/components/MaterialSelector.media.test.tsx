@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { MaterialSelector } from '@/components/shared/MaterialSelector';
 import { listMaterials } from '@/api/endpoints';
@@ -32,5 +32,15 @@ describe('MaterialSelector media assets', () => {
     expect(container.innerHTML).not.toContain('bg-[color:var(--app-surface)]/85 p-1 text-xs text-white');
     expect(document.querySelector('input[type="file"]')).toHaveAttribute('accept', 'image/*,audio/*,video/*,.txt,.md,.srt,.vtt,.json');
     expect(listMaterials).toHaveBeenCalledWith('all', { mediaKind: ['audio', 'transcript'] });
+
+    const nameLabel = screen.getByText('voice.mp3');
+    expect(nameLabel).toHaveClass('bg-[color:var(--app-text)]/85', 'text-[var(--app-surface)]');
+    expect(nameLabel).not.toHaveClass('opacity-0');
+
+    const card = nameLabel.parentElement as HTMLElement;
+    const deleteButton = within(card).getByRole('button', { name: '删除素材' });
+    expect(deleteButton).toHaveClass('right-1', 'top-1');
+    expect(deleteButton.className).not.toContain('-right-2');
+    expect(card.parentElement).toHaveClass('gap-x-5', 'gap-y-6');
   });
 });

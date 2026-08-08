@@ -323,7 +323,7 @@ export const MaterialSelector: React.FC<MaterialSelectorProps> = ({
   const currentPageMaterials = materials.filter((material) => currentPageUrlSet.has(material.url.replace(/^https?:\/\/[^/]+/, '').split('?')[0]));
   const otherPageMaterials = materials.filter((material) => !currentPageUrlSet.has(material.url.replace(/^https?:\/\/[^/]+/, '').split('?')[0]));
   const renderMaterialGrid = (items: Material[]) => (
-    <div className="grid max-h-96 grid-cols-2 gap-4 overflow-y-auto p-4 sm:grid-cols-3 lg:grid-cols-4">
+    <div className="grid max-h-[min(56vh,36rem)] grid-cols-2 gap-x-5 gap-y-6 overflow-y-auto p-5 sm:grid-cols-3 xl:grid-cols-4">
       {items.map((material) => {
         const key = getMaterialKey(material);
         const isSelected = selectedMaterials.has(key);
@@ -352,17 +352,22 @@ export const MaterialSelector: React.FC<MaterialSelectorProps> = ({
               type="button"
               onClick={(event) => handleDeleteMaterial(event, material)}
               disabled={isDeleting}
-              className="absolute -right-2 -top-2 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-[var(--app-error)] text-[var(--app-on-color)] opacity-0 shadow-[var(--app-shadow-control)] transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)] disabled:cursor-not-allowed disabled:opacity-60"
+              className="absolute right-1 top-1 z-30 flex h-10 w-10 items-center justify-center rounded-full text-[var(--app-on-color)] opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)] disabled:cursor-not-allowed disabled:opacity-60"
               aria-label={t('material.deleteMaterial')}
             >
-              {isDeleting ? <RefreshCw size={12} className="animate-spin" /> : <X size={12} />}
+              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--app-error)] shadow-[var(--app-shadow-control)]">
+                {isDeleting ? <RefreshCw size={12} className="animate-spin" /> : <X size={12} />}
+              </span>
             </button>
             {isSelected && (
-              <div className="absolute inset-0 flex items-center justify-center bg-[color:var(--app-accent-soft)]">
+              <div className="absolute inset-0 z-10 flex items-center justify-center bg-[color:var(--app-accent-soft)]">
               <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--app-focus)] text-xs font-bold text-[var(--app-surface)]">✓</div>
               </div>
             )}
-            <div className="absolute bottom-0 left-0 right-0 truncate bg-[color:var(--app-surface)]/85 p-1 text-xs text-[var(--app-text)] opacity-0 transition-opacity group-hover:opacity-100">
+            <div
+              className="absolute bottom-2 left-2 right-2 z-20 truncate rounded-[var(--app-radius-control)] bg-[color:var(--app-text)]/85 px-2 py-1 text-xs font-medium text-[var(--app-surface)] shadow-[var(--app-shadow-control)]"
+              title={getMaterialDisplayName(material)}
+            >
               {getMaterialDisplayName(material)}
             </div>
           </div>

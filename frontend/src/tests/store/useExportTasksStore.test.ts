@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { act } from '@testing-library/react'
-import { useExportTasksStore } from '@/store/useExportTasksStore'
+import { isActiveExportTask, useExportTasksStore, type ExportTask } from '@/store/useExportTasksStore'
 import { deleteTask as deleteTaskApi, getTaskStatus, pauseTask as pauseTaskApi, resumeTask as resumeTaskApi } from '@/api/endpoints'
 
 vi.mock('@/api/endpoints', () => ({
@@ -355,5 +355,31 @@ describe('mapTaskType', () => {
     expect(mapTaskType('NARRATION_AI_BATCH')).toBe('narration-batch')
     expect(mapTaskType('INITIALIZE_CONTENT_WORKSPACE')).toBe('initialize-workspace')
     expect(mapTaskType('GENERATE_NATIVE_DECK', 'ppt')).toBe('generate-pages')
+  })
+})
+
+describe('isActiveExportTask', () => {
+  const task = (type: ExportTask['type'], status: ExportTask['status']): ExportTask => ({
+    id: `${type}-${status}`,
+    taskId: `${type}-${status}`,
+    projectId: 'project-a',
+    type,
+    status,
+    createdAt: '2026-08-08T00:00:00.000Z',
+  })
+
+  it.each(['PENDING', 'PROCESSING', 'RUNNING'] as const)('keeps an export task spinning while %s', (status) => {
+    expect(isActiveExportTask(task('video', status))).toBe(true)
+  })
+
+  it.each([
+    ['paused export', 'video', 'PAUSED'],
+    ['completed export', 'video', 'COMPLETED'],
+    ['failed export', 'video', 'FAILED'],
+    ['cancelled export', 'video', 'CANCELLED'],
+    ['running image generation', 'generate-images', 'RUNNING'],
+    ['paused image generation', 'generate-images', 'PAUSED'],
+  ] as const)('does not keep the toolbar spinning for %s', (_label, type, status) => {
+    expect(isActiveExportTask(task(type, status))).toBe(false)
   })
 })

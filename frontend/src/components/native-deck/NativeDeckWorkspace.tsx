@@ -17,7 +17,7 @@ import { exportNativeDeckPdf } from '@/native-deck/exportNativeDeckPdf'
 import { captureNativeDeckFrameSequences, captureNativeSceneManifests } from '@/native-deck/exportNativeDeckFrames'
 import { captureNativeMotionBundles } from '@/native-deck/exportNativeMotionBundle'
 import { migrateNativeProps } from '@/native-deck/nativeLayoutMigration'
-import { useExportTasksStore, type ExportTask } from '@/store/useExportTasksStore'
+import { isExportTask, useExportTasksStore, type ExportTask } from '@/store/useExportTasksStore'
 import { addPage, completeNativePptxExport, createNativePptxExport, createNativeSceneManifestRefs, deletePage, exportNativeVideo, getNativePageVersions, getProjectNarrations, getTaskStatus, handoffVideoWorkspaceFrames, preflightExportVideo, previewPageNarration, restoreNativePageVersion, type NativePageVersion, updateNativePptxProgress, updatePagesOrder, updateProject } from '@/api/endpoints'
 import { apiClient } from '@/api/client'
 import { ExportTasksPanel } from '@/components/shared/ExportTasksPanel'
@@ -894,7 +894,7 @@ export function NativeDeckWorkspace({ projectId, slides: initialSlides, layoutCo
             <button type="button" aria-label="转换视频" title="从当前 PPT 生成视频候选" onClick={() => setShowPptToVideoWizard(true)} className="hidden h-10 items-center gap-2 rounded-lg px-3 text-sm font-semibold text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] lg:inline-flex"><Film size={17} />转换视频</button>
             <div className="relative">
               <button ref={taskButtonRef} type="button" aria-label="导出任务" title="导出任务" onClick={() => setShowTasks((value) => !value)} className="relative flex h-10 items-center gap-1 rounded-[var(--app-radius-control)] px-2 text-sm font-semibold hover:bg-[var(--app-surface-hover)] active:scale-[0.98]">
-                <ListTodo size={17} aria-hidden="true" />{tasks.filter((task) => task.projectId === projectId).length || 0}
+                <ListTodo size={17} aria-hidden="true" />{tasks.filter((task) => task.projectId === projectId && isExportTask(task)).length || 0}
               </button>
               {showTasks && <div data-testid="native-export-task-popover" className="fixed z-[120] w-[min(380px,calc(100vw-2rem))]" style={taskPopoverStyle}><ExportTasksPanel projectId={projectId} onRetry={(task) => void retryExport(task)} /></div>}
             </div>

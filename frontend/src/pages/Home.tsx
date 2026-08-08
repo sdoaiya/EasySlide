@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Sparkles, FileText, FileEdit, ImagePlus, Paperclip, Palette, Lightbulb, HelpCircle, ChevronDown, Upload, RefreshCw, Loader2, X } from 'lucide-react';
 import { AppTopNav, Button, SegmentedControl, useToast, MaterialSelector, ReferenceFileList, ReferenceFileSelector, FilePreviewModal, TextStyleSelector } from '@/components/shared';
@@ -312,14 +312,16 @@ function TemplateVisualSettingsPanel({ value, onChange, disabled }: {
 }
 
 export const Home: React.FC<{ showNavigation?: boolean }> = ({ showNavigation = true }) => {
+  const location = useLocation();
   const navigate = useNavigate();
   const { i18n } = useTranslation();
   const t = useT(homeI18n); // 组件内翻译 + 自动 fallback 到全局
   const { initializeProject, isGlobalLoading } = useProjectStore();
   const { show, ToastContainer } = useToast();
   
+  const requestedWorkspace = (location.state as { initialWorkspace?: ContentWorkspaceKind } | null)?.initialWorkspace;
   const [activeTab, setActiveTab] = useState<CreationType>('idea');
-  const [initialWorkspace, setInitialWorkspace] = useState<ContentWorkspaceKind>('ppt');
+  const [initialWorkspace, setInitialWorkspace] = useState<ContentWorkspaceKind>(requestedWorkspace || 'ppt');
   const [renderMode, setRenderMode] = useState<RenderMode>('image');
   const [nativeTheme, setNativeTheme] = useState('theme01');
   const [templateVisualSettings, setTemplateVisualSettings] = useState<NativeImageSettings>(DEFAULT_TEMPLATE_VISUAL_SETTINGS);

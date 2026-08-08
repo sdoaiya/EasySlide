@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Download, X, Trash2, FileText, Clock, CheckCircle, XCircle, Loader2, AlertTriangle, HelpCircle, Settings, RefreshCw, Pause, Play, Square, ExternalLink } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { useExportTasksStore, type ExportTask, type ExportTaskType } from '@/store/useExportTasksStore';
+import { isExportTask, useExportTasksStore, type ExportTask, type ExportTaskType } from '@/store/useExportTasksStore';
 import { useT } from '@/hooks/useT';
 import type { Page } from '@/types';
 import { Button } from './Button';
@@ -555,16 +555,18 @@ interface ExportTasksPanelProps {
   onRetry?: (task: ExportTask) => void;
   onOpenResult?: (task: ExportTask) => void;
   showProjectTitle?: boolean;
+  includeInternalTasks?: boolean;
 }
 
-export const ExportTasksPanel: React.FC<ExportTasksPanelProps> = ({ projectId, pages = [], className, onRetry, onOpenResult, showProjectTitle }) => {
+export const ExportTasksPanel: React.FC<ExportTasksPanelProps> = ({ projectId, pages = [], className, onRetry, onOpenResult, showProjectTitle, includeInternalTasks = false }) => {
   const t = useT(exportI18n);
   const [isExpanded, setIsExpanded] = useState(true);
   const { tasks, removeTask, clearCompleted, restoreActiveTasks, loadTasks, pauseTask, resumeTask, cancelTask, retryTask } = useExportTasksStore();
 
-  const filteredTasks = projectId
+  const projectTasks = projectId
     ? tasks.filter(task => task.projectId === projectId)
     : tasks;
+  const filteredTasks = includeInternalTasks ? projectTasks : projectTasks.filter(isExportTask);
 
   const activeTasks = filteredTasks.filter(
     task => task.status === 'PENDING' || task.status === 'PROCESSING' || task.status === 'RUNNING' || task.status === 'PAUSED'

@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Trash2, LayoutDashboard, FileText, RefreshCw, CheckCircle, Clock3, Layers3, Plus, Search } from 'lucide-react';
-import { getStaticAssetUrl } from '@/api/client';
+import { ArrowRight, CheckCircle, Clock3, FileText, FolderOpen, ImagePlus, Layers3, LayoutDashboard, Mic2, Plus, Presentation, RefreshCw, Search, Trash2, Video } from 'lucide-react';
 import { AppTopNav, Button, Loading, Pagination, useToast, useConfirm } from '@/components/shared';
 import { ProjectCard } from '@/components/history/ProjectCard';
 import { useProjectStore } from '@/store/useProjectStore';
@@ -21,6 +20,31 @@ const historyI18n = {
     history: {
       title: '我的项目',
       subtitle: '统一查看与管理当前账户下的项目内容。',
+      homeEyebrow: '本地创作工作台',
+      homeTitle: '今天，从哪一步继续？',
+      homeDescription: '把内容变成可交付的 PPT、视频或播客，所有项目都在这里接续。',
+      continueWork: '继续创作',
+      continueDescription: '打开最近修改的项目，接着完成你的下一步。',
+      recentProject: '最近打开',
+      openProject: '打开项目',
+      recentProjects: '最近项目',
+      recentProjectsDescription: '按最近更新时间排列，快速回到正在推进的内容。',
+      moreProjects: '查看全部项目',
+      quickStart: '快速开始',
+      quickStartDescription: '选择一个入口，直接开始准备内容。',
+      createPpt: '新建 PPT 项目',
+      createVideo: '新建视频项目',
+      createPodcast: '新建播客项目',
+      materialCenter: '图片素材中心',
+      materialCenterDescription: '整理、上传和复用图片素材。',
+      materialGenerate: '生成图片素材',
+      materialGenerateDescription: '从一句描述开始制作视觉素材。',
+      projectOverview: '项目概览',
+      projectOverviewDescription: '当前项目的推进状态。',
+      noRecentProject: '还没有最近项目',
+      noRecentProjectDescription: '从一个清晰的主题开始，EasySlide 会帮你搭好第一版结构。',
+      startCreating: '开始创建',
+      continueHint: '点击继续编辑',
       heroTitle: '从想法到成稿',
       heroEmphasis: '让每一页，都值得上场',
       heroDescription: '让 AI 协助完成从构思到成稿的每一步，组织内容结构、视觉叙事与整套演示。你只需要专注于真正想表达的事。',
@@ -63,6 +87,31 @@ const historyI18n = {
     history: {
       title: 'My Projects',
       subtitle: 'View and manage projects under the current account.',
+      homeEyebrow: 'Local creative workspace',
+      homeTitle: 'Where do you want to pick up today?',
+      homeDescription: 'Turn ideas into presentation-ready decks, videos, or podcasts in one place.',
+      continueWork: 'Continue creating',
+      continueDescription: 'Open the most recently updated project and keep moving.',
+      recentProject: 'Recently opened',
+      openProject: 'Open project',
+      recentProjects: 'Recent projects',
+      recentProjectsDescription: 'Jump back into work, ordered by your latest updates.',
+      moreProjects: 'View all projects',
+      quickStart: 'Quick start',
+      quickStartDescription: 'Choose an entry point and start preparing content.',
+      createPpt: 'New PPT project',
+      createVideo: 'New video project',
+      createPodcast: 'New podcast project',
+      materialCenter: 'Image material center',
+      materialCenterDescription: 'Organize, upload, and reuse image materials.',
+      materialGenerate: 'Generate image material',
+      materialGenerateDescription: 'Create a visual asset from a short description.',
+      projectOverview: 'Project overview',
+      projectOverviewDescription: 'A quick view of current project progress.',
+      noRecentProject: 'No recent project yet',
+      noRecentProjectDescription: 'Start with a clear topic and EasySlide will help shape the first draft.',
+      startCreating: 'Start creating',
+      continueHint: 'Click to continue editing',
       heroTitle: 'From idea to final deck',
       heroEmphasis: 'Make every slide worth presenting',
       heroDescription: 'Turn one idea into a complete visual story with AI, from structure and narrative to a presentation-ready deck.',
@@ -149,19 +198,12 @@ export const History: React.FC<{ showNavigation?: boolean }> = ({ showNavigation
     ? projects.filter((project) => getProjectTitle(project).toLocaleLowerCase().includes(normalizedSearchQuery))
     : projects;
   const isHomeRoute = location.pathname === '/home' || location.pathname === '/';
-  const projectInspirationImages = projects.flatMap((project) => {
-    const src = getFirstPageImage(project);
-    return src ? [{ src, alt: `${getProjectTitle(project)} 项目预览` }] : [];
-  }).slice(0, 3);
-  const inspirationImages = [
-    ...projectInspirationImages,
-    ...['theme01', 'theme07', 'theme11']
-      .slice(0, 3 - projectInspirationImages.length)
-      .map((theme, index) => ({
-        src: getStaticAssetUrl(`/assets/native-theme-previews/${theme}.webp`),
-        alt: `精选模板 ${projectInspirationImages.length + index + 1}`,
-      })),
-  ];
+  const recentProject = projects[0] || null;
+  const recentProjectId = recentProject?.id || recentProject?.project_id;
+  const recentProjectImage = recentProject ? getFirstPageImage(recentProject) : null;
+  const recentProjects = visibleProjects
+    .filter((project) => (project.id || project.project_id) !== recentProjectId)
+    .slice(0, 4);
 
   const loadProjects = useCallback(async (page: number, force = false) => {
     setIsLoading(true);
@@ -567,27 +609,183 @@ export const History: React.FC<{ showNavigation?: boolean }> = ({ showNavigation
       {showNavigation && <AppTopNav />}
 
       <main className={isHomeRoute ? 'min-h-[calc(100vh-2.5rem)]' : undefined}>
-        {isHomeRoute && (
-        <section className="px-4 pt-4 md:px-6">
-          <div className="mx-auto flex max-w-[1600px] flex-col gap-3 rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)] px-4 py-3 shadow-[var(--app-shadow-control)] xl:flex-row xl:items-center xl:justify-between">
-            <div>
-              <p className="text-xs font-medium text-[var(--app-text-tertiary)]">本地创作工作台 · 最近项目</p>
-              <h1 className="mt-0.5 text-lg font-semibold">作品工作台</h1>
-              <p className="mt-0.5 text-xs text-[var(--app-text-secondary)]">PPT、视频与播客统一创作，内容保存在本机。</p>
-            </div>
-            <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row xl:max-w-[620px]">
-              <label className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-background)] px-3 text-[var(--app-text-tertiary)] focus-within:border-[var(--app-accent)]">
-                <Search size={16} aria-hidden="true" />
-                <span className="sr-only">{t('history.searchPlaceholder')}</span>
-                <input type="search" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder={t('history.searchPlaceholder')} className="min-w-0 flex-1 bg-transparent text-sm text-[var(--app-text)] outline-none" />
-              </label>
-              <Button icon={<Plus size={16} />} onClick={() => navigate('/create')}>{t('home.actions.createProject')}</Button>
-            </div>
-          </div>
-        </section>
-        )}
+        {isHomeRoute ? (
+          <div data-testid="home-workbench" className="mx-auto max-w-[1600px] px-4 py-6 md:px-6 md:py-8">
+            <header className="flex flex-col gap-5 border-b border-[var(--app-border)] pb-6 xl:flex-row xl:items-end xl:justify-between">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-[0.12em] text-[var(--app-text-tertiary)]">{t('history.homeEyebrow')}</p>
+                <h1 className="mt-2 text-2xl font-semibold tracking-[-0.02em] md:text-3xl">{t('history.homeTitle')}</h1>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--app-text-secondary)]">{t('history.homeDescription')}</p>
+              </div>
+              <div className="flex min-w-0 flex-col gap-3 sm:flex-row xl:w-[520px]">
+                <label className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-3 text-[var(--app-text-tertiary)] focus-within:border-[var(--app-accent)]">
+                  <Search size={16} aria-hidden="true" />
+                  <span className="sr-only">{t('history.searchPlaceholder')}</span>
+                  <input type="search" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder={t('history.searchPlaceholder')} className="min-w-0 flex-1 bg-transparent text-sm text-[var(--app-text)] outline-none" />
+                </label>
+                <Button icon={<Plus size={16} />} onClick={() => navigate('/create')}>{t('home.actions.createProject')}</Button>
+              </div>
+            </header>
 
-        <div className={`mx-auto px-4 md:px-6 ${isHomeRoute ? 'max-w-[1600px] py-4' : 'max-w-7xl py-6 md:py-7'}`}>
+            {error && (
+              <div className="mt-4 flex items-center gap-2 rounded-[var(--app-radius-control)] border border-[var(--app-warning-soft)] bg-[var(--app-warning-soft)] px-3 py-2 text-xs text-[var(--app-warning)]">
+                <span className="min-w-0 flex-1 truncate">{error}</span>
+                <Button variant="secondary" size="sm" onClick={() => loadProjects(currentPage, true)}>{t('common.retry')}</Button>
+              </div>
+            )}
+
+            {isLoading ? (
+              <div className="flex min-h-[360px] items-center justify-center">
+                <Loading message={t('common.loading')} />
+              </div>
+            ) : (
+              <div className="mt-6 grid gap-8 xl:grid-cols-[minmax(0,1fr)_280px]">
+                <div className="min-w-0">
+                  <section aria-labelledby="continue-title" className="border-b border-[var(--app-border)] pb-6">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                      <div>
+                        <h2 id="continue-title" className="text-[15px] font-semibold">{t('history.continueWork')}</h2>
+                        <p className="mt-1 text-xs text-[var(--app-text-secondary)]">{t('history.continueDescription')}</p>
+                      </div>
+                      {recentProject && <span className="text-xs text-[var(--app-text-tertiary)]">{t('history.recentProject')}</span>}
+                    </div>
+
+                    {recentProject ? (
+                      <button type="button" onClick={() => void handleSelectProject(recentProject)} className="group mt-4 grid w-full overflow-hidden rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)] text-left shadow-[var(--app-shadow-card)] transition-colors hover:border-[var(--app-border-strong)] hover:bg-[var(--app-surface-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)] lg:grid-cols-[minmax(0,0.92fr)_minmax(260px,1.08fr)]">
+                        <div className="relative min-h-[190px] overflow-hidden border-b border-[var(--app-border)] bg-[var(--app-surface-muted)] lg:border-b-0 lg:border-r">
+                          {recentProjectImage ? (
+                            <img src={recentProjectImage} alt={`${getProjectTitle(recentProject)} 项目预览`} className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 motion-safe:group-hover:scale-[1.025]" />
+                          ) : (
+                            <div className="flex h-full min-h-[190px] items-center justify-center text-[var(--app-text-tertiary)]">
+                              <Presentation size={34} strokeWidth={1.5} aria-hidden="true" />
+                            </div>
+                          )}
+                          <span className="absolute left-4 top-4 rounded-[var(--app-radius-control)] border border-white/30 bg-black/55 px-2 py-1 text-[11px] font-medium text-white">{t('history.recentProject')}</span>
+                        </div>
+                        <div className="flex min-h-[190px] flex-col justify-between p-5">
+                          <div>
+                            <p className="text-xs text-[var(--app-text-tertiary)]">{t('history.openProject')}</p>
+                            <h3 className="mt-2 line-clamp-2 text-xl font-semibold leading-7">{getProjectTitle(recentProject)}</h3>
+                            <p className="mt-3 text-sm leading-6 text-[var(--app-text-secondary)]">{t('history.continueHint')}</p>
+                          </div>
+                          <span className="mt-6 inline-flex items-center gap-1.5 text-sm font-medium text-[var(--app-accent)]">
+                            {t('history.openProject')}
+                            <ArrowRight size={16} aria-hidden="true" className="transition-transform duration-150 motion-safe:group-hover:translate-x-0.5" />
+                          </span>
+                        </div>
+                      </button>
+                    ) : (
+                      <div className="mt-4 flex min-h-[190px] items-center justify-between gap-6 rounded-[var(--app-radius-card)] border border-dashed border-[var(--app-border-strong)] bg-[var(--app-surface-muted)] px-5 py-6 sm:px-7">
+                        <div>
+                          <h3 className="text-lg font-semibold">{t('history.noRecentProject')}</h3>
+                          <p className="mt-2 max-w-lg text-sm leading-6 text-[var(--app-text-secondary)]">{t('history.noRecentProjectDescription')}</p>
+                        </div>
+                        <Button size="sm" icon={<ArrowRight size={16} />} onClick={() => navigate('/create')}>{t('history.startCreating')}</Button>
+                      </div>
+                    )}
+                  </section>
+
+                  <section aria-labelledby="recent-projects-title" className="mt-6">
+                    <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                      <div>
+                        <h2 id="recent-projects-title" className="text-[15px] font-semibold">{t('history.recentProjects')}</h2>
+                        <p className="mt-1 text-xs text-[var(--app-text-secondary)]">{t('history.recentProjectsDescription')}</p>
+                      </div>
+                      <Button variant="ghost" size="sm" icon={<ArrowRight size={15} />} onClick={() => navigate('/history')}>{t('history.moreProjects')}</Button>
+                    </div>
+
+                    <div data-testid="project-grid" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                      {recentProjects.map((project, index) => {
+                        const projectId = project.id || project.project_id;
+                        if (!projectId) return null;
+                        return (
+                          <ProjectCard
+                            key={projectId}
+                            data-rise
+                            riseDelay={index * 40}
+                            project={project}
+                            isSelected={selectedProjects.has(projectId)}
+                            isEditing={editingProjectId === projectId}
+                            editingTitle={editingTitle}
+                            onSelect={handleSelectProject}
+                            onToggleSelect={handleToggleSelect}
+                            onDelete={handleDeleteProject}
+                            onExport={handleExportProject}
+                            onStartEdit={handleStartEdit}
+                            onTitleChange={setEditingTitle}
+                            onTitleKeyDown={handleTitleKeyDown}
+                            onSaveEdit={handleSaveEdit}
+                            isBatchMode={selectedProjects.size > 0}
+                            layout="grid"
+                          />
+                        );
+                      })}
+                    </div>
+                    {recentProjects.length === 0 && (
+                      <div className="border-y border-[var(--app-border)] py-8 text-sm text-[var(--app-text-secondary)]">{projects.length > 0 ? t('history.noSearchResults') : t('history.noProjects')}</div>
+                    )}
+                  </section>
+                </div>
+
+                <aside className="space-y-7 border-t border-[var(--app-border)] pt-6 xl:border-l xl:border-t-0 xl:pl-6 xl:pt-0">
+                  <section aria-labelledby="quick-start-title">
+                    <h2 id="quick-start-title" className="text-[15px] font-semibold">{t('history.quickStart')}</h2>
+                    <p className="mt-1 text-xs leading-5 text-[var(--app-text-secondary)]">{t('history.quickStartDescription')}</p>
+                    <div className="mt-3 divide-y divide-[var(--app-border)] border-y border-[var(--app-border)]">
+                      {[
+                        { label: t('history.createPpt'), icon: Presentation },
+                        { label: t('history.createVideo'), icon: Video },
+                        { label: t('history.createPodcast'), icon: Mic2 },
+                      ].map(({ label, icon: Icon }, index) => (
+                        <button key={label} type="button" onClick={() => navigate('/create', { state: { initialWorkspace: index === 0 ? 'ppt' : index === 1 ? 'video' : 'podcast' } })} className="group flex w-full items-center gap-3 py-3 text-left transition-colors hover:text-[var(--app-accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent-soft)]">
+                          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] text-[var(--app-text-secondary)] group-hover:border-[var(--app-accent)] group-hover:text-[var(--app-accent)]"><Icon size={16} aria-hidden="true" /></span>
+                          <span className="min-w-0 flex-1 truncate text-sm font-medium">{label}</span>
+                          <ArrowRight size={15} aria-hidden="true" className="text-[var(--app-text-tertiary)] transition-transform duration-150 motion-safe:group-hover:translate-x-0.5" />
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+
+                  <section aria-labelledby="project-overview-title">
+                    <div className="flex items-end justify-between gap-3">
+                      <div>
+                        <h2 id="project-overview-title" className="text-[15px] font-semibold">{t('history.projectOverview')}</h2>
+                        <p className="mt-1 text-xs leading-5 text-[var(--app-text-secondary)]">{t('history.projectOverviewDescription')}</p>
+                      </div>
+                      <span className="text-lg font-semibold tabular-nums">{totalProjects}</span>
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 border-y border-[var(--app-border)]">
+                      {[
+                        { label: t('history.completed'), value: completedCount, icon: CheckCircle, tone: 'var(--app-success)', filter: 'completed' as const },
+                        { label: t('history.generating'), value: generatingCount, icon: Clock3, tone: 'var(--app-accent-coral)', filter: 'generating' as const },
+                        { label: t('history.inProgress'), value: inProgressCount, icon: Layers3, tone: 'var(--app-accent-violet)', filter: 'in_progress' as const },
+                        { label: t('history.totalCount'), value: totalProjects, icon: FileText, tone: 'var(--app-accent-blue)', filter: null },
+                      ].map((item) => {
+                        const Icon = item.icon;
+                        return (
+                          <button key={item.label} type="button" disabled={!item.filter} onClick={() => item.filter && handleStatusFilter(item.filter)} aria-pressed={item.filter ? statusFilter === item.filter : undefined} className={`flex min-w-0 items-center gap-2 border-b border-[var(--app-border)] px-2.5 py-3 text-left last:border-b-0 ${item.filter ? 'cursor-pointer hover:bg-[var(--app-surface-hover)]' : 'cursor-default'} ${item.filter && statusFilter === item.filter ? 'bg-[var(--app-surface-hover)]' : ''}`}>
+                            <Icon size={15} aria-hidden="true" style={{ color: item.tone }} />
+                            <span className="min-w-0"><span className="block truncate text-[11px] text-[var(--app-text-secondary)]">{item.label}</span><span className="mt-0.5 block text-sm font-semibold tabular-nums" style={{ color: item.tone }}>{item.value}</span></span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </section>
+
+                  <section aria-labelledby="material-entry-title" className="border-t border-[var(--app-border)] pt-5">
+                    <h2 id="material-entry-title" className="text-[15px] font-semibold">{t('history.materialCenter')}</h2>
+                    <p className="mt-1 text-xs leading-5 text-[var(--app-text-secondary)]">{t('history.materialCenterDescription')}</p>
+                    <div className="mt-3 flex flex-col gap-2">
+                      <Button variant="secondary" size="sm" icon={<FolderOpen size={15} />} onClick={() => navigate('/materials')}>{t('history.materialCenter')}</Button>
+                      <Button variant="ghost" size="sm" icon={<ImagePlus size={15} />} onClick={() => navigate('/material-generate')}>{t('history.materialGenerate')}</Button>
+                    </div>
+                  </section>
+                </aside>
+              </div>
+            )}
+          </div>
+        ) : (
+        <div className="mx-auto max-w-7xl px-4 py-6 md:px-6 md:py-7">
           {!isHomeRoute && (
             <section className="mb-7 grid gap-6 border-b border-[var(--app-border)] pb-6 lg:grid-cols-[minmax(0,1fr)_minmax(420px,0.78fr)] lg:items-stretch">
               <header className="flex min-h-40 flex-col items-start justify-between gap-6 py-1">
@@ -745,22 +943,8 @@ export const History: React.FC<{ showNavigation?: boolean }> = ({ showNavigation
             </div>
           </section>
         )}
-        {isHomeRoute && (
-          <section aria-labelledby="inspiration-title" className="mt-5 border-t border-[var(--app-border)] pt-4">
-            <div className="mb-3">
-              <h2 id="inspiration-title" className="text-[15px] font-semibold">灵感墙</h2>
-              <p className="mt-1 text-xs text-[var(--app-text-secondary)]">精选模板与视觉素材，保持少量、可用、不过度装饰。</p>
-            </div>
-            <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
-              {inspirationImages.map((image, index) => (
-                <div key={`${image.src}-${index}`} className="group overflow-hidden rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)] shadow-[var(--app-shadow-card)]">
-                  <img src={image.src} alt={image.alt} className="aspect-[3/1] w-full object-cover transition-transform duration-300 motion-safe:group-hover:scale-[1.025]" loading="lazy" />
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
         </div>
+        )}
       </main>
       <ToastContainer />
       {ConfirmDialog}

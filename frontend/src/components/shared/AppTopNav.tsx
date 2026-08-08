@@ -6,8 +6,6 @@ import { getStaticAssetUrl } from '@/api/client';
 import { useTheme } from '@/hooks/useTheme';
 import { useT } from '@/hooks/useT';
 import { Button } from './Button';
-import { MaterialCenterModal } from './MaterialCenterModal';
-import { MaterialGeneratorModal } from './MaterialGeneratorModal';
 
 const topNavI18n = {
   zh: {
@@ -34,8 +32,6 @@ export function AppTopNav() {
   const t = useT(topNavI18n);
   const { theme, isDark, setTheme } = useTheme();
   const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
-  const [isMaterialCenterOpen, setIsMaterialCenterOpen] = useState(false);
-  const [isMaterialGeneratorOpen, setIsMaterialGeneratorOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(() => (
     location.pathname.startsWith('/project/') && window.innerWidth < 1440
   ));
@@ -52,8 +48,8 @@ export function AppTopNav() {
     { path: '/create', label: t('nav.createProject'), icon: LayoutDashboard, action: () => navigate('/create') },
     { path: '/history', label: t('nav.history'), icon: FileText, action: () => navigate('/history') },
     { path: '/tasks', label: t('nav.tasks'), icon: ClipboardList, action: () => navigate('/tasks') },
-    { label: t('nav.materialCenter'), icon: FolderOpen, action: () => setIsMaterialCenterOpen(true) },
-    { label: t('nav.materialGenerate'), icon: ImagePlus, action: () => setIsMaterialGeneratorOpen(true) },
+    { path: '/material-generate', label: t('nav.materialGenerate'), icon: ImagePlus, action: () => navigate('/material-generate') },
+    { path: '/materials', label: t('nav.materialCenter'), icon: FolderOpen, action: () => navigate('/materials') },
   ];
 
   return (
@@ -166,8 +162,6 @@ export function AppTopNav() {
           </div>
         </div>
       </nav>
-      <MaterialGeneratorModal projectId={null} isOpen={isMaterialGeneratorOpen} onClose={() => setIsMaterialGeneratorOpen(false)} />
-      <MaterialCenterModal isOpen={isMaterialCenterOpen} onClose={() => setIsMaterialCenterOpen(false)} />
     </>
   );
 }

@@ -65,7 +65,7 @@ export function TaskCenter() {
             {t('tasks.refresh')}
           </button>
         </div>
-        <ExportTasksPanel className="mt-6" onOpenResult={handleOpenResult} showProjectTitle />
+        <ExportTasksPanel className="mt-6" onOpenResult={handleOpenResult} showProjectTitle includeInternalTasks />
         {hasMore && (
           <div className="mt-4 flex justify-center">
             <Button variant="secondary" size="sm" icon={<ChevronDown size={14} />} onClick={() => void loadMoreTasks()} disabled={loading}>

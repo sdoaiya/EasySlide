@@ -69,7 +69,7 @@ describe('ProjectSettingsModal render mode', () => {
     expect(within(dialog).getByRole('heading', { name: '设置' })).toBeInTheDocument();
   });
 
-  it('resets the tab scroll position and keeps the global panel flush with the modal', () => {
+  it('resets the tab scroll position and leaves space after the settings sidebar', () => {
     renderModal('native');
 
     const scrollArea = screen.getByTestId('project-settings-scroll');
@@ -77,7 +77,7 @@ describe('ProjectSettingsModal render mode', () => {
     fireEvent.click(screen.getByRole('tab', { name: '全局设置' }));
 
     expect(scrollArea.scrollTop).toBe(0);
-    expect(scrollArea).toHaveClass('p-0');
+    expect(scrollArea).toHaveClass('px-6', 'py-0');
     expect(scrollArea.closest('[class~="-mb-7"]')).not.toBeNull();
   });
 });

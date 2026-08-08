@@ -951,7 +951,11 @@ def get_image_generation_prompt(page_desc: str, outline_text: str,
     if extra_requirements and extra_requirements.strip():
         extra_req_text = f"\n\n额外要求（请务必遵循）：\n{extra_requirements}\n"
 
-    template_style_guideline = "- 配色和设计语言和模板图片严格相似。" if has_template else "- 严格按照风格描述进行设计。"
+    template_style_guideline = (
+        "- 复用模板图片的版式结构、分区比例、对齐关系、标题层级和留白节奏；"
+        "配色可由额外要求中的模板配色变体替换，换色不得改变模板几何结构。"
+        if has_template else "- 严格按照风格描述进行设计。"
+    )
     forbidden_template_text_guidline = "- 只参考风格设计，禁止出现模板中的文字。\n" if has_template else ""
 
     prompt = (f"""\

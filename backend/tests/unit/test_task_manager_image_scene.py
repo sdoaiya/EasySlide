@@ -26,6 +26,27 @@ def test_image_scene_requires_both_production_flags():
     assert task_manager._image_scene_enabled(app) is False
 
 
+def test_template_reference_disables_generic_image_scene_overlay():
+    app = _App()
+    app.config = dict(_App.config, IMAGE_SCENE_ENABLED=True, HYPERFRAMES_ENABLED=True)
+
+    assert task_manager._should_build_image_scene(
+        app,
+        use_template=True,
+        template_reference_path='template.webp',
+    ) is False
+    assert task_manager._should_build_image_scene(
+        app,
+        use_template=True,
+        template_reference_path=None,
+    ) is True
+    assert task_manager._should_build_image_scene(
+        app,
+        use_template=False,
+        template_reference_path='material.png',
+    ) is True
+
+
 def test_prepare_image_scene_version_uses_hero_and_stable_page_copy(
     tmp_path,
     monkeypatch,

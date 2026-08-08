@@ -331,9 +331,374 @@ def test_paused_image_generation_stops_before_submitting_more_pages(app, tmp_pat
         db.session.refresh(first)
         db.session.refresh(second)
         assert task.status == "PAUSED"
-        assert first.generated_image_path
+        assert first.generated_image_path is None
         assert second.generated_image_path is None
         assert second.status == "QUEUED"
+
+
+def test_image_generation_marks_task_failed_when_every_page_fails(app, tmp_path):
+    from services.file_service import FileService
+    from services.task_manager import generate_images_task
+
+    class EmptyImageService:
+        def flatten_outline(self, outline):
+            return outline
+
+        def extract_image_urls_from_markdown(self, _text):
+            return []
+
+        def generate_image_prompt(self, *_args, **_kwargs):
+            return "prompt"
+
+        def generate_image(self, *_args, **_kwargs):
+            raise RuntimeError("provider returned an empty image result")
+
+    with app.app_context():
+        project = Project(
+            id="all-images-failed-project",
+            creation_type="idea",
+            status="GENERATING_IMAGES",
+        )
+        _attach_ppt_workspace(project)
+        page = Page(
+            id="all-images-failed-page",
+            project_id=project.id,
+            order_index=0,
+            status="QUEUED",
+        )
+        page.set_outline_content({"title": page.id, "points": []})
+        page.set_description_content({"text": page.id})
+        task = Task(
+            id="all-images-failed-task",
+            project_id=project.id,
+            task_type="GENERATE_IMAGES",
+            status="PENDING",
+        )
+        task.set_progress({
+            "generation_id": task.id,
+            "manifest_version": 1,
+            "project_id": project.id,
+            "total": 1,
+            "completed": 0,
+            "failed": 0,
+            "page_ids": [page.id],
+            "pages": [{"page_id": page.id, "status": "queued", "attempt": 1}],
+        })
+        db.session.add_all([project, page, task])
+        db.session.commit()
+
+        generate_images_task(
+            task.id,
+            project.id,
+            EmptyImageService(),
+            FileService(str(tmp_path)),
+            [{"title": page.id, "points": []}],
+            use_template=False,
+            max_workers=1,
+            app=app,
+            page_ids=[page.id],
+        )
+
+        db.session.refresh(task)
+        db.session.refresh(page)
+        assert task.status == "FAILED"
+        assert task.get_progress()["status"] == "failed"
+        assert task.get_progress()["failed"] == 1
+        assert "empty image result" in task.error_message
+        assert page.status == "FAILED"
+
+
+def test_image_scene_plain_fallback_without_artifacts_still_saves_page(
+    app,
+    tmp_path,
+    monkeypatch,
+):
+    from PIL import Image
+    from services import task_manager
+    from services.file_service import FileService
+
+    class ImageService:
+        def flatten_outline(self, outline):
+            return outline
+
+        def extract_image_urls_from_markdown(self, _text):
+            return []
+
+        def generate_image_prompt(self, *_args, **_kwargs):
+            return "prompt"
+
+        def generate_image(self, *_args, **_kwargs):
+            return Image.new("RGB", (640, 360), "white")
+
+    app.config.update({
+        "IMAGE_SCENE_ENABLED": True,
+        "HYPERFRAMES_ENABLED": True,
+    })
+    monkeypatch.setattr(
+        task_manager,
+        "_prepare_image_scene_version",
+        lambda image, **_kwargs: (image.copy(), None),
+    )
+
+    with app.app_context():
+        project = Project(
+            id="image-scene-plain-fallback-project",
+            creation_type="idea",
+            status="GENERATING_IMAGES",
+        )
+        _attach_ppt_workspace(project)
+        page = Page(
+            id="image-scene-plain-fallback-page",
+            project_id=project.id,
+            order_index=0,
+            status="QUEUED",
+        )
+        page.set_outline_content({"title": page.id, "points": []})
+        page.set_description_content({"text": page.id})
+        task = Task(
+            id="image-scene-plain-fallback-task",
+            project_id=project.id,
+            task_type="GENERATE_IMAGES",
+            status="PENDING",
+        )
+        task.set_progress({
+            "generation_id": task.id,
+            "manifest_version": 1,
+            "project_id": project.id,
+            "total": 1,
+            "completed": 0,
+            "failed": 0,
+            "page_ids": [page.id],
+            "pages": [{"page_id": page.id, "status": "queued", "attempt": 1}],
+        })
+        db.session.add_all([page, task])
+        db.session.commit()
+
+        task_manager.generate_images_task(
+            task.id,
+            project.id,
+            ImageService(),
+            FileService(str(tmp_path)),
+            [{"title": page.id, "points": []}],
+            use_template=False,
+            max_workers=1,
+            app=app,
+            page_ids=[page.id],
+        )
+
+        db.session.refresh(task)
+        db.session.refresh(page)
+        assert task.status == "COMPLETED"
+        assert task.get_progress()["completed"] == 1
+        assert page.status == "COMPLETED"
+        assert page.generated_image_path
+        assert (tmp_path / page.generated_image_path).is_file()
+
+
+def test_single_page_image_scene_plain_fallback_without_artifacts_still_saves_page(
+    app,
+    tmp_path,
+    monkeypatch,
+):
+    from PIL import Image
+    from services import task_manager
+    from services.file_service import FileService
+
+    class ImageService:
+        def flatten_outline(self, outline):
+            return outline
+
+        def extract_image_urls_from_markdown(self, _text):
+            return []
+
+        def generate_image_prompt(self, *_args, **_kwargs):
+            return "prompt"
+
+        def generate_image(self, *_args, **_kwargs):
+            return Image.new("RGB", (640, 360), "white")
+
+    app.config.update({
+        "IMAGE_SCENE_ENABLED": True,
+        "HYPERFRAMES_ENABLED": True,
+    })
+    monkeypatch.setattr(
+        task_manager,
+        "_prepare_image_scene_version",
+        lambda image, **_kwargs: (image.copy(), None),
+    )
+
+    with app.app_context():
+        project = Project(
+            id="single-image-scene-plain-fallback-project",
+            creation_type="idea",
+            status="GENERATING_IMAGES",
+        )
+        _attach_ppt_workspace(project)
+        page = Page(
+            id="single-image-scene-plain-fallback-page",
+            project_id=project.id,
+            order_index=0,
+            status="QUEUED",
+        )
+        page.set_outline_content({"title": page.id, "points": []})
+        page.set_description_content({"text": page.id})
+        task = Task(
+            id="single-image-scene-plain-fallback-task",
+            project_id=project.id,
+            task_type="GENERATE_PAGE_IMAGE",
+            status="PENDING",
+        )
+        task.set_progress({
+            "generation_id": task.id,
+            "manifest_version": 1,
+            "project_id": project.id,
+            "total": 1,
+            "completed": 0,
+            "failed": 0,
+            "page_ids": [page.id],
+            "pages": [{"page_id": page.id, "status": "queued", "attempt": 1}],
+        })
+        db.session.add_all([page, task])
+        db.session.commit()
+
+        task_manager.generate_single_page_image_task(
+            task.id,
+            project.id,
+            page.id,
+            ImageService(),
+            FileService(str(tmp_path)),
+            [{"title": page.id, "points": []}],
+            use_template=False,
+            app=app,
+        )
+
+        db.session.refresh(task)
+        db.session.refresh(page)
+        assert task.status == "COMPLETED"
+        assert task.get_progress()["completed"] == 1
+        assert page.status == "COMPLETED"
+        assert page.generated_image_path
+        assert (tmp_path / page.generated_image_path).is_file()
+
+
+@pytest.mark.parametrize('single_page', [False, True])
+def test_template_generation_locks_reference_layout_and_skips_generic_scene(
+    app,
+    tmp_path,
+    monkeypatch,
+    single_page,
+):
+    from PIL import Image
+    from services import task_manager
+    from services.file_service import FileService
+
+    captured = {}
+
+    class ImageService:
+        def flatten_outline(self, outline):
+            return outline
+
+        def extract_image_urls_from_markdown(self, _text):
+            return []
+
+        def generate_image_prompt(self, *_args, **kwargs):
+            captured['requirements'] = kwargs.get('extra_requirements') or ''
+            return 'prompt'
+
+        def generate_image(self, _prompt, reference_path, *_args, **_kwargs):
+            captured['reference_path'] = reference_path
+            return Image.new('RGB', (640, 360), 'black')
+
+    app.config.update({
+        'IMAGE_SCENE_ENABLED': True,
+        'HYPERFRAMES_ENABLED': True,
+    })
+    monkeypatch.setattr(task_manager, 'get_image_quality_control_enabled', lambda: False)
+
+    def fail_if_scene_is_built(*_args, **_kwargs):
+        raise AssertionError('template-backed pages must not use the generic image scene')
+
+    monkeypatch.setattr(task_manager, '_prepare_image_scene_version', fail_if_scene_is_built)
+
+    with app.app_context():
+        suffix = 'single' if single_page else 'batch'
+        project = Project(
+            id=f'template-layout-lock-{suffix}-project',
+            creation_type='idea',
+            status='GENERATING_IMAGES',
+        )
+        _attach_ppt_workspace(project)
+        template_relative = f'{project.id}/template/content.png'
+        template_path = tmp_path / template_relative
+        template_path.parent.mkdir(parents=True, exist_ok=True)
+        Image.new('RGB', (640, 360), 'red').save(template_path)
+        page = Page(
+            id=f'template-layout-lock-{suffix}-page',
+            project_id=project.id,
+            order_index=0,
+            status='QUEUED',
+            template_image_path=template_relative,
+            template_selection_layout='process',
+        )
+        page.set_outline_content({'title': page.id, 'points': ['要点一', '要点二']})
+        page.set_description_content({'text': page.id})
+        task = Task(
+            id=f'template-layout-lock-{suffix}-task',
+            project_id=project.id,
+            task_type='GENERATE_PAGE_IMAGE' if single_page else 'GENERATE_IMAGES',
+            status='PENDING',
+        )
+        task.set_progress({
+            'generation_id': task.id,
+            'manifest_version': 1,
+            'project_id': project.id,
+            'total': 1,
+            'completed': 0,
+            'failed': 0,
+            'page_ids': [page.id],
+            'pages': [{'page_id': page.id, 'status': 'queued', 'attempt': 1}],
+        })
+        db.session.add_all([page, task])
+        db.session.commit()
+
+        file_service = FileService(str(tmp_path))
+        if single_page:
+            task_manager.generate_single_page_image_task(
+                task.id,
+                project.id,
+                page.id,
+                ImageService(),
+                file_service,
+                [{'title': page.id, 'points': ['要点一', '要点二']}],
+                use_template=True,
+                app=app,
+                extra_requirements='图片模式模板视觉偏好：模板配色变体：黑金。',
+            )
+        else:
+            task_manager.generate_images_task(
+                task.id,
+                project.id,
+                ImageService(),
+                file_service,
+                [{'title': page.id, 'points': ['要点一', '要点二']}],
+                use_template=True,
+                max_workers=1,
+                app=app,
+                extra_requirements='图片模式模板视觉偏好：模板配色变体：黑金。',
+                page_ids=[page.id],
+            )
+
+        db.session.refresh(task)
+        db.session.refresh(page)
+        assert task.status == 'COMPLETED'
+        assert page.status == 'COMPLETED'
+        assert captured['reference_path'] == str(template_path)
+        assert '模板版式锁定' in captured['requirements']
+        assert '模板配色变体：黑金' in captured['requirements']
+        assert '本页版式家族：process' not in captured['requirements']
+        assert '不要在图片中绘制标题、正文' not in captured['requirements']
+        assert page.generated_image_path
+        assert (tmp_path / page.generated_image_path).is_file()
 
 
 def test_image_generation_task_skips_page_that_already_has_image(app, tmp_path):
@@ -538,9 +903,9 @@ def test_paused_image_generation_records_already_running_pages(app, tmp_path):
         db.session.refresh(second)
         db.session.refresh(third)
         assert task.status == "PAUSED"
-        assert task.get_progress()["completed"] == 2
-        assert first.generated_image_path
-        assert second.generated_image_path
+        assert task.get_progress()["completed"] == 0
+        assert first.generated_image_path is None
+        assert second.generated_image_path is None
         assert third.generated_image_path is None
 
 

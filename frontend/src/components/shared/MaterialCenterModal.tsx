@@ -1,5 +1,5 @@
 import React, { useReducer, useEffect, useCallback } from 'react';
-import { ImageIcon, RefreshCw, Upload, Download, X, FolderOpen, Eye, ArrowUpDown } from 'lucide-react';
+import { ArrowUpDown, Download, Eye, FileText, Film, FolderOpen, ImageIcon, Mic2, RefreshCw, Upload, X } from 'lucide-react';
 import { Button } from './Button';
 import { useT } from '@/hooks/useT';
 import { useToast } from './Toast';
@@ -24,6 +24,9 @@ const i18nDict = {
       preview: '预览',
       remove: '删除',
       closePreview: '关闭预览',
+      audio: '音频素材',
+      video: '视频素材',
+      transcript: '文本素材',
       emptyHint: '上传图片或通过素材生成功能创建素材',
       msg: {
         loadErr: '加载素材失败',
@@ -53,6 +56,9 @@ const i18nDict = {
       preview: 'Preview',
       remove: 'Delete',
       closePreview: 'Close Preview',
+      audio: 'Audio material',
+      video: 'Video material',
+      transcript: 'Text material',
       emptyHint: 'Upload images or create materials via the generator',
       msg: {
         loadErr: 'Failed to load materials',
@@ -86,7 +92,7 @@ interface State {
   sortBy: 'newest' | 'oldest' | 'name-asc' | 'name-desc';
   projects: Project[];
   projectsReady: boolean;
-  preview: { url: string; label: string } | null;
+  preview: { url: string; label: string; kind?: Material['media_kind'] } | null;
 }
 
 type Action =
@@ -310,11 +316,15 @@ const MaterialGrid: React.FC<{
   onToggle: (id: string) => void;
   onPreview: (e: React.MouseEvent, m: Material) => void;
   onDelete: (e: React.MouseEvent<HTMLButtonElement>, m: Material) => void;
-}> = ({ items, selected, deleting, t, onToggle, onPreview, onDelete }) => (
-  <div className="grid max-h-96 grid-cols-4 gap-4 overflow-y-auto rounded-[var(--app-radius-card)] bg-[var(--app-surface-hover)] p-4">
+  workspace?: boolean;
+}> = ({ items, selected, deleting, t, onToggle, onPreview, onDelete, workspace = false }) => (
+  <div data-testid={workspace ? 'material-grid-workspace' : 'material-grid'} className={`grid gap-x-5 gap-y-6 rounded-[var(--app-radius-card)] bg-[var(--app-surface-hover)] p-5 ${workspace ? 'grid-cols-2 overflow-visible sm:grid-cols-3 xl:grid-cols-4' : 'max-h-[min(56vh,36rem)] grid-cols-2 overflow-y-auto sm:grid-cols-3 lg:grid-cols-4'}`}>
     {items.map((m) => {
       const sel = selected.has(m.id);
       const busy = deleting.has(m.id);
+      const mediaKind = m.media_kind || 'image';
+      const mediaLabel = mediaKind === 'audio' ? t('mc.audio') : mediaKind === 'video' ? t('mc.video') : t('mc.transcript');
+      const MediaIcon = mediaKind === 'audio' ? Mic2 : mediaKind === 'video' ? Film : FileText;
       return (
         <div
           key={m.id}
@@ -323,7 +333,18 @@ const MaterialGrid: React.FC<{
             sel ? 'border-[var(--app-accent)]' : 'border-[var(--app-border)] hover:border-[var(--app-border-strong)]'
           }`}
         >
-          <img src={getImageUrl(m.url)} alt={displayName(m)} className="absolute inset-0 w-full h-full object-cover" />
+          {mediaKind === 'image' ? (
+            <img src={getImageUrl(m.url)} alt={displayName(m)} className="absolute inset-0 h-full w-full object-cover" />
+          ) : (
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-[var(--app-surface-muted)] p-3 text-center text-[var(--app-text-secondary)]">
+              <MediaIcon size={28} className="mb-2 text-[var(--app-accent)]" aria-hidden="true" />
+              <span className="text-xs font-semibold">{mediaLabel}</span>
+              <span className="mt-1 max-w-full truncate text-[10px] text-[var(--app-text-tertiary)]">{displayName(m)}</span>
+              {mediaKind === 'audio' && (
+                <audio controls preload="none" src={getImageUrl(m.url)} className="mt-2 h-7 w-full max-w-[220px]" onClick={(e) => e.stopPropagation()} aria-label={displayName(m)} />
+              )}
+            </div>
+          )}
 
           <button
             type="button"
@@ -338,19 +359,24 @@ const MaterialGrid: React.FC<{
             type="button"
             onClick={(e) => onDelete(e, m)}
             disabled={busy}
-            className="absolute -right-2 -top-2 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-[var(--app-error)] text-[var(--app-on-color)] opacity-0 shadow-[var(--app-shadow-control)] transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)] disabled:cursor-not-allowed disabled:opacity-60"
+            className="absolute right-1 top-1 z-30 flex h-10 w-10 items-center justify-center rounded-full text-[var(--app-on-color)] opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)] disabled:cursor-not-allowed disabled:opacity-60"
             aria-label={t('mc.remove')}
           >
-            {busy ? <RefreshCw size={12} className="animate-spin" /> : <X size={12} />}
+            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--app-error)] shadow-[var(--app-shadow-control)]">
+              {busy ? <RefreshCw size={12} className="animate-spin" /> : <X size={12} />}
+            </span>
           </button>
 
           {sel && (
-            <div className="absolute inset-0 bg-[color:var(--app-accent-soft)] flex items-center justify-center">
+            <div className="absolute inset-0 z-10 flex items-center justify-center bg-[color:var(--app-accent-soft)]">
               <div className="bg-[var(--app-focus)] text-[var(--app-surface)] rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold">✓</div>
             </div>
           )}
 
-          <div className="absolute bottom-0 left-0 right-0 truncate bg-[color:var(--app-surface)]/85 p-1 text-xs text-[var(--app-text)] opacity-0 transition-opacity group-hover:opacity-100">
+          <div
+            className="absolute bottom-2 left-2 right-2 z-20 truncate rounded-[var(--app-radius-control)] bg-[color:var(--app-text)]/85 px-2 py-1 text-xs font-medium text-[var(--app-surface)] shadow-[var(--app-shadow-control)]"
+            title={displayName(m)}
+          >
             {displayName(m)}
           </div>
         </div>
@@ -359,9 +385,10 @@ const MaterialGrid: React.FC<{
   </div>
 );
 
-const PreviewOverlay: React.FC<{ url: string; label: string; t: ReturnType<typeof useT>; onClose: () => void }> = ({
+const PreviewOverlay: React.FC<{ url: string; label: string; kind?: Material['media_kind']; t: ReturnType<typeof useT>; onClose: () => void }> = ({
   url,
   label,
+  kind,
   t,
   onClose,
 }) => (
@@ -375,7 +402,13 @@ const PreviewOverlay: React.FC<{ url: string; label: string; t: ReturnType<typeo
       >
         <X size={24} />
       </button>
-      <img src={url} alt={label} className="max-h-[85vh] max-w-full rounded-[var(--app-radius-card)] object-contain" onClick={(e) => e.stopPropagation()} />
+      {kind === 'audio' ? (
+        <audio controls autoPlay src={url} className="w-[min(720px,90vw)]" aria-label={label} onClick={(e) => e.stopPropagation()} />
+      ) : kind === 'video' ? (
+        <video controls src={url} className="max-h-[85vh] max-w-[90vw] rounded-[var(--app-radius-card)]" onClick={(e) => e.stopPropagation()} />
+      ) : (
+        <img src={url} alt={label} className="max-h-[85vh] max-w-full rounded-[var(--app-radius-card)] object-contain" onClick={(e) => e.stopPropagation()} />
+      )}
         <div className="text-center text-[var(--app-on-color)] text-sm mt-2 truncate max-w-[90vw]">{label}</div>
     </div>
   </div>
@@ -387,9 +420,10 @@ const PreviewOverlay: React.FC<{ url: string; label: string; t: ReturnType<typeo
 interface MaterialCenterModalProps {
   isOpen: boolean;
   onClose: () => void;
+  presentation?: 'modal' | 'workspace';
 }
 
-export const MaterialCenterModal: React.FC<MaterialCenterModalProps> = ({ isOpen, onClose }) => {
+export const MaterialCenterModal: React.FC<MaterialCenterModalProps> = ({ isOpen, onClose, presentation = 'modal' }) => {
   const t = useT(i18nDict);
   const { show } = useToast();
   const [s, dispatch] = useReducer(reducer, initial);
@@ -398,8 +432,9 @@ export const MaterialCenterModal: React.FC<MaterialCenterModalProps> = ({ isOpen
     dispatch({ type: 'SET_LOADING', on: true });
     try {
       const target = s.filter === 'all' ? 'all' : s.filter === 'none' ? 'none' : s.filter;
-      const res = await listMaterials(target);
-      dispatch({ type: 'SET_ITEMS', items: res.data?.materials ?? [] });
+      const res = await listMaterials(target, { mediaKind: 'image' });
+      const images = (res.data?.materials ?? []).filter((material) => (material.media_kind || 'image') === 'image');
+      dispatch({ type: 'SET_ITEMS', items: images });
     } catch (err: any) {
       dispatch({ type: 'SET_LOADING', on: false });
       show({ message: err?.response?.data?.error?.message || err.message || t('mc.msg.loadErr'), type: 'error' });
@@ -501,7 +536,7 @@ export const MaterialCenterModal: React.FC<MaterialCenterModalProps> = ({ isOpen
 
   const handlePreview = (e: React.MouseEvent, m: Material) => {
     e.stopPropagation();
-    dispatch({ type: 'SET_PREVIEW', preview: { url: getImageUrl(m.url), label: displayName(m) } });
+    dispatch({ type: 'SET_PREVIEW', preview: { url: getImageUrl(m.url), label: displayName(m), kind: m.media_kind } });
   };
 
   const sortedItems = [...s.items].sort((a, b) => {
@@ -519,46 +554,81 @@ export const MaterialCenterModal: React.FC<MaterialCenterModalProps> = ({ isOpen
     }
   });
 
+  const materialList = (workspace = false) => (
+    <>
+      {s.loading && s.items.length === 0 ? (
+        <div className="flex items-center justify-center py-12">
+          <div className="text-[var(--app-text-tertiary)]">{t('common.loading')}</div>
+        </div>
+      ) : s.items.length === 0 ? (
+        <div className="flex flex-col items-center justify-center rounded-[var(--app-radius-panel)] border border-dashed border-[var(--app-border)] bg-[var(--app-surface-muted)] p-4 py-12 text-[var(--app-text-tertiary)]">
+          <ImageIcon size={48} className="mb-4 text-[var(--app-accent)] opacity-70" />
+          <div className="text-sm">{t('mc.empty')}</div>
+          <div className="text-xs mt-1">{t('mc.emptyHint')}</div>
+        </div>
+      ) : (
+          <MaterialGrid
+          items={sortedItems}
+          selected={s.selected}
+          deleting={s.deleting}
+          t={t}
+          onToggle={(id) => dispatch({ type: 'TOGGLE_SELECT', key: id })}
+            onPreview={handlePreview}
+            onDelete={handleDelete}
+            workspace={workspace}
+          />
+      )}
+    </>
+  );
+
+  const materialContent = (
+    <div className="space-y-4 rounded-[var(--app-radius-panel)] border border-[var(--app-border)] bg-[var(--app-surface)] p-4">
+      <ToolbarSection t={t} state={s} dispatch={dispatch} onRefresh={fetchItems} onUpload={handleUpload} onDownload={handleDownload} />
+      {materialList()}
+      <div className="pt-4 border-t border-[var(--app-border)] flex justify-end">
+        <Button variant="ghost" onClick={onClose}>
+          {t('common.close')}
+        </Button>
+      </div>
+    </div>
+  );
+
   return (
     <>
-      <Modal isOpen={isOpen} onClose={onClose} title={t('mc.title')} size="lg">
-        <div className="space-y-4 rounded-[var(--app-radius-panel)] border border-[var(--app-border)] bg-[var(--app-surface)] p-4">
-          <ToolbarSection t={t} state={s} dispatch={dispatch} onRefresh={fetchItems} onUpload={handleUpload} onDownload={handleDownload} />
-
-          {s.loading && s.items.length === 0 ? (
-            <div className="flex items-center justify-center py-12">
-              <div className="text-[var(--app-text-tertiary)]">{t('common.loading')}</div>
+      {presentation === 'workspace' ? (
+        <div className="flex h-full min-h-0 flex-col bg-[var(--app-background)]">
+          <div className="flex h-14 flex-shrink-0 items-center justify-between border-b border-[var(--app-border)] bg-[var(--app-surface)] px-6">
+            <div>
+              <h1 className="text-lg font-semibold text-[var(--app-text)]">{t('mc.title')}</h1>
+              <p className="text-xs text-[var(--app-text-tertiary)]">{t('mc.emptyHint')}</p>
             </div>
-          ) : s.items.length === 0 ? (
-            <div className="flex flex-col items-center justify-center rounded-[var(--app-radius-panel)] border border-dashed border-[var(--app-border)] bg-[var(--app-surface-muted)] p-4 py-12 text-[var(--app-text-tertiary)]">
-              <ImageIcon size={48} className="mb-4 text-[var(--app-accent)] opacity-70" />
-              <div className="text-sm">{t('mc.empty')}</div>
-              <div className="text-xs mt-1">{t('mc.emptyHint')}</div>
-            </div>
-          ) : (
-            <MaterialGrid
-              items={sortedItems}
-              selected={s.selected}
-              deleting={s.deleting}
-              t={t}
-              onToggle={(id) => dispatch({ type: 'TOGGLE_SELECT', key: id })}
-              onPreview={handlePreview}
-              onDelete={handleDelete}
-            />
-          )}
-
-          <div className="pt-4 border-t border-[var(--app-border)] flex justify-end">
-            <Button variant="ghost" onClick={onClose}>
+            <Button variant="ghost" size="sm" icon={<X size={17} />} onClick={onClose}>
               {t('common.close')}
             </Button>
           </div>
+          <div className="grid min-h-0 flex-1 lg:grid-cols-[300px_minmax(0,1fr)]">
+            <aside className="min-h-0 overflow-y-auto border-r border-[var(--app-border)] bg-[var(--app-surface-muted)] p-5">
+              <h2 className="text-sm font-semibold text-[var(--app-text)]">{t('mc.title')}</h2>
+              <div className="mt-4">
+                <ToolbarSection t={t} state={s} dispatch={dispatch} onRefresh={fetchItems} onUpload={handleUpload} onDownload={handleDownload} />
+              </div>
+            </aside>
+            <section className="min-h-0 min-w-0 overflow-y-auto p-6">
+              {materialList(true)}
+            </section>
+          </div>
         </div>
-      </Modal>
+      ) : (
+        <Modal isOpen={isOpen} onClose={onClose} title={t('mc.title')} size="lg">
+          {materialContent}
+        </Modal>
+      )}
 
       {s.preview && (
         <PreviewOverlay
           url={s.preview.url}
           label={s.preview.label}
+          kind={s.preview.kind}
           t={t}
           onClose={() => dispatch({ type: 'SET_PREVIEW', preview: null })}
         />

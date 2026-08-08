@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1012,7 +1013,14 @@ def migrate_sqlite_database(
             connection.close()
         fault('after_validation')
         fault('before_switch')
-        os.replace(temporary_path, database_path)
+        for attempt in range(20):
+            try:
+                os.replace(temporary_path, database_path)
+                break
+            except PermissionError:
+                if attempt == 19:
+                    raise
+                time.sleep(0.25)
         report['status'] = 'migrated'
         report['error'] = None
         report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')

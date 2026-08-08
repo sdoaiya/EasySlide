@@ -113,9 +113,11 @@ def test_hero_motion_places_every_scene_element_in_its_final_state():
 def test_render_hero_extracts_png_atomically(tmp_path, monkeypatch):
     manifest = _manifest()
     bundle = build_image_scene_bundle(manifest, _digest(manifest), DATA_URL)
+    render_roots = []
 
     def fake_render(_bundle, _motion, output_root, _runtime):
-        video = tmp_path / 'scene.mp4'
+        render_roots.append(Path(output_root).resolve())
+        video = Path(output_root) / 'scene.mp4'
         video.write_bytes(b'video')
         return {'output_path': str(video)}
 
@@ -127,12 +129,14 @@ def test_render_hero_extracts_png_atomically(tmp_path, monkeypatch):
 
     monkeypatch.setattr('services.hyperframes_renderer.render_page', fake_render)
     monkeypatch.setattr('services.image_scene_service.subprocess.run', fake_ffmpeg)
-    output = tmp_path / 'hero.png'
+    output = tmp_path / 'deep' / 'project' / 'artifacts' / 'hero.png'
 
     result = render_image_scene_hero(bundle, manifest, output, runtime=object())
 
     assert result == {'path': str(output.resolve()), 'renderer': 'hyperframes'}
     assert output.read_bytes() == b'png'
+    assert len(render_roots) == 1
+    assert not render_roots[0].is_relative_to(output.parent.resolve())
 
 
 def test_create_image_scene_artifacts_persists_a_verified_same_source_set(

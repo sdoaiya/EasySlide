@@ -15,6 +15,30 @@ const t = getT(exportI18n);
 export type ExportTaskStatus = 'PENDING' | 'PROCESSING' | 'RUNNING' | 'PAUSED' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
 export type ExportTaskType = 'pptx' | 'pdf' | 'editable-pptx' | 'native-pptx' | 'native-pdf' | 'native-html' | 'images' | 'video' | 'podcast' | 'workspace' | 'generate-video' | 'generate-podcast' | 'initialize-workspace' | 'generate-pages' | 'generate-images' | 'generate-descriptions' | 'narration-batch';
 
+const EXPORT_TASK_TYPES: ReadonlySet<ExportTaskType> = new Set([
+  'pptx',
+  'pdf',
+  'editable-pptx',
+  'native-pptx',
+  'native-pdf',
+  'native-html',
+  'images',
+  'video',
+  'podcast',
+]);
+
+export const isExportTask = (task: Pick<ExportTask, 'type'>): boolean => EXPORT_TASK_TYPES.has(task.type);
+
+const ACTIVE_EXPORT_TASK_STATUSES: ReadonlySet<ExportTaskStatus> = new Set([
+  'PENDING',
+  'PROCESSING',
+  'RUNNING',
+]);
+
+export const isActiveExportTask = (task: Pick<ExportTask, 'type' | 'status'>): boolean => (
+  isExportTask(task) && ACTIVE_EXPORT_TASK_STATUSES.has(task.status)
+);
+
 export interface ExportTask {
   id: string;
   taskId: string;

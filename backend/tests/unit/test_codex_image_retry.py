@@ -135,6 +135,71 @@ class TestGenerateImageRetry:
             assert result is not None
             assert mock_post.call_count == 1
 
+    def test_accepts_completed_image_generation_event_with_direct_result(self):
+        import base64
+        from io import BytesIO
+        from PIL import Image
+        import json
+
+        img = Image.new("RGB", (100, 100), "blue")
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        event = {
+            "type": "response.image_generation_call.completed",
+            "result": base64.b64encode(buf.getvalue()).decode(),
+        }
+        resp = MagicMock(spec=requests.Response)
+        resp.raise_for_status = MagicMock()
+        resp.iter_lines.return_value = [
+            f"data: {json.dumps(event)}".encode(),
+            b"data: [DONE]",
+        ]
+
+        with patch.object(_codex_img.http_requests, "post", return_value=resp):
+            result = _provider().generate_image("a blue square")
+
+        assert result is not None
+        assert result.size == (100, 100)
+
+    def test_ignores_null_output_item_before_direct_completed_event(self):
+        ok = _make_ok_sse_response()
+        direct_event = ok.iter_lines.return_value[0]
+        ok.iter_lines.return_value = [
+            b'data: {"type":"response.output_item.done","item":null}',
+            direct_event,
+            b"data: [DONE]",
+        ]
+
+        with patch.object(_codex_img.http_requests, "post", return_value=ok):
+            result = _provider().generate_image("a blue square")
+
+        assert result is not None
+
+    def test_empty_completed_response_reports_clear_error(self):
+        resp = MagicMock(spec=requests.Response)
+        resp.raise_for_status = MagicMock()
+        resp.iter_lines.return_value = [
+            b'data: {"type":"response.completed","response":{"output":null}}',
+            b"data: [DONE]",
+        ]
+
+        with patch.object(_codex_img.http_requests, "post", return_value=resp):
+            with pytest.raises(ValueError, match="No image_generation_call"):
+                _provider().generate_image("a blue square")
+
+    def test_pause_closes_in_flight_stream(self):
+        resp = _make_ok_sse_response()
+        checks = iter([False, True])
+
+        with patch.object(_codex_img.http_requests, "post", return_value=resp):
+            with pytest.raises(_codex_img.CodexImageGenerationCancelled):
+                _provider().generate_image(
+                    "a blue square",
+                    cancellation_check=lambda: next(checks),
+                )
+
+        resp.close.assert_called()
+
     def test_retries_on_429_then_succeeds(self):
         err = _make_error_response(429)
         ok = _make_ok_sse_response()

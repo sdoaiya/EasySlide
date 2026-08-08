@@ -76,6 +76,11 @@ vi.mock('@/store/useProjectStore', () => {
 });
 
 vi.mock('@/store/useExportTasksStore', () => ({
+  isExportTask: (task: { type: string }) => ['pptx', 'pdf', 'editable-pptx', 'native-pptx', 'native-pdf', 'native-html', 'images', 'video', 'podcast'].includes(task.type),
+  isActiveExportTask: (task: { type: string; status: string }) => (
+    ['pptx', 'pdf', 'editable-pptx', 'native-pptx', 'native-pdf', 'native-html', 'images', 'video', 'podcast'].includes(task.type)
+    && ['PENDING', 'PROCESSING', 'RUNNING'].includes(task.status)
+  ),
   useExportTasksStore: () => ({
     addTask: mocks.addExportTask,
     pollTask: vi.fn(),
@@ -753,6 +758,7 @@ describe('EasySlide internal workflow chrome', () => {
       status: 'PROCESSING',
       progress: { total: 1, completed: 0, page_ids: ['page-1'] },
     };
+    mocks.store.pageGeneratingTasks = { 'page-1': 'image-task-1' };
 
     const { rerender } = renderAt('/project/project-1/preview', <SlidePreview />);
 
@@ -771,6 +777,7 @@ describe('EasySlide internal workflow chrome', () => {
       </MemoryRouter>
     );
 
+    expect(screen.getAllByText('已暂停').length).toBeGreaterThan(0);
     fireEvent.click(within(screen.getByTestId('image-generation-progress')).getByRole('button', { name: '继续生成' }));
     expect(mocks.store.resumeImageGeneration).toHaveBeenCalledTimes(1);
   });
@@ -949,6 +956,33 @@ describe('EasySlide internal workflow chrome', () => {
 
     expect(screen.getByRole('button', { name: '开始生成此页' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '生成此页' })).not.toBeInTheDocument();
+  });
+
+  it('stops the export-task spinner when only a paused internal task remains', () => {
+    mocks.exportTasks = [
+      {
+        id: 'paused-image-generation',
+        taskId: 'generate-images-1',
+        projectId: 'project-1',
+        type: 'generate-images',
+        status: 'PAUSED',
+        createdAt: '2026-08-08T00:00:00.000Z',
+      },
+      {
+        id: 'completed-video-export',
+        taskId: 'video-export-1',
+        projectId: 'project-1',
+        type: 'video',
+        status: 'COMPLETED',
+        createdAt: '2026-08-08T00:00:00.000Z',
+      },
+    ];
+
+    renderAt('/project/project-1/preview', <SlidePreview />);
+
+    const taskButton = screen.getByRole('button', { name: '导出任务' });
+    expect(taskButton).toHaveTextContent('1');
+    expect(taskButton.querySelector('.animate-spin')).toBeNull();
   });
 
   it('opens the export task panel after starting a PPTX export', async () => {

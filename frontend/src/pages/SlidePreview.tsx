@@ -316,7 +316,7 @@ import { materialUrlToFile } from '@/components/shared/MaterialSelector';
 import type { Material } from '@/api/endpoints';
 import { SlideCard } from '@/components/preview/SlideCard';
 import { useProjectStore } from '@/store/useProjectStore';
-import { useExportTasksStore, type ExportTask, type ExportTaskType } from '@/store/useExportTasksStore';
+import { isActiveExportTask, isExportTask, useExportTasksStore, type ExportTask, type ExportTaskType } from '@/store/useExportTasksStore';
 import { getImageUrl } from '@/api/client';
 import { getPageImageVersions, setCurrentImageVersion, recoverPageImageScene, getTaskStatus, updateProject, uploadTemplate, uploadPageTemplate, updatePageTemplate, clearPageTemplate, autoMatchPageTemplates, exportPPTX as apiExportPPTX, exportPDF as apiExportPDF, exportImages as apiExportImages, exportEditablePPTX as apiExportEditablePPTX, exportVideo as apiExportVideo, preflightExportVideo as apiPreflightExportVideo, getSettings, getFishAudioVoices, getProjectNarrations } from '@/api/endpoints';
 import type { ImageGenerationOptions, ImageVersion, DescriptionContent, ExportExtractorMethod, ExportInpaintMethod, Page, NarrationConfig, NarrationSpeaker, FishAudioVoice, NarrationPreferences, PronunciationEntry, ProjectNarrationSummary } from '@/types';
@@ -855,6 +855,12 @@ export const SlidePreview: React.FC = () => {
   const imageGenerationActive = !!activeImageTask
     && ['PENDING', 'PROCESSING', 'RUNNING', 'PAUSED'].includes(activeImageTask.status);
   const imageGenerationPaused = activeImageTask?.status === 'PAUSED';
+  const selectedPageId = currentProject?.pages[selectedIndex]?.id;
+  const selectedPageGenerationPaused = Boolean(
+    imageGenerationPaused
+    && selectedPageId
+    && pageGeneratingTasks[selectedPageId] === activeImageTask?.task_id
+  );
   const imageGenerationProgressPercent = activeImageTask?.progress?.total
     ? Math.round(((activeImageTask.progress.completed || 0) / activeImageTask.progress.total) * 100)
     : 0;
@@ -2616,6 +2622,11 @@ export const SlidePreview: React.FC = () => {
                       onEdit={handleSlideCardEdit}
                       onDelete={handleSlideCardDelete}
                       isGenerating={page.id ? !!pageGeneratingTasks[page.id] : false}
+                      isPaused={Boolean(
+                        imageGenerationPaused
+                        && page.id
+                        && pageGeneratingTasks[page.id] === activeImageTask?.task_id
+                      )}
                       aspectRatio={aspectRatio}
                     />
                   </div>
@@ -2720,14 +2731,14 @@ export const SlidePreview: React.FC = () => {
                 }}
                 className="relative"
               >
-                {exportTasks.filter(t => t.projectId === projectId && (t.status === 'PROCESSING' || t.status === 'RUNNING' || t.status === 'PENDING' || t.status === 'PAUSED')).length > 0 ? (
+                {exportTasks.some(t => t.projectId === projectId && isActiveExportTask(t)) ? (
                   <Loader2 size={16} className="animate-spin text-[var(--app-accent)]" />
                 ) : (
                   <FileText size={16} />
                 )}
-                {exportTasks.filter(t => t.projectId === projectId).length > 0 && (
+                {exportTasks.filter(t => t.projectId === projectId && isExportTask(t)).length > 0 && (
                   <span className="ml-1 text-xs">
-                    {exportTasks.filter(t => t.projectId === projectId).length}
+                    {exportTasks.filter(t => t.projectId === projectId && isExportTask(t)).length}
                   </span>
                 )}
               </Button>
@@ -3689,7 +3700,9 @@ export const SlidePreview: React.FC = () => {
                         <div className="text-center">
                           <img src={getStaticAssetUrl('/logo-nav-transparent.png')} alt="EasySlide Logo" className="h-16 w-auto mx-auto mb-4 opacity-70" />
                           <p className="text-[var(--app-text-tertiary)] mb-4">
-                            {selectedPage?.status === 'QUEUED'
+                            {selectedPageGenerationPaused
+                              ? t('preview.generationPaused')
+                              : selectedPage?.status === 'QUEUED'
                               ? t('preview.queued')
                               : (selectedPage?.id && pageGeneratingTasks[selectedPage.id]) ||
                                 selectedPage?.status === 'GENERATING'

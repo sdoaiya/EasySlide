@@ -280,6 +280,35 @@ def test_render_page_uses_development_node_cli_and_returns_contract(tmp_path, mo
     assert Path(result['output_path']).read_bytes() == b'video'
 
 
+def test_render_page_uses_short_scratch_workspace_for_deep_output_root(tmp_path, monkeypatch):
+    runtime = _development_runtime(tmp_path)
+    output_root = tmp_path.joinpath(
+        'uploads',
+        'project-' + ('a' * 36),
+        'page-' + ('b' * 36),
+        'image-scene-' + ('c' * 36),
+    )
+    calls = []
+    monkeypatch.setattr(renderer.subprocess, 'run', _successful_run(calls))
+
+    result = render_page(
+        _bundle(),
+        _motion_manifest(),
+        output_root,
+        runtime,
+        gsap_source=GSAP_STUB,
+    )
+
+    command, kwargs = calls[0]
+    composition_dir = Path(kwargs['cwd']).resolve()
+    temporary_output = Path(command[command.index('--output') + 1]).resolve()
+    resolved_output_root = output_root.resolve()
+    assert not composition_dir.is_relative_to(resolved_output_root)
+    assert not temporary_output.is_relative_to(resolved_output_root)
+    assert Path(result['output_path']).parent == resolved_output_root
+    assert Path(result['output_path']).read_bytes() == b'video'
+
+
 def test_render_page_uses_packaged_electron_cli_and_browser_manifest(tmp_path, monkeypatch):
     runtime = _packaged_runtime(tmp_path)
     calls = []

@@ -13,7 +13,7 @@ import io
 import json
 import logging
 from io import BytesIO
-from typing import Optional, List
+from typing import Callable, Optional, List
 
 import requests as http_requests
 from PIL import Image
@@ -28,6 +28,10 @@ _CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex"
 _RESPONSES_ENDPOINT = f"{_CODEX_BASE_URL}/responses"
 
 _DEFAULT_TIMEOUT = 180  # image generation can be slow
+
+
+class CodexImageGenerationCancelled(Exception):
+    """Raised when the caller cooperatively stops an in-flight image stream."""
 
 
 def _is_retryable_http_error(exc: BaseException) -> bool:
@@ -132,8 +136,11 @@ class CodexImageProvider(ImageProvider):
         resolution: str = "2K",
         enable_thinking: bool = False,
         thinking_budget: int = 0,
+        cancellation_check: Optional[Callable[[], bool]] = None,
     ) -> Optional[Image.Image]:
         """Generate an image via the Codex Responses API."""
+        if cancellation_check and cancellation_check():
+            raise CodexImageGenerationCancelled("Image generation was paused")
         payload = self._build_payload(prompt, aspect_ratio, ref_images=ref_images, resolution=resolution)
         logger.debug(
             "Codex image request: image_model=%s, aspect=%s, resolution=%s, ref_images=%d",
@@ -149,13 +156,20 @@ class CodexImageProvider(ImageProvider):
         )
         resp.raise_for_status()
 
-        return self._parse_sse_for_image(resp)
+        try:
+            return self._parse_sse_for_image(resp, cancellation_check=cancellation_check)
+        finally:
+            resp.close()
 
     # ------------------------------------------------------------------
     # SSE parsing
     # ------------------------------------------------------------------
 
-    def _parse_sse_for_image(self, resp) -> Optional[Image.Image]:
+    def _parse_sse_for_image(
+        self,
+        resp,
+        cancellation_check: Optional[Callable[[], bool]] = None,
+    ) -> Optional[Image.Image]:
         """Parse SSE stream and extract the generated image.
 
         The image appears in an output item of type ``image_generation_call``
@@ -166,10 +180,13 @@ class CodexImageProvider(ImageProvider):
         completed_data = None
 
         for raw_line in resp.iter_lines():
+            if cancellation_check and cancellation_check():
+                resp.close()
+                raise CodexImageGenerationCancelled("Image generation was paused")
             line = raw_line.decode("utf-8") if isinstance(raw_line, bytes) else raw_line
-            if not line or not line.startswith("data: "):
+            if not line or not line.startswith("data:"):
                 continue
-            raw = line[len("data: "):]
+            raw = line[len("data:"):].lstrip()
             if raw.strip() == "[DONE]":
                 break
             try:
@@ -183,15 +200,16 @@ class CodexImageProvider(ImageProvider):
             if event_type in (
                 "response.output_item.done",
                 "response.image_generation_call.done",
+                "response.image_generation_call.completed",
             ):
-                item = event.get("item", event)
+                item = event.get("item") or event.get("image_generation_call") or event
                 img = self._try_extract_image(item)
                 if img:
                     return img
 
             # Final completed event — contains the full response
             if event_type == "response.completed":
-                completed_data = event.get("response", event)
+                completed_data = event.get("response") or event
 
         # Fallback: parse the completed response
         if completed_data:
@@ -201,15 +219,21 @@ class CodexImageProvider(ImageProvider):
 
     def _try_extract_image(self, item: dict) -> Optional[Image.Image]:
         """Try to decode an image from a single output item."""
-        if item.get("type") == "image_generation_call":
-            b64 = item.get("result")
-            if b64:
-                return self._decode_base64_image(b64)
+        if not isinstance(item, dict):
+            return None
+        nested = item.get("image_generation_call")
+        if isinstance(nested, dict):
+            item = nested
+        b64 = item.get("result") or item.get("b64_json")
+        if b64:
+            return self._decode_base64_image(b64)
         return None
 
     def _extract_image_from_response(self, data: dict) -> Optional[Image.Image]:
         """Extract image from the full response.completed payload."""
-        for item in data.get("output", []):
+        if not isinstance(data, dict):
+            raise ValueError("Codex image response was empty or malformed")
+        for item in data.get("output") or []:
             img = self._try_extract_image(item)
             if img:
                 return img

@@ -213,3 +213,18 @@ class TestGenerateTextRetry:
         result = _provider().generate_with_image("describe", str(img_file))
         assert result == "described"
         mock_post.assert_called_once()
+
+    @patch.object(CodexTextProvider, "_post_with_retry")
+    def test_generate_with_image_accepts_output_text_done_event(self, mock_post, tmp_path):
+        img_file = tmp_path / "test.png"
+        from PIL import Image
+        Image.new("RGB", (10, 10)).save(str(img_file))
+
+        resp = MagicMock()
+        resp.iter_lines.return_value = [
+            'data: {"type":"response.output_text.done","text":"完成描述"}'.encode(),
+            b'data: [DONE]',
+        ]
+        mock_post.return_value = resp
+
+        assert _provider().generate_with_image("describe", str(img_file)) == "完成描述"

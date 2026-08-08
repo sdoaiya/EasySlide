@@ -8,6 +8,8 @@ import { DetailEditor } from './pages/DetailEditor';
 import { SlidePreview } from './pages/SlidePreview';
 import { SettingsPage } from './pages/Settings';
 import { TaskCenter } from './pages/TaskCenter';
+import { MaterialCenterPage } from './pages/MaterialCenter';
+import { MaterialGeneratePage } from './pages/MaterialGenerate';
 import { LandingPage } from './pages/Landing';
 import { useProjectStore } from './store/useProjectStore';
 import { useContentProjectStore } from './store/useContentProjectStore';
@@ -121,6 +123,8 @@ function AppRoutes() {
         <Route path="/history" element={<History showNavigation={false} />} />
         <Route path="/settings" element={<SettingsPage showNavigation={false} />} />
         <Route path="/tasks" element={<TaskCenter />} />
+        <Route path="/materials" element={<MaterialCenterPage />} />
+        <Route path="/material-generate" element={<MaterialGeneratePage />} />
       </Route>
       {/* 项目路由嵌入桌面工作台；项目内部继续使用统一模式与三栏编辑器。 */}
       <Route element={<ProtectedRoute><ProjectWorkbenchLayout /></ProtectedRoute>}>

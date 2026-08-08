@@ -56,6 +56,14 @@ describe('MaterialGeneratorModal', () => {
     expect(container.innerHTML).not.toContain('shadow-sm')
   })
 
+  it('renders the generator as a workspace without changing the modal entry', () => {
+    render(<MaterialGeneratorModal isOpen onClose={() => {}} projectId={null} presentation="workspace" />)
+
+    expect(screen.getByRole('heading', { level: 1, name: 'material.title' })).toBeInTheDocument()
+    expect(screen.getByTestId('material-source-canvas')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
   it('shows region apply mode controls when region edit is selected', () => {
     render(<MaterialGeneratorModal isOpen onClose={() => {}} projectId={null} />)
 

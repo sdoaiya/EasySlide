@@ -80,6 +80,7 @@ vi.mock('@/store/useProjectStore', () => ({
 }))
 
 vi.mock('@/store/useExportTasksStore', () => ({
+  isExportTask: (task: { type: string }) => ['pptx', 'pdf', 'editable-pptx', 'native-pptx', 'native-pdf', 'native-html', 'images', 'video', 'podcast'].includes(task.type),
   useExportTasksStore: () => ({ ...exportTaskMocks, tasks: [], restoreActiveTasks: vi.fn() }),
 }))
 

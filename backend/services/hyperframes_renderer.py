@@ -493,13 +493,8 @@ def render_page(
         raise HyperframesRuntimeError('Hyperframes runtime 无效')
     if timeout_seconds <= 0:
         raise HyperframesRuntimeError('Hyperframes timeout 必须大于 0')
-    composition_dir = create_page_composition(
-        native_scene_bundle,
-        motion_manifest,
-        output_root,
-        gsap_source=gsap_source,
-    )
     root = Path(output_root).resolve()
+    root.mkdir(parents=True, exist_ok=True)
     page_key = hashlib.sha256(
         native_scene_bundle['page_id'].encode('utf-8'),
     ).hexdigest()[:16]
@@ -507,41 +502,41 @@ def render_page(
     if output_path.exists() and not (output_path.is_file() or output_path.is_symlink()):
         raise HyperframesCompositionError('Hyperframes 输出目标不是文件')
 
-    descriptor, temporary_value = tempfile.mkstemp(
-        prefix=f'.hyperframes_page_{page_key}.',
-        suffix='.mp4',
-        dir=root,
-    )
-    os.close(descriptor)
-    temporary_output = Path(temporary_value)
-    temporary_output.unlink()
-    command = [
-        str(runtime.executable),
-        str(runtime.cli_path),
-        'render',
-        str(composition_dir),
-        '--output',
-        str(temporary_output),
-        '--fps',
-        '25',
-        '--quality',
-        'high',
-        '--workers',
-        '1',
-    ]
-    run_options = {
-        'capture_output': True,
-        'text': True,
-        'encoding': 'utf-8',
-        'errors': 'replace',
-        'timeout': timeout_seconds,
-        'cwd': str(composition_dir),
-        'env': _runtime_environment(runtime),
-    }
-    if os.name == 'nt':
-        run_options['creationflags'] = subprocess.CREATE_NO_WINDOW
+    with tempfile.TemporaryDirectory(prefix='easyslide-hf-') as scratch_value:
+        scratch_root = Path(scratch_value).resolve()
+        composition_dir = create_page_composition(
+            native_scene_bundle,
+            motion_manifest,
+            scratch_root,
+            gsap_source=gsap_source,
+        )
+        temporary_output = scratch_root / f'page-{page_key}.mp4'
+        command = [
+            str(runtime.executable),
+            str(runtime.cli_path),
+            'render',
+            str(composition_dir),
+            '--output',
+            str(temporary_output),
+            '--fps',
+            '25',
+            '--quality',
+            'high',
+            '--workers',
+            '1',
+        ]
+        run_options = {
+            'capture_output': True,
+            'text': True,
+            'encoding': 'utf-8',
+            'errors': 'replace',
+            'timeout': timeout_seconds,
+            'cwd': str(composition_dir),
+            'env': _runtime_environment(runtime),
+        }
+        if os.name == 'nt':
+            run_options['creationflags'] = subprocess.CREATE_NO_WINDOW
 
-    try:
         try:
             completed = subprocess.run(command, **run_options)
         except subprocess.TimeoutExpired as exc:
@@ -566,10 +561,19 @@ def render_page(
             raise HyperframesEmptyOutputError(
                 'Hyperframes 返回成功但未生成有效视频文件',
             )
-        os.replace(temporary_output, output_path)
-    finally:
-        if temporary_output.exists():
-            temporary_output.unlink()
+        descriptor, staged_value = tempfile.mkstemp(
+            prefix='.hf-',
+            suffix='.tmp',
+            dir=root,
+        )
+        os.close(descriptor)
+        staged_output = Path(staged_value)
+        try:
+            shutil.copyfile(temporary_output, staged_output)
+            os.replace(staged_output, output_path)
+        finally:
+            if staged_output.exists():
+                staged_output.unlink()
 
     return {
         'output_path': str(output_path.resolve()),

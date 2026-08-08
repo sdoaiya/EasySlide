@@ -27,6 +27,22 @@ describe('ExportTasksPanel pause controls', () => {
     expect(screen.getByText(/2 (进行中|in progress)/)).toBeInTheDocument();
   });
 
+  it('shows only final export tasks in the project task bar', () => {
+    act(() => useExportTasksStore.setState({
+      restoreActiveTasks: vi.fn(),
+      tasks: [
+        { id: 'images', taskId: 'task-images', projectId: 'project-a', type: 'generate-images', status: 'RUNNING', createdAt: new Date().toISOString() },
+        { id: 'pptx', taskId: 'task-pptx', projectId: 'project-a', type: 'pptx', status: 'COMPLETED', createdAt: new Date().toISOString() },
+      ],
+    }));
+
+    render(<ExportTasksPanel projectId="project-a" />);
+
+    expect(screen.getByText('PPTX')).toBeInTheDocument();
+    expect(screen.queryByText('批量生成图片')).not.toBeInTheDocument();
+    expect(screen.queryByText(/1 进行中/)).not.toBeInTheDocument();
+  });
+
   it('shows native PPTX quality report after completion', async () => {
     act(() => useExportTasksStore.setState({
       restoreActiveTasks: vi.fn(),

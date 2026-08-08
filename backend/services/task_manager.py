@@ -141,6 +141,21 @@ def _image_scene_enabled(app) -> bool:
     )
 
 
+def _should_build_image_scene(
+    app,
+    *,
+    use_template: bool,
+    template_reference_path: Optional[str],
+    renovating: bool = False,
+) -> bool:
+    """Avoid applying the generic half-page scene layout over a reference layout."""
+    return bool(
+        _image_scene_enabled(app)
+        and not renovating
+        and not (use_template and template_reference_path)
+    )
+
+
 def _prepare_image_scene_version(
     image,
     *,
@@ -1561,6 +1576,7 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
             from services.image_template_profiles import (
                 append_image_layout_hint,
                 append_image_page_role_hint,
+                append_template_layout_lock_hint,
                 append_template_visual_profile_hint,
                 infer_image_layout_family,
                 infer_image_page_role,
@@ -1732,26 +1748,39 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                                     page_additional_ref_images.insert(0, page_ref_image_path)
                                 page_ref_image_path = renovation_source_path
                                 has_material_images = True
+
+                            template_layout_locked = bool(
+                                use_template and page_ref_image_path and not renovating
+                            )
+                            scene_enabled = _should_build_image_scene(
+                                app,
+                                use_template=use_template,
+                                template_reference_path=page_ref_image_path,
+                                renovating=renovating,
+                            )
                             
                             # Generate image prompt
                             page_extra_requirements = append_image_page_role_hint(extra_requirements, role)
-                            page_extra_requirements = append_image_layout_hint(
-                                page_extra_requirements,
-                                layout_family,
-                            )
+                            if not template_layout_locked:
+                                page_extra_requirements = append_image_layout_hint(
+                                    page_extra_requirements,
+                                    layout_family,
+                                )
                             page_extra_requirements = append_template_visual_profile_hint(
                                 page_extra_requirements,
                                 getattr(project_obj, 'template_pack_id', None) if use_template and not page_template_path else None,
                             )
                             if use_template:
                                 page_extra_requirements = _append_page_template_style(page_extra_requirements, page_obj)
+                            if template_layout_locked:
+                                page_extra_requirements = append_template_layout_lock_hint(page_extra_requirements)
                             if renovating:
                                 page_extra_requirements = (
                                     f"{page_extra_requirements or ''}\n\nPPT 翻新要求：随附的首张参考图是原始第"
                                     f"{page_obj.order_index + 1}页。保留其中的事实、文字层级、数据关系和核心素材，"
                                     "但重新组织版式并提升视觉质量；不要忽略原页参考图。"
                                 )
-                            if _image_scene_enabled(app):
+                            if scene_enabled:
                                 from services.image_scene_service import append_image_scene_background_requirements
 
                                 page_extra_requirements = append_image_scene_background_requirements(
@@ -1800,7 +1829,8 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                                 quality_control['attempts'] += 1
                                 return ai_service.generate_image(
                                     prompt, page_ref_image_path, aspect_ratio, resolution,
-                                    additional_ref_images=page_additional_ref_images if page_additional_ref_images else None
+                                    additional_ref_images=page_additional_ref_images if page_additional_ref_images else None,
+                                    cancellation_check=lambda: _is_task_paused(task_id),
                                 )
 
                             def review_candidate(candidate):
@@ -1816,6 +1846,16 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                                 enabled=quality_control['enabled'],
                                 max_attempts=3,
                             )
+                            if _is_task_paused(task_id):
+                                if image:
+                                    image.close()
+                                return (
+                                    page_id,
+                                    None,
+                                    None,
+                                    None,
+                                    {'status': 'paused'},
+                                )
                         logger.info(f"✅ Image generated successfully for page {page_index}")
                         
                         if not image:
@@ -1831,7 +1871,7 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                         qa = assess_generated_image(image, aspect_ratio, resolution_matches=is_match)
                         version_image = image
                         scene_artifacts = None
-                        if _image_scene_enabled(app):
+                        if scene_enabled:
                             prepared = _prepare_image_scene_version(
                                 image,
                                 project_id=project_id,
@@ -1844,7 +1884,8 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                             )
                             if prepared is not None:
                                 version_image, scene_artifacts = prepared
-                                qa = scene_artifacts['quality']
+                                if scene_artifacts is not None:
+                                    qa = scene_artifacts['quality']
                         try:
                             image_path, next_version = save_image_with_version(
                                 version_image,
@@ -1884,6 +1925,14 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                         )
                         
                     except Exception as e:
+                        if _is_task_paused(task_id):
+                            return (
+                                page_id,
+                                None,
+                                None,
+                                None,
+                                {'status': 'paused'},
+                            )
                         import traceback
                         error_detail = traceback.format_exc()
                         logger.error(f"Failed to generate image for page {page_id}: {error_detail}")
@@ -1998,10 +2047,24 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
             # Mark task as completed
             task = Task.query.get(task_id)
             if task:
-                task.status = 'COMPLETED'
+                all_failed = completed == 0 and failed > 0
+                task.status = 'FAILED' if all_failed else 'COMPLETED'
                 task.completed_at = datetime.utcnow()
                 progress = task.get_progress()
-                progress['status'] = 'completed' if failed == 0 else 'completed_with_errors'
+                progress['status'] = (
+                    'failed' if all_failed
+                    else 'completed' if failed == 0
+                    else 'completed_with_errors'
+                )
+                if all_failed:
+                    first_error = next(
+                        (
+                            item.get('error') for item in progress.get('pages', [])
+                            if isinstance(item, dict) and item.get('error')
+                        ),
+                        None,
+                    )
+                    task.error_message = first_error or '所有页面的图片生成均失败'
                 quality_summary = summarize_generation_quality(progress.get('pages'))
                 progress['quality_summary'] = quality_summary
                 if quality_summary['warnings']:
@@ -2013,7 +2076,9 @@ def generate_images_task(task_id: str, project_id: str, ai_service, file_service
                 if resolution_mismatched > 0:
                     logger.warning(f"Task {task_id} has {resolution_mismatched} resolution mismatches")
                 db.session.commit()
-                logger.info(f"Task {task_id} COMPLETED - {completed} images generated, {failed} failed")
+                logger.info(
+                    f"Task {task_id} {task.status} - {completed} images generated, {failed} failed"
+                )
             
             # Update project status
             project = Project.query.get(project_id)
@@ -2072,6 +2137,7 @@ def generate_single_page_image_task(task_id: str, project_id: str, page_id: str,
             from services.image_template_profiles import (
                 append_image_layout_hint,
                 append_image_page_role_hint,
+                append_template_layout_lock_hint,
                 append_template_visual_profile_hint,
                 infer_image_layout_family,
                 infer_image_page_role,
@@ -2161,21 +2227,32 @@ def generate_single_page_image_task(task_id: str, project_id: str, page_id: str,
                 ref_image_path = renovation_source_path
                 has_material_images = True
 
+            template_layout_locked = bool(use_template and ref_image_path and not renovating)
+            scene_enabled = _should_build_image_scene(
+                app,
+                use_template=use_template,
+                template_reference_path=ref_image_path,
+                renovating=renovating,
+            )
+
             page_extra_requirements = append_image_page_role_hint(extra_requirements, role)
-            page_extra_requirements = append_image_layout_hint(page_extra_requirements, layout_family)
+            if not template_layout_locked:
+                page_extra_requirements = append_image_layout_hint(page_extra_requirements, layout_family)
             page_extra_requirements = append_template_visual_profile_hint(
                 page_extra_requirements,
                 getattr(project, 'template_pack_id', None) if use_template and not page_template_path else None,
             )
             if use_template:
                 page_extra_requirements = _append_page_template_style(page_extra_requirements, page)
+            if template_layout_locked:
+                page_extra_requirements = append_template_layout_lock_hint(page_extra_requirements)
             if renovating:
                 page_extra_requirements = (
                     f"{page_extra_requirements or ''}\n\nPPT 翻新要求：随附的首张参考图是原始第"
                     f"{page.order_index + 1}页。保留其中的事实、文字层级、数据关系和核心素材，"
                     "但重新组织版式并提升视觉质量；不要忽略原页参考图。"
                 )
-            if _image_scene_enabled(app):
+            if scene_enabled:
                 from services.image_scene_service import append_image_scene_background_requirements
 
                 page_extra_requirements = append_image_scene_background_requirements(
@@ -2263,7 +2340,7 @@ def generate_single_page_image_task(task_id: str, project_id: str, page_id: str,
             qa = assess_generated_image(image, aspect_ratio, resolution_matches=is_match)
             version_image = image
             scene_artifacts = None
-            if _image_scene_enabled(app):
+            if scene_enabled:
                 prepared = _prepare_image_scene_version(
                     image,
                     project_id=project_id,
@@ -2276,7 +2353,8 @@ def generate_single_page_image_task(task_id: str, project_id: str, page_id: str,
                 )
                 if prepared is not None:
                     version_image, scene_artifacts = prepared
-                    qa = scene_artifacts['quality']
+                    if scene_artifacts is not None:
+                        qa = scene_artifacts['quality']
 
             # 保存同源 hero 并在同一数据库事务中绑定最终 Scene Manifest。
             try:

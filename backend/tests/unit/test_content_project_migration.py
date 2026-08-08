@@ -87,6 +87,50 @@ def test_offline_migration_backs_up_validates_and_switches_all_legacy_shapes(tmp
         connection.close()
 
 
+def test_offline_migration_retries_a_transient_database_replace_lock(tmp_path, monkeypatch):
+    import services.content_project_migration as migration
+
+    database = build_legacy_content_projects_database(tmp_path / 'legacy.db')
+    real_replace = migration.os.replace
+    replace_attempts = 0
+
+    def transient_replace(source, target):
+        nonlocal replace_attempts
+        replace_attempts += 1
+        if replace_attempts == 1:
+            raise PermissionError(5, 'database is temporarily locked')
+        return real_replace(source, target)
+
+    monkeypatch.setattr(migration.os, 'replace', transient_replace)
+    report = migration.migrate_sqlite_database(database)
+
+    assert report['status'] == 'migrated'
+    assert replace_attempts == 2
+
+
+def test_offline_migration_preserves_source_when_replace_lock_does_not_clear(tmp_path, monkeypatch):
+    import services.content_project_migration as migration
+
+    database = build_legacy_content_projects_database(tmp_path / 'legacy.db')
+    original_hash = file_hash(database)
+    replace_attempts = 0
+
+    def locked_replace(_source, _target):
+        nonlocal replace_attempts
+        replace_attempts += 1
+        raise PermissionError(5, 'database remains locked')
+
+    monkeypatch.setattr(migration.os, 'replace', locked_replace)
+    monkeypatch.setattr(migration.time, 'sleep', lambda _seconds: None)
+
+    with pytest.raises(migration.MigrationFailure, match='database remains locked'):
+        migration.migrate_sqlite_database(database)
+
+    assert replace_attempts == 20
+    assert file_hash(database) == original_hash
+    assert list(tmp_path.glob('*.migrating')) == []
+
+
 def test_offline_migration_is_idempotent(tmp_path):
     from services.content_project_migration import migrate_sqlite_database
 

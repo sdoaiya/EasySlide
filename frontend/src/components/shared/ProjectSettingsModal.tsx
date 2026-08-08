@@ -234,7 +234,7 @@ export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
             ref={tabPanelRef}
             role="tabpanel"
             data-testid="project-settings-scroll"
-            className={`min-w-0 flex-1 overflow-y-auto ${activeTab === 'global' ? 'p-0' : 'p-6'}`}
+            className={`min-w-0 flex-1 overflow-y-auto ${activeTab === 'global' ? 'px-6 py-0' : 'p-6'}`}
           >
             {activeTab === 'project' ? (
               <div className="max-w-3xl space-y-6">

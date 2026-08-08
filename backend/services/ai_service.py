@@ -7,8 +7,9 @@ import os
 import json
 import re
 import logging
+import inspect
 import requests
-from typing import List, Dict, Optional, Union
+from typing import Callable, List, Dict, Optional, Union
 from textwrap import dedent
 from PIL import Image
 from tenacity import retry, stop_after_attempt, retry_if_exception_type
@@ -928,7 +929,8 @@ class AIService:
     
     def generate_image(self, prompt: str, ref_image_path: Optional[str] = None, 
                       aspect_ratio: str = "16:9", resolution: str = "2K",
-                      additional_ref_images: Optional[List[Union[str, Image.Image]]] = None) -> Optional[Image.Image]:
+                      additional_ref_images: Optional[List[Union[str, Image.Image]]] = None,
+                      cancellation_check: Optional[Callable[[], bool]] = None) -> Optional[Image.Image]:
         """
         Generate image using configured image provider
         Based on gemini_genai.py gen_image()
@@ -1026,13 +1028,23 @@ class AIService:
             try:
                 # 使用 image_provider 生成图片
                 # 根据 enable_image_reasoning 配置控制图像生成的思考模式
+                provider_kwargs = {
+                    'prompt': prompt,
+                    'ref_images': ref_images if ref_images else None,
+                    'aspect_ratio': aspect_ratio,
+                    'resolution': resolution,
+                    'enable_thinking': self.enable_image_reasoning,
+                    'thinking_budget': self._get_image_thinking_budget(),
+                }
+                parameters = inspect.signature(self.image_provider.generate_image).parameters.values()
+                if cancellation_check and any(
+                    parameter.name == 'cancellation_check'
+                    or parameter.kind == inspect.Parameter.VAR_KEYWORD
+                    for parameter in parameters
+                ):
+                    provider_kwargs['cancellation_check'] = cancellation_check
                 return self.image_provider.generate_image(
-                    prompt=prompt,
-                    ref_images=ref_images if ref_images else None,
-                    aspect_ratio=aspect_ratio,
-                    resolution=resolution,
-                    enable_thinking=self.enable_image_reasoning,
-                    thinking_budget=self._get_image_thinking_budget()
+                    **provider_kwargs
                 )
             finally:
                 for img in owned_images:
