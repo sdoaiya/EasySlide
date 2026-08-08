@@ -115,3 +115,50 @@ class TestPptToVideoOptionConsumption:
             # 契约：声音与表现力进入每个场景（当前候选无 voice 字段，测试失败）
             assert first.get('voice', {}).get('voice_profile_id') == 'edge:zh-CN-XiaoxiaoNeural'
             assert first.get('voice', {}).get('expressiveness_id') == 'expression.warm.v1'
+
+
+class TestNarrationFallbackChain:
+    def test_script_source_falls_back_to_page_outline_points(self, client, app, enabled):
+        """原生编辑页无描述/确认旁白时，旁白回退到大纲要点而不是只有标题。"""
+        from models import Project, db, Page
+        from services.task_manager import generate_workspace_candidate_task
+
+        from controllers import workspace_generation_controller as controller
+        controller.task_manager.submit_task = lambda *a, **k: None
+        try:
+            project_id = client.post('/api/projects', json={
+                'creation_type': 'idea',
+                'idea_prompt': '原生页面',
+                'initial_workspace': 'ppt',
+            }).get_json()['data']['project_id']
+            with app.app_context():
+                project = db.session.get(Project, project_id)
+                page = Page(project_id=project.id, order_index=0, status='COMPLETED')
+                # 只写大纲（原生编辑模式：无描述、无确认旁白）
+                page.set_outline_content({'title': '增长引擎', 'points': ['收入同比增长 68%', '产品进入规模化阶段']})
+                db.session.add(page)
+                db.session.commit()
+                page_ids = [page.id]
+            response = client.post(f'/api/projects/{project_id}/workspace-generation-runs', json={
+                'target_workspace_kind': 'video',
+                'source_kind': 'ppt',
+                'mode': 'ai_adapt',
+                'operation': 'generate',
+                'options': {'page_ids': page_ids, 'script_source': 'confirmed_narration_or_page'},
+            })
+            run_id = response.get_json()['data']['run_id']
+        finally:
+            del controller.task_manager.submit_task
+        with app.app_context():
+            from models import WorkspaceGenerationRun
+            run = db.session.get(WorkspaceGenerationRun, run_id)
+            task_id = run.task_id
+        generate_workspace_candidate_task(task_id, run_id=run_id, app=app)
+        with app.app_context():
+            from models import WorkspaceGenerationRun
+            import json
+            run = db.session.get(WorkspaceGenerationRun, run_id)
+            candidate = json.loads(run.candidate_document_json)
+            first = candidate['scenes'][0]
+            # 契约：旁白包含页面要点，不是只有标题
+            assert first['narration']['text'] == '收入同比增长 68%；产品进入规模化阶段'

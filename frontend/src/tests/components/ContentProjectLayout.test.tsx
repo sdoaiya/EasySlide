@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ContentProjectLayout } from '@/components/content-project/ContentProjectLayout';
@@ -92,5 +92,52 @@ describe('ContentProjectLayout', () => {
 
     expect(screen.queryByText(/导出任务/)).not.toBeInTheDocument();
     expect(screen.getByText('视频页面')).toBeInTheDocument();
+  });
+});
+
+describe('ContentProjectLayout mode switch', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+  });
+
+  it('returns to the remembered PPT sub page when switching back from video', () => {
+    render(
+      <MemoryRouter initialEntries={['/project/project-1/ppt/editor']}>
+        <Routes>
+          <Route path="/project/:projectId" element={<ContentProjectLayout />}>
+            <Route path="ppt" element={<div>PPT 入口</div>} />
+            <Route path="ppt/editor" element={<div>PPT 编辑页</div>} />
+            <Route path="ppt/outline" element={<div>PPT 大纲页</div>} />
+            <Route path="video" element={<div>视频页面</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    // 从 PPT 编辑页切到视频：记录当前子页
+    fireEvent.click(screen.getByRole('button', { name: '视频' }));
+    expect(screen.getByText('视频页面')).toBeInTheDocument();
+
+    // 从视频切回 PPT：回到记忆的编辑页，而不是大纲页
+    fireEvent.click(screen.getByRole('button', { name: 'PPT' }));
+    expect(screen.getByText('PPT 编辑页')).toBeInTheDocument();
+    expect(screen.queryByText('PPT 大纲页')).not.toBeInTheDocument();
+  });
+
+  it('falls back to the default PPT entry without a remembered sub page', () => {
+    render(
+      <MemoryRouter initialEntries={['/project/project-1/video']}>
+        <Routes>
+          <Route path="/project/:projectId" element={<ContentProjectLayout />}>
+            <Route path="ppt" element={<div>PPT 入口</div>} />
+            <Route path="ppt/outline" element={<div>PPT 大纲页</div>} />
+            <Route path="video" element={<div>视频页面</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'PPT' }));
+    expect(screen.getByText('PPT 入口')).toBeInTheDocument();
   });
 });

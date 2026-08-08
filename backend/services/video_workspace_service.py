@@ -10,6 +10,17 @@ from services.voice_catalog_service import (
 )
 
 
+def _page_outline_text(page: dict) -> str:
+    """页面正文作为旁白回退：原生编辑页无描述时，用大纲要点拼接。"""
+    outline = page.get('outline') or {}
+    points = [
+        str(item).strip()
+        for item in outline.get('points') or []
+        if str(item).strip()
+    ]
+    return '；'.join(points)
+
+
 def _stable_id(value, fallback):
     cleaned = re.sub(r'[^A-Za-z0-9._:-]+', '_', str(value or '')).strip('._:-')
     return (cleaned or fallback)[:128]
@@ -472,10 +483,11 @@ def build_video_document_from_ppt_snapshot(snapshot: dict, options=None) -> dict
             if not narration_text.strip():
                 narration_text = str(
                     (page.get('description') or {}).get('text')
+                    or _page_outline_text(page)
                     or scene_title
                 )
         elif script_source == 'page_content':
-            narration_text = str((page.get('description') or {}).get('text') or scene_title)
+            narration_text = str((page.get('description') or {}).get('text') or _page_outline_text(page) or scene_title)
             segments = []
         visual_kind = 'native_scene' if page.get('visual_kind') == 'native_scene' else 'page'
         if visual_strategy != 'reuse_ppt':

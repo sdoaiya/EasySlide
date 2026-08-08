@@ -50,6 +50,23 @@ const MODE_PATHS = {
   podcast: (projectId: string) => `/project/${projectId}/podcast`,
 } as const;
 
+const PPT_ROUTE_KEY = (projectId: string) => `ppt-last-route:${projectId}`;
+
+/** 离开 PPT 模式时记住所在子页（outline/detail/editor），切回时回到原处。 */
+function rememberPptRoute(kind: ContentWorkspaceKind, pathname: string, projectId: string) {
+  if (kind !== 'ppt' && pathname.startsWith(`/project/${projectId}/ppt/`)) {
+    sessionStorage.setItem(PPT_ROUTE_KEY(projectId), pathname);
+  }
+}
+
+/** 切到 PPT 时优先回到记忆的子页；无记忆时回默认入口（index → outline）。 */
+function resolveModeTarget(kind: ContentWorkspaceKind, projectId: string) {
+  if (kind !== 'ppt') return MODE_PATHS[kind](projectId);
+  const remembered = sessionStorage.getItem(PPT_ROUTE_KEY(projectId));
+  if (remembered && remembered.startsWith(`/project/${projectId}/ppt/`)) return remembered;
+  return MODE_PATHS.ppt(projectId);
+}
+
 export function ContentProjectLayout() {
   const { projectId } = useParams();
   const navigate = useNavigate();
@@ -116,12 +133,13 @@ export function ContentProjectLayout() {
   const switchMode = useCallback((kind: ContentWorkspaceKind) => {
     if (!projectId) return;
     if (kind === currentMode) return;
+    rememberPptRoute(kind, location.pathname, projectId);
     if (dirtySession) {
       setPendingSwitch(kind);
       return;
     }
-    navigate(MODE_PATHS[kind](projectId));
-  }, [currentMode, dirtySession, navigate, projectId]);
+    navigate(resolveModeTarget(kind, projectId));
+  }, [currentMode, dirtySession, location.pathname, navigate, projectId]);
 
   const confirmSwitch = async (action: 'save' | 'discard' | 'cancel') => {
     const kind = pendingSwitch;
@@ -135,7 +153,7 @@ export function ContentProjectLayout() {
         return; // 保存失败：停留在当前模式
       }
     }
-    navigate(MODE_PATHS[kind](projectId));
+    navigate(resolveModeTarget(kind, projectId));
   };
 
   if (loading && !project) return <Loading fullscreen message="正在打开内容项目" />;
