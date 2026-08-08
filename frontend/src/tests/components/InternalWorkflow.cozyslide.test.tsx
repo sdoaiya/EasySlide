@@ -809,7 +809,7 @@ describe('EasySlide internal workflow chrome', () => {
     await waitFor(() => {
       expect(mocks.store.generateImages).toHaveBeenCalledWith(
         ['page-failed'],
-        { maxWorkers: 4, useTemplate: true, density: 'standard', style: 'theme', composition: 'auto', restraint: 'strong', customPrompt: '' },
+        expect.objectContaining({ forceRegenerate: true }),
       );
     });
   }, 15_000);
@@ -1208,3 +1208,47 @@ describe('EasySlide internal workflow chrome', () => {
     });
   }, 15_000);
 });
+
+  it('enables regenerate for selected pages that already have images', async () => {
+    const endpoints = await import('@/api/endpoints');
+    mocks.store.currentProject.pages = [
+      {
+        id: 'page-ready',
+        page_id: 'page-ready',
+        order_index: 0,
+        status: 'COMPLETED',
+        generated_image_path: '/files/page-ready.png',
+        outline_content: { title: 'Ready Slide', points: [] },
+        description_content: { text: 'Ready desc' },
+      },
+      {
+        id: 'page-ready-2',
+        page_id: 'page-ready-2',
+        order_index: 1,
+        status: 'COMPLETED',
+        generated_image_path: '/files/page-ready-2.png',
+        outline_content: { title: 'Ready Slide 2', points: [] },
+        description_content: { text: 'Ready desc 2' },
+      },
+    ];
+    vi.mocked(endpoints.getSettings).mockResolvedValueOnce({
+      data: { image_resolution: '2K' },
+    } as any);
+
+    renderAt('/project/project-1/preview', <SlidePreview />);
+
+    fireEvent.click(screen.getByRole('button', { name: '多选' }));
+    fireEvent.click(screen.getAllByRole('button', { name: '选择第 1 页' })[0]);
+
+    // 已有图的选中页也可以批量重复生成（按钮不置灰）
+    const button = screen.getByRole('button', { name: '生成选中页面 (1)' });
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      expect(mocks.store.generateImages).toHaveBeenCalledWith(
+        ['page-ready'],
+        expect.objectContaining({ forceRegenerate: true }),
+      );
+    });
+  }, 15_000);

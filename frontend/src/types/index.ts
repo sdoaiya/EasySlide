@@ -540,6 +540,8 @@ export interface ImageGenerationOptions {
   customPrompt?: string;
   language?: 'zh' | 'ja' | 'en' | 'auto';
   qualityIssues?: string[];
+  /** 多选批量重复生成：跳过已有图过滤，强制重新生成选中页面 */
+  forceRegenerate?: boolean;
 }
 
 export interface ImageGenerationResponse {

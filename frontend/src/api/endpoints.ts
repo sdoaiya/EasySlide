@@ -444,6 +444,7 @@ export const generateImages = async (
       image_composition: options?.composition,
       image_restraint: options?.restraint,
       image_style_prompt: options?.customPrompt?.trim() || undefined,
+      force_regenerate: options?.forceRegenerate,
     }
   );
   return response.data;

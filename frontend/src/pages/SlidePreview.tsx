@@ -842,13 +842,14 @@ export const SlidePreview: React.FC = () => {
   );
   const isRenovationProject = currentProject?.creation_type === 'ppt_renovation' || currentProject?.creation_type === 'renovation';
   const pendingBatchImageCount = useMemo(() => {
-    const pages = isMultiSelectMode && selectedPageIds.size > 0
+    const multiSelect = isMultiSelectMode && selectedPageIds.size > 0;
+    const pages = multiSelect
       ? currentProject?.pages.filter(page => page.id && selectedPageIds.has(page.id))
       : currentProject?.pages;
     return pages?.filter(page =>
       page.id
-      && (isRenovationProject ? page.status !== 'COMPLETED' : !page.generated_image_path)
       && !pageGeneratingTasks[page.id]
+      && (multiSelect || (isRenovationProject ? page.status !== 'COMPLETED' : !page.generated_image_path))
     ).length || 0;
   }, [currentProject?.pages, isMultiSelectMode, isRenovationProject, pageGeneratingTasks, selectedPageIds]);
   const imageGenerationActive = !!activeImageTask
@@ -1085,8 +1086,8 @@ export const SlidePreview: React.FC = () => {
         : currentProject?.pages;
       const pageIds = pagesToGenerate
         ?.filter(page => page.id
-          && (isRenovationProject ? page.status !== 'COMPLETED' : !page.generated_image_path)
-          && !pageGeneratingTasks[page.id])
+          && !pageGeneratingTasks[page.id]
+          && (isPartialGenerate || (isRenovationProject ? page.status !== 'COMPLETED' : !page.generated_image_path)))
         .map(page => page.id!) || [];
       if (pageIds.length === 0) return;
 
@@ -1099,7 +1100,12 @@ export const SlidePreview: React.FC = () => {
               await syncProject(projectId);
             }
           }
-          await generateImages(pageIds, imageGenerationSettings);
+          await generateImages(
+            pageIds,
+            isPartialGenerate
+              ? { ...imageGenerationSettings, forceRegenerate: true }
+              : imageGenerationSettings,
+          );
         } catch (error: any) {
           console.error('批量生成错误:', error);
           console.error('错误响应:', error?.response?.data);
@@ -2475,7 +2481,8 @@ export const SlidePreview: React.FC = () => {
                   : pauseImageGeneration
                 : handleGenerateAll}
               className="w-full text-sm md:text-base"
-              disabled={!imageGenerationActive && (pendingBatchImageCount === 0 || (isMultiSelectMode && selectedPageIds.size === 0))}
+              // 多选时 count 含已有图的页（批量重复生成），故仅按可执行页数判定
+              disabled={!imageGenerationActive && pendingBatchImageCount === 0}
             >
               {imageGenerationActive
                 ? imageGenerationPaused

@@ -1529,3 +1529,51 @@ class TestProjectDelete:
         response = client.delete('/api/projects/non-existent-id')
         
         assert response.status_code == 404
+
+    def test_batch_image_generation_force_regenerates_pages_with_existing_images(self, app):
+        """多选「生成选中页面」批量重复生成：force_regenerate 跳过已有图过滤。"""
+        from PIL import Image
+        from models import db, Page, Project, Task
+        from controllers import project_controller as project_controller_module
+
+        with app.app_context():
+            project = Project(
+                id='proj-force-regenerate',
+                creation_type='idea',
+                template_style='clean',
+                status='active',
+            )
+            page = Page(
+                id='page-force-regenerate',
+                project_id=project.id,
+                order_index=0,
+                status='COMPLETED',
+                generated_image_path='generated/existing.png',
+            )
+            page.set_outline_content({'title': page.id, 'points': []})
+            page.set_description_content({'text': page.id})
+            existing_path = Path(app.config['UPLOAD_FOLDER']) / page.generated_image_path
+            existing_path.parent.mkdir(parents=True, exist_ok=True)
+            Image.new('RGB', (16, 9), 'white').save(existing_path)
+            _add_project_with_ppt_workspace(project, stage='COMPLETED')
+            Page.query.filter_by(project_id=project.id).delete(synchronize_session=False)
+            db.session.add(page)
+            db.session.commit()
+
+            with (
+                patch.object(project_controller_module, 'get_ai_service', return_value=object()),
+                patch.object(project_controller_module.task_manager, 'submit_task') as submit_task,
+            ):
+                response = app.test_client().post(
+                    f'/api/projects/{project.id}/generate/images',
+                    json={'page_ids': [page.id], 'force_regenerate': True},
+                )
+
+            data = assert_success_response(response, 202)['data']
+            task = Task.query.get(data['task_id'])
+
+            assert data['total_pages'] == 1
+            assert data['skipped_existing'] == 0
+            assert task.get_progress()['page_ids'] == [page.id]
+            assert page.status == 'QUEUED'
+            submit_task.assert_called_once()

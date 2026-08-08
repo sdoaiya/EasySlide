@@ -2058,10 +2058,13 @@ def generate_images(project_id):
         # The first renovation image is the PDF source, not a generated result.
         file_service = FileService(current_app.config['UPLOAD_FOLDER'])
         is_renovation = project.creation_type in {'renovation', 'ppt_renovation'}
+        # 多选「生成选中页面」用于批量重复生成：force_regenerate 跳过已有图过滤，
+        # 只排除仍在生成中的页面（下方 claimed 逻辑）
+        force_regenerate = bool(data.get('force_regenerate'))
         pages = (
-            [page for page in requested_pages if page.image_versions.count() <= 1]
+            [page for page in requested_pages if force_regenerate or page.image_versions.count() <= 1]
             if is_renovation
-            else [page for page in requested_pages if prepare_page_for_image_generation(page, file_service)]
+            else [page for page in requested_pages if force_regenerate or prepare_page_for_image_generation(page, file_service)]
         )
         skipped_existing = len(requested_pages) - len(pages)
 
