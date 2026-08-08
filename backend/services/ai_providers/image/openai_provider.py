@@ -396,6 +396,10 @@ class OpenAIImageProvider(ImageProvider):
             logger.debug("OpenAI API call completed")
             
             # Extract image from response - handle different response formats
+            if not response.choices:
+                raise ValueError(
+                    '图片生成未返回结果（上游响应 choices 为空，可能被安全过滤或用量限制）'
+                )
             message = response.choices[0].message
 
             # Debug: log available attributes

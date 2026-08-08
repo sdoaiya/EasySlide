@@ -185,6 +185,10 @@ class AnthropicImageProvider(ImageProvider):
         )
 
         # Extract image from response using same logic as OpenAIImageProvider
+        if not response.choices:
+            raise ValueError(
+                '图片生成未返回结果（上游响应 choices 为空，可能被安全过滤或用量限制）'
+            )
         message = response.choices[0].message
 
         if hasattr(message, 'multi_mod_content') and message.multi_mod_content:

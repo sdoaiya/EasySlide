@@ -759,10 +759,10 @@ class FileParserService:
                 except OSError:
                     pass
 
-            # Strip <think>...</think> tags from reasoning models
+            # Strip <think>...</think> tags from reasoning models;
+            # 上游返回 None/空时归一为空字符串，避免调用方 .strip() 崩溃
             caption = strip_think_tags(caption)
-
-            return caption
+            return caption or ''
             
         except Exception as e:
             logger.warning(f"Failed to generate caption for {image_url}: {str(e)}")

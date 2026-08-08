@@ -736,3 +736,40 @@ def test_codex_test_error_text_with_4010_does_not_disconnect_oauth(client, app):
     data = status_response.get_json()
     assert data['data']['status'] == 'FAILED'
     assert 'openai_oauth_disconnected' not in data['data']
+
+
+
+
+def test_anthropic_image_provider_reports_clear_error_when_choices_empty():
+    """图片生成上游返回空 choices 时必须报可读错误，而不是
+    'NoneType' object is not subscriptable 崩溃。"""
+    from unittest.mock import MagicMock, patch
+    import pytest
+    from services.ai_providers.image.anthropic_provider import AnthropicImageProvider
+
+    provider = AnthropicImageProvider(api_key='test-key', api_base='https://test.api')
+
+    response = MagicMock()
+    response.choices = []
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.return_value = response
+
+    with patch('openai.OpenAI', return_value=fake_client):
+        with pytest.raises(ValueError, match='choices 为空'):
+            provider._try_openai_compatible_format([], 'prompt', '16:9', '2K', None)
+
+
+def test_openai_image_provider_reports_clear_error_when_choices_empty():
+    from unittest.mock import MagicMock, patch
+    import pytest
+    from services.ai_providers.image.openai_provider import OpenAIImageProvider
+
+    response = MagicMock()
+    response.choices = []
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.return_value = response
+
+    with patch('services.ai_providers.image.openai_provider.OpenAI', return_value=fake_client):
+        provider = OpenAIImageProvider(api_key='test-key', api_base='https://test.api', image_api_protocol='chat')
+        with pytest.raises(Exception, match='choices 为空'):
+            provider.generate_image('prompt', None, '16:9', '2K')
