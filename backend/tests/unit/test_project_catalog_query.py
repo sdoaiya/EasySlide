@@ -154,3 +154,24 @@ class TestCatalogReadOnly:
         in_progress = client.get('/api/projects?limit=10&status=in_progress').get_json()['data']['projects']
         assert {item['project_id'] for item in completed} == {current_id, legacy_id, native_id}
         assert {item['project_id'] for item in in_progress} == {draft_id}
+
+
+def test_workspace_filter_ppt_includes_projects_with_initialized_ppt_workspace(client, app):
+    """PPT 标签筛选：存在已初始化 ppt 工作区的项目应命中（此前错误地
+    排除所有含其他工作区的项目导致恒为 0）。"""
+    from models import Project, db
+
+    with app.app_context():
+        project = Project(
+            id='filter-ppt-project',
+            creation_type='idea',
+            status='active',
+            last_workspace='ppt',
+        )
+        add_content_project(project, ppt_stage='DRAFT')
+        db.session.commit()
+
+    data = client.get('/api/projects?workspace=ppt').get_json()['data']
+    ids = [item['project_id'] for item in data['projects']]
+    assert 'filter-ppt-project' in ids
+    assert data['total'] >= 1

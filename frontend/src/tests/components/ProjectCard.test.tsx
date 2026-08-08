@@ -75,3 +75,35 @@ describe('ProjectCard actions and summary', () => {
     expect(onSelect).toHaveBeenCalledWith(project);
   });
 });
+
+describe('ProjectCard workspace badges', () => {
+  it('shows workspace badges in the list layout too', () => {
+    render(
+      <ProjectCard
+        {...props(vi.fn())}
+        layout="list"
+        project={{ ...project, workspaces: [
+          { id: 'w-ppt', project_id: 'project-1', kind: 'ppt', state: 'draft', revision: 1, source_kind: 'manual', settings: {} },
+          { id: 'w-video', project_id: 'project-1', kind: 'video', state: 'draft', revision: 1, source_kind: 'manual', settings: {} },
+        ] }}
+      />,
+    );
+
+    expect(screen.getByText('PPT')).toBeInTheDocument();
+    expect(screen.getByText('视频')).toBeInTheDocument();
+  });
+
+  it('falls back to a PPT badge when no workspace is initialized', () => {
+    render(
+      <ProjectCard
+        {...props(vi.fn())}
+        layout="list"
+        project={{ ...project, workspaces: [
+          { id: 'w-ppt', project_id: 'project-1', kind: 'ppt', state: 'uninitialized', revision: 0, source_kind: 'manual', settings: {} },
+        ] }}
+      />,
+    );
+
+    expect(screen.getByText('PPT')).toBeInTheDocument();
+  });
+});

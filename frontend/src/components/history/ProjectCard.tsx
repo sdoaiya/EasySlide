@@ -103,12 +103,14 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
           : 'typeProject';
   
   const firstPageImage = shouldLoadImage ? getFirstPageImage(project) : null;
-  const initializedKinds = project.workspaces?.filter((workspace) => workspace.state !== 'uninitialized').map((workspace) => workspace.kind) || ['ppt'];
+  const initializedKinds = project.workspaces?.filter((workspace) => workspace.state !== 'uninitialized').map((workspace) => workspace.kind) || [];
+  // 任何工作区都未初始化时兜底显示 PPT（PPT 是默认创作类型），卡片始终有类型标签
+  const badgeKinds = initializedKinds.length > 0 ? initializedKinds : ['ppt'];
   const workspaceBadges = [
     { kind: 'ppt', label: 'PPT', icon: Presentation },
     { kind: 'video', label: '视频', icon: Film },
     { kind: 'podcast', label: '播客', icon: Mic2 },
-  ].filter((item) => initializedKinds.includes(item.kind as 'ppt' | 'video' | 'podcast'));
+  ].filter((item) => badgeKinds.includes(item.kind as 'ppt' | 'video' | 'podcast'));
   const handleOpenKeyDown = (event: React.KeyboardEvent) => {
     if (isBatchMode || isEditing) return;
     if (event.key !== 'Enter' && event.key !== ' ') return;
@@ -233,6 +235,9 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
             <span className={`px-2 py-1 rounded text-xs font-medium whitespace-nowrap flex-shrink-0 ${statusColor}`}>
               {statusText}
             </span>
+            {workspaceBadges.map(({ kind, label, icon: Icon }) => (
+              <span key={kind} className="flex items-center gap-1 rounded-[var(--app-radius-control)] bg-[var(--app-surface-muted)] px-2 py-1 font-medium whitespace-nowrap"><Icon size={12} />{label}</span>
+            ))}
           </div>
           <div className="flex flex-wrap items-center gap-3 text-xs text-[var(--app-text-secondary)] md:gap-4">
             <span className="rounded-[var(--app-radius-control)] bg-[var(--app-surface-muted)] px-2 py-1 font-medium text-[var(--app-text-secondary)]">

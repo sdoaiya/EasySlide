@@ -997,21 +997,13 @@ def list_projects():
         elif status == 'in_progress':
             query = query.filter(~generating_filter, ~completed_filter)
         if workspace_kind:
-            if workspace_kind == 'ppt':
-                query = query.filter(~db.exists().where(
-                    db.and_(
-                        ProjectWorkspace.project_id == Project.id,
-                        ProjectWorkspace.kind != 'ppt',
-                    ),
-                ))
-            else:
-                query = query.filter(db.exists().where(
-                    db.and_(
-                        ProjectWorkspace.project_id == Project.id,
-                        ProjectWorkspace.kind == workspace_kind,
-                        ProjectWorkspace.state != 'uninitialized',
-                    ),
-                ))
+            query = query.filter(db.exists().where(
+                db.and_(
+                    ProjectWorkspace.project_id == Project.id,
+                    ProjectWorkspace.kind == workspace_kind,
+                    ProjectWorkspace.state != 'uninitialized',
+                ),
+            ))
 
         total = query.count()
         projects = query.offset(offset).limit(limit).all()
